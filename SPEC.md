@@ -3,6 +3,21 @@
 > Stand: Entwurf 0, 2026-11-23. Jede Festlegung mit Begründung und Preis.
 > Offene Punkte stehen in §10 und werden als ADR in `docs/adr/` entschieden.
 
+## 0. MVP (Stand 2026-11-23)
+
+Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
+
+- Gruppen liegen lokal auf dem Server (Admin-Oberfläche), nicht in Entra ID.
+- Geräte binden sich mit einem Einmal-Code ein, den der Admin erzeugt (legt die Gruppen fest).
+- Admin meldet sich mit einem Admin-Token an.
+- Laufzeiten im MVP: `stdio` (eigene Binaries, `npx`, `uvx`, `docker`) und `remote`. WASM folgt.
+- **Abnahmekriterium:** Ein zugewiesenes MCP ist höchstens 5 s später beim Agenten nutzbar
+  (Server meldet per SSE, Client gleicht ab und startet, Agenten bekommen `tools/list_changed`).
+- Entra ID, Azure-Rollen und Signaturen kommen nach dem MVP; das Datenmodell hält dafür Platz
+  (Zuweisungsquelle als Trait, Herkunft und Freigabe am Eintrag).
+
+Umsetzungspakete: `docs/aufgaben/`.
+
 ## 1. Zweck
 
 Eigene und fremde MCP-Tools **einmal** bauen und an **jeden** Agenten auf
@@ -21,7 +36,7 @@ Agenten (pi, Hermes, später weitere) auf macOS, Windows und Linux.
 | `quiver` (Client) | Dienst auf dem Gerät: installiert, konfiguriert, führt aus, ein MCP-Endpunkt | Rust |
 | Client-Fenster | Status, Anmeldung, fehlende Werte ergänzen, Agenten koppeln, Tray | Rust, egui |
 | `quiver-agent-sdk` | Verbindung Agent → Client für Plugins | Rust |
-| Plugin pi | dünne Hülle um das SDK | Rust, `napi-rs` |
+| Plugin pi | dünne Hülle um das SDK – pi 1.5 kann MCP selbst (`pi mcp`), das Plugin ist erst für mehr als MCP nötig | Rust, `napi-rs` |
 | Plugin Hermes | dünne Hülle um das SDK | Rust, `PyO3`/`maturin` |
 | Tool-Satz Microsoft | Microsoft 365 über Graph | Rust |
 
@@ -145,6 +160,6 @@ Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
 3. Datenbank des Servers: SQLite im Volume (wie sprechwerk) oder Postgres?
 4. Soll der Client auch ohne Server nutzbar sein (nur lokale Einträge)?
 5. Protokoll: Werden Tool-Aufrufe zentral protokolliert (Audit) oder nur lokal?
-6. pi und Hermes: Schnittstellen der Plugins genau prüfen (Stand der Versionen).
+6. pi und Hermes: Schnittstellen der Plugins genau prüfen. pi 1.5 spricht MCP (`pi mcp`), für den MVP reicht das.
 7. Erster Umfang des Microsoft-Satzes: Mail, Kalender, Teams, SharePoint/OneDrive, Planner?
 8. Gemeinsames UI-Crate: aus den bestehenden Apps herauslösen, bevor der Client entsteht?
