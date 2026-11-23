@@ -80,6 +80,24 @@ npm test
 
 Aufbau, Bausteine und Bildschirmfotos: [admin/README.md](admin/README.md).
 
+### Client-Fenster
+
+```bash
+cargo run -p quiver-fenster                # das Fenster
+cargo run -p quiver-fenster -- --headless  # nur der Kern, bis Strg+C
+```
+
+Aufbau wie die Admin-Oberfläche: Kopf, Navigation links, Inhalt als Karten, drei
+Themes aus denselben Tokens. Die Bildschirmfotos erzeugt der Oberflächentest
+(mit Attrappe, ohne Server und ohne Laufzeit):
+
+```bash
+QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
+```
+
+![Client-Fenster, dunkel](docs/bilder/fenster-dark-tools.png)
+![Client-Fenster, hell](docs/bilder/fenster-light-tools.png)
+
 ## Lizenz
 
 [MIT](LICENSE)

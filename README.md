@@ -77,6 +77,24 @@ npm test
 
 Layout, components and screenshots: [admin/README.md](admin/README.md).
 
+### Client window
+
+```bash
+cargo run -p quiver-fenster                # the window
+cargo run -p quiver-fenster -- --headless  # only the core, until Ctrl+C
+```
+
+Same layout as the admin interface: header, navigation on the left, content as
+cards, three themes from the same tokens. The screenshots are produced by the UI
+test (with a stand-in core, no server and no runtime):
+
+```bash
+QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
+```
+
+![Client window, dark](docs/bilder/fenster-dark-tools.png)
+![Client window, light](docs/bilder/fenster-light-tools.png)
+
 ## License
 
 [MIT](LICENSE)

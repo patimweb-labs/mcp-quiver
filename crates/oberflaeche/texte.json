@@ -126,5 +126,149 @@
   "thema.mono": {
     "de": "Mono",
     "en": "Mono"
+  },
+  "nav.titel": {
+    "de": "Navigation",
+    "en": "Navigation"
+  },
+  "verbindung.sub": {
+    "de": "Server, Einmal-Code und der Stand dieses Geräts.",
+    "en": "Server, one-time code and the state of this device."
+  },
+  "verbindung.einbinden.sub": {
+    "de": "Der Einmal-Code kommt aus der Admin-Oberfläche und gilt eine Stunde.",
+    "en": "The one-time code comes from the admin UI and is valid for one hour."
+  },
+  "verbindung.server_hinweis": {
+    "de": "z. B. http://quiver.example:8080",
+    "en": "e.g. http://quiver.example:8080"
+  },
+  "verbindung.code_hinweis": {
+    "de": "Der Code, den der Admin dir zeigt.",
+    "en": "The code the admin shows you."
+  },
+  "verbindung.status_titel": {
+    "de": "Status",
+    "en": "Status"
+  },
+  "verbindung.geraet": {
+    "de": "Gerät",
+    "en": "Device"
+  },
+  "verbindung.kein_server": {
+    "de": "Kein Server eingebunden",
+    "en": "No server connected"
+  },
+  "verbindung.verbindet": {
+    "de": "Verbinde mit {} …",
+    "en": "Connecting to {} …"
+  },
+  "verbindung.getrennt_von": {
+    "de": "Getrennt von {}",
+    "en": "Disconnected from {}"
+  },
+  "verbindung.getrennt_hinweis": {
+    "de": "Die Tools laufen mit dem zuletzt gespeicherten Stand weiter.",
+    "en": "The tools keep running with the last saved state."
+  },
+  "verbindung.trennen_hinweis": {
+    "de": "Danach laufen auf diesem Gerät keine Tools mehr.",
+    "en": "After that no tools run on this device any more."
+  },
+  "verbindung.fussnote": {
+    "de": "Einmal-Codes legt ein Admin in der Verwaltung an; sie gelten eine Stunde.",
+    "en": "An admin creates one-time codes in the admin UI; they are valid for one hour."
+  },
+  "tools.sub": {
+    "de": "Was dieses Gerät deinen Agenten bereitstellt.",
+    "en": "What this device provides to your agents."
+  },
+  "tools.wartet_mit": {
+    "de": "Braucht Angaben: {}",
+    "en": "Needs input: {}"
+  },
+  "tools.anzeigen": {
+    "de": "{} Tools anzeigen",
+    "en": "Show {} tools"
+  },
+  "tools.verbergen": {
+    "de": "Tools ausblenden",
+    "en": "Hide tools"
+  },
+  "tools.bearbeiten": {
+    "de": "Angaben bearbeiten",
+    "en": "Edit settings"
+  },
+  "tools.fehlt": {
+    "de": "Fehlt: {}",
+    "en": "Missing: {}"
+  },
+  "tools.werte_sub": {
+    "de": "Gesetzte Geheimnisse bleiben leer — dann ändern sie sich nicht.",
+    "en": "Secrets already set stay empty — they will not change."
+  },
+  "tools.pflicht": {
+    "de": "Pflichtfeld",
+    "en": "required"
+  },
+  "agenten.sub": {
+    "de": "Wer den Endpunkt dieses Geräts benutzen darf.",
+    "en": "Who may use this device's endpoint."
+  },
+  "agenten.endpunkt_titel": {
+    "de": "Endpunkt",
+    "en": "Endpoint"
+  },
+  "agenten.endpunkt_sub": {
+    "de": "Alle laufenden Tools unter einer Adresse.",
+    "en": "All running tools behind one address."
+  },
+  "agenten.titel": {
+    "de": "Agenten",
+    "en": "Agents"
+  },
+  "agenten.titel_sub": {
+    "de": "Jeder Agent hat ein eigenes Token.",
+    "en": "Every agent has its own token."
+  },
+  "agenten.verbunden": {
+    "de": "verbunden",
+    "en": "connected"
+  },
+  "agenten.leer_text": {
+    "de": "Ein Agent verbindet sich mit dem Endpunkt und dem Token aus „Agent koppeln“.",
+    "en": "An agent connects with the endpoint and the token from “Pair agent”."
+  },
+  "agenten.koppeln_text": {
+    "de": "Ein Name für dich. Danach zeigt das Fenster Endpunkt, Token und zwei fertige Schnipsel.",
+    "en": "A name for you. Afterwards the window shows endpoint, token and two ready-made snippets."
+  },
+  "agenten.token_titel": {
+    "de": "Agent {} gekoppelt",
+    "en": "Agent {} paired"
+  },
+  "agenten.schnipsel_pi": {
+    "de": "Für pi",
+    "en": "For pi"
+  },
+  "agenten.schnipsel_json": {
+    "de": "Für andere MCP-Clients (JSON)",
+    "en": "For other MCP clients (JSON)"
+  },
+  "agenten.entfernen_titel": {
+    "de": "Agent entfernen",
+    "en": "Remove agent"
+  },
+  "agenten.entfernen_text": {
+    "de": "{} verliert sofort den Zugang. Das Gerät muss sich neu koppeln.",
+    "en": "{} loses access immediately. The device has to pair again."
+  },
+  "allg.schliessen": {
+    "de": "Schließen",
+    "en": "Close"
+  },
+  "agenten.koppeln_jetzt": {
+    "de": "Koppeln",
+    "en": "Pair"
   }
 }
