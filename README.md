@@ -91,9 +91,30 @@ Layout, components and screenshots: [admin/README.md](admin/README.md).
 ### Client window
 
 ```bash
-cargo run -p quiver-fenster                # the window
-cargo run -p quiver-fenster -- --headless  # only the core, until Ctrl+C
+cargo run -p quiver-fenster                  # the window
+cargo run -p quiver-fenster -- --hintergrund # tray and core only, no window
+cargo run -p quiver-fenster -- --headless    # only the core, until Ctrl+C
 ```
+
+Closing the window does not stop quiver: the core, the MCP endpoint and the
+sync keep running, and the tray icon stays. **Quit** lives in the tray menu.
+A second start (double click while quiver sits in the tray) shows the window of
+the running instance and ends itself — one instance per device.
+
+The tray menu shows the state (`Verbunden · 4 Tools · 1 Agent`), opens the
+window, toggles **Start at login** and quits. The same switch sits on the
+*Connection* page; whether it is on is read from the system (LaunchAgent,
+registry value or `.desktop` file), not remembered by the window. Autostart
+always starts with `--hintergrund`.
+
+Environment (all optional):
+
+| Variable | Meaning |
+| --- | --- |
+| `QUIVER_PROFIL` | Profile folder (default `~/Library/Application Support/mcp-quiver` and equivalents) |
+| `QUIVER_MCP_ADRESSE` | MCP endpoint (default `127.0.0.1:8741`; a second port lets two instances run side by side) |
+| `QUIVER_AUTOSTART_DIR` | Folder for the autostart file (macOS and Linux; tests and other sessions) |
+| `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the keychain (machines without one, and for trying things out) |
 
 Same layout as the admin interface: header, navigation on the left, content as
 cards, three themes from the same tokens. The screenshots are produced by the UI

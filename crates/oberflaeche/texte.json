@@ -270,5 +270,61 @@
   "agenten.koppeln_jetzt": {
     "de": "Koppeln",
     "en": "Pair"
+  },
+  "tray.verbunden": {
+    "de": "Verbunden",
+    "en": "Connected"
+  },
+  "tray.tools": {
+    "de": "{} Tools",
+    "en": "{} tools"
+  },
+  "tray.agent_einer": {
+    "de": "1 Agent",
+    "en": "1 agent"
+  },
+  "tray.agenten": {
+    "de": "{} Agenten",
+    "en": "{} agents"
+  },
+  "tray.nicht_verbunden": {
+    "de": "Nicht verbunden",
+    "en": "Not connected"
+  },
+  "tray.verbindet": {
+    "de": "Verbinde …",
+    "en": "Connecting …"
+  },
+  "tray.getrennt": {
+    "de": "Getrennt · läuft weiter",
+    "en": "Disconnected · still running"
+  },
+  "tray.fenster": {
+    "de": "Fenster öffnen",
+    "en": "Open window"
+  },
+  "tray.autostart": {
+    "de": "Beim Anmelden starten",
+    "en": "Start at login"
+  },
+  "tray.beenden": {
+    "de": "Beenden",
+    "en": "Quit"
+  },
+  "autostart.titel": {
+    "de": "Hintergrundbetrieb",
+    "en": "Background operation"
+  },
+  "autostart.sub": {
+    "de": "Das Fenster zu schließen beendet quiver nicht – der Kern und der MCP-Endpunkt laufen weiter, das Tray-Symbol bleibt.",
+    "en": "Closing the window does not quit quiver — the core and the MCP endpoint keep running and the tray icon stays."
+  },
+  "autostart.haken": {
+    "de": "Beim Anmelden im Hintergrund starten",
+    "en": "Start in the background at login"
+  },
+  "autostart.hinweis": {
+    "de": "Der Eintrag liegt im System; der Haken zeigt, was dort steht. „Beenden“ steht im Tray-Menü.",
+    "en": "The entry lives in the system; the checkmark shows what is there. “Quit” is in the tray menu."
   }
 }

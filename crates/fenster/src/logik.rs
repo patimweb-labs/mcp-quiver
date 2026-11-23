@@ -65,6 +65,94 @@ pub fn fehlertext(zustand: &EintragZustand) -> Option<&str> {
     }
 }
 
+/// Ein Eintrag des Tray-Menüs. Beide Plattform-Teile (macOS/Windows und Linux)
+/// zeichnen dieselbe Liste, deshalb steht sie hier als Daten und nicht dort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayEintrag {
+    /// Zustandszeile, nicht klickbar.
+    Zustand(String),
+    /// „Fenster öffnen".
+    Zeigen(String),
+    /// „Beim Anmelden starten" mit Häkchen.
+    Autostart {
+        text: String,
+        an: bool,
+    },
+    Trenner,
+    /// „Beenden".
+    Beenden(String),
+}
+
+/// Die Zustandszeile des Trays: „Verbunden · 4 Tools · 1 Agent" bzw.
+/// „Nicht verbunden". Gezählt wird, was gerade läuft und wer gerade da ist.
+pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
+    match &modell.verbindung {
+        Verbindung::NichtEingebunden => t(sprache, "tray.nicht_verbunden"),
+        Verbindung::Verbindet { .. } => t(sprache, "tray.verbindet"),
+        Verbindung::Getrennt { .. } => t(sprache, "tray.getrennt"),
+        Verbindung::Verbunden { .. } => {
+            let tools: usize = modell
+                .eintraege
+                .iter()
+                .map(|eintrag| eintrag.tools.len())
+                .sum();
+            let agenten = modell
+                .agenten
+                .iter()
+                .filter(|agent| agent.verbunden)
+                .count();
+            let agenten = if agenten == 1 {
+                t(sprache, "tray.agent_einer")
+            } else {
+                tf(sprache, "tray.agenten", &[&agenten])
+            };
+            format!(
+                "{} · {} · {agenten}",
+                t(sprache, "tray.verbunden"),
+                tf(sprache, "tray.tools", &[&tools])
+            )
+        }
+    }
+}
+
+/// Das Tray-Menü als Daten — reine Funktion über dem Modell. Die Reihenfolge
+/// ist die des Menüs: Zustand, Fenster zeigen, Autostart, Trenner, Beenden.
+pub fn tray_menu(modell: &Modell, autostart: bool, sprache: Sprache) -> Vec<TrayEintrag> {
+    vec![
+        TrayEintrag::Zustand(tray_zeile(modell, sprache)),
+        TrayEintrag::Zeigen(t(sprache, "tray.fenster")),
+        TrayEintrag::Autostart {
+            text: t(sprache, "tray.autostart"),
+            an: autostart,
+        },
+        TrayEintrag::Trenner,
+        TrayEintrag::Beenden(t(sprache, "tray.beenden")),
+    ]
+}
+
+/// Was auf der Kommandozeile steht.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Argumente {
+    /// `--hintergrund`: nur Tray und Kern, das Fenster erst auf Wunsch.
+    pub hintergrund: bool,
+    /// `--headless`: nur der Kern, ohne Fenster und ohne Tray.
+    pub kopflos: bool,
+}
+
+/// Die Argumente lesen. Unbekanntes wird nicht bemängelt — eine Anwendung mit
+/// Tray darf ein zusätzliches `--flag` nicht am Start hindern.
+pub fn argumente<S: AsRef<str>>(argumente: impl IntoIterator<Item = S>) -> Argumente {
+    let mut werte = Argumente::default();
+    for argument in argumente {
+        match argument.as_ref() {
+            "--hintergrund" => werte.hintergrund = true,
+            "--headless" => werte.kopflos = true,
+            _ => {}
+        }
+    }
+    werte
+}
+
 /// Bedeutung und Text der Verbindung für Kopf und Statuskarte.
 pub fn verbindung_status(sprache: Sprache, verbindung: &Verbindung) -> (Ton, String) {
     match verbindung {
@@ -395,5 +483,99 @@ mod tests {
             _ => None,
         };
         assert_eq!(geraetename_aus(eigen), "labor", "die eigene gilt zuerst");
+    }
+
+    #[test]
+    fn tray_zeile_zaehlt_was_laeuft() {
+        let mut m = modell(verbunden());
+        m.eintraege = vec![
+            EintragSicht {
+                tools: vec!["echo".into(), "ping".into()],
+                ..eintrag()
+            },
+            EintragSicht {
+                tools: vec!["lesen".into(), "schreiben".into()],
+                ..eintrag()
+            },
+        ];
+        assert_eq!(tray_zeile(&m, Sprache::De), "Verbunden · 4 Tools · 1 Agent");
+        assert_eq!(tray_zeile(&m, Sprache::En), "Connected · 4 tools · 1 agent");
+        // Zwei Agenten und einer davon weg: gezählt wird, wer da ist.
+        m.agenten.push(AgentSicht {
+            id: "a2".into(),
+            name: "hermes".into(),
+            verbunden: false,
+        });
+        assert_eq!(
+            tray_zeile(&m, Sprache::De),
+            "Verbunden · 4 Tools · 1 Agent",
+            "getrennte Agenten zählen nicht"
+        );
+        m.agenten.push(AgentSicht {
+            id: "a3".into(),
+            name: "claude".into(),
+            verbunden: true,
+        });
+        assert!(
+            tray_zeile(&m, Sprache::De).ends_with("2 Agenten"),
+            "Mehrzahl"
+        );
+    }
+
+    #[test]
+    fn tray_zeile_kennt_die_anderen_zustaende() {
+        let ohne = modell(Verbindung::NichtEingebunden);
+        assert_eq!(tray_zeile(&ohne, Sprache::De), "Nicht verbunden");
+        let getrennt = modell(Verbindung::Getrennt {
+            server: "http://x".into(),
+            fehler: "weg".into(),
+        });
+        assert_eq!(
+            tray_zeile(&getrennt, Sprache::De),
+            "Getrennt · läuft weiter"
+        );
+        let verbindet = modell(Verbindung::Verbindet {
+            server: "http://x".into(),
+        });
+        assert_eq!(tray_zeile(&verbindet, Sprache::De), "Verbinde …");
+    }
+
+    #[test]
+    fn tray_menu_hat_die_vereinbarte_reihenfolge() {
+        let menu = tray_menu(&modell(verbunden()), true, Sprache::De);
+        assert_eq!(menu.len(), 5);
+        assert!(
+            matches!(&menu[0], TrayEintrag::Zustand(text) if text == "Verbunden · 0 Tools · 1 Agent")
+        );
+        assert!(matches!(&menu[1], TrayEintrag::Zeigen(text) if text == "Fenster öffnen"));
+        assert!(matches!(
+            &menu[2],
+            TrayEintrag::Autostart { text, an: true } if text == "Beim Anmelden starten"
+        ));
+        assert_eq!(menu[3], TrayEintrag::Trenner);
+        assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Beenden"));
+        // Englisch, Autostart aus.
+        let menu = tray_menu(&modell(verbunden()), false, Sprache::En);
+        assert!(
+            matches!(&menu[2], TrayEintrag::Autostart { text, an: false } if text == "Start at login")
+        );
+        assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Quit"));
+    }
+
+    #[test]
+    fn argumente_lesen_hintergrund_und_kopflos() {
+        assert_eq!(argumente(Vec::<&str>::new()), Argumente::default());
+        let hintergrund = argumente(["--hintergrund"]);
+        assert!(hintergrund.hintergrund);
+        assert!(
+            !hintergrund.kopflos,
+            "ein Argument schaltet nicht das andere"
+        );
+        let kopflos = argumente(["--headless"]);
+        assert!(kopflos.kopflos);
+        assert!(!kopflos.hintergrund);
+        // Reihenfolge und Unbekanntes sind egal.
+        let beide = argumente(["--unbekannt", "--hintergrund", "--headless"]);
+        assert!(beide.hintergrund && beide.kopflos);
     }
 }

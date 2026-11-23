@@ -33,6 +33,21 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Tray-Symbol: das Lucide-Zeichen `package` in 32 und 64 px rastern. Liegt
+# über `egui_extras` (SVG-Icons) ohnehin schon im Baum.
+resvg = "0.45"
+
+# Menüleiste (macOS) und Infobereich (Windows).
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = "0.26"
+
+# StatusNotifierItem (KDE, GNOME mit AppIndicator, Xfce …).
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", features = ["blocking"] }
+
+# Autostart-Eintrag unter `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
 
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }

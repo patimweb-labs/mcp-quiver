@@ -614,3 +614,35 @@ fn fenster_zu_haelt_den_kern_an() {
     eframe::App::on_exit(&mut fenster, None);
     assert!(attrappe.beendet.get(), "Kern nicht angehalten");
 }
+
+/// Der Autostart steht als Häkchen auf der Verbindungsseite und schreibt in
+/// das Modell — im Test ohne Schalter, damit nichts im System landet.
+#[test]
+fn autostart_ist_ein_haken_auf_der_verbindungsseite() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Verbindung),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(!h.state().0.sicht.autostart, "Vorgabe: kein Autostart");
+    let beschriftung = "Beim Anmelden im Hintergrund starten";
+    let haken = h.get_by_role_and_label(Role::CheckBox, beschriftung);
+    haken.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf dem Häkchen"
+    );
+    h.get_by_role_and_label(Role::CheckBox, beschriftung)
+        .click();
+    h.run();
+    assert!(h.state().0.sicht.autostart, "Häkchen setzt das Modell");
+    // Noch einmal klicken nimmt es zurück.
+    h.get_by_role_and_label(Role::CheckBox, beschriftung)
+        .click();
+    h.run();
+    assert!(!h.state().0.sicht.autostart);
+}

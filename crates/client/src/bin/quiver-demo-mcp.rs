@@ -116,7 +116,10 @@ async fn main() -> anyhow::Result<()> {
         _ => "kein Geheimnis".into(),
     };
     let namen: Vec<_> = demo.werkzeuge.iter().map(|(n, _)| n.as_str()).collect();
-    demo.protokoll(&format!("gestartet, Werkzeuge: {}; {geheim}", namen.join(", ")));
+    demo.protokoll(&format!(
+        "gestartet, Werkzeuge: {}; {geheim}",
+        namen.join(", ")
+    ));
     let dienst = demo.serve(rmcp::transport::stdio_pipes()).await?;
     dienst.waiting().await?;
     Ok(())

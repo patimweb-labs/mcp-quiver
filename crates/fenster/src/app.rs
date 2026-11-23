@@ -7,15 +7,20 @@
 //! Attrappe.
 
 use std::path::PathBuf;
-
-use eframe::egui;
-use quiver_client::Modell;
-use quiver_domain::{EintragId, Werte};
+use std::sync::mpsc::Receiver;
 
 use crate::ansichten;
 use crate::modell::{Meldung, Seite, Sicht};
 use crate::profil::Einstellungen;
 use crate::thema::{self, Thema};
+use crate::tray::{self, Befehl, Tray};
+use eframe::egui;
+use quiver_client::Modell;
+use quiver_domain::{EintragId, Werte};
+
+/// Wie der Autostart geschaltet wird — im Betrieb [`crate::autostart::setzen`],
+/// im Test nichts (`None`), damit kein Test im System herumschreibt.
+pub type AutostartSchalter = Box<dyn Fn(bool) -> anyhow::Result<()> + Send + Sync>;
 
 /// Was das Fenster vom Kern verlangt. Nur so kann die Oberfläche ohne Server
 /// und ohne Laufzeit geprüft werden.
@@ -82,16 +87,98 @@ pub struct Fenster<K: KernZugang> {
     angewandt: Option<Thema>,
     /// Zuletzt gemerkte Einstellungen (nur dann schreiben).
     gemerkt: Option<Einstellungen>,
+    /// Autostart schalten; `None` schreibt nichts (Tests).
+    autostart: Option<AutostartSchalter>,
+    /// Zuletzt angewandter Autostart (nur bei Änderung schreiben).
+    autostart_angewandt: bool,
+    /// Das Tray-Symbol, falls die Plattform eines hat.
+    tray: Option<Tray>,
+    /// Befehle von Tray und zweiter Instanz.
+    befehle: Option<Receiver<Befehl>>,
+    /// Beenden ist angefordert: dann wird das Fenster nicht mehr festgehalten.
+    beenden: bool,
 }
 
 impl<K: KernZugang> Fenster<K> {
     pub fn neu(kern: K, sicht: Sicht, profil: Option<PathBuf>) -> Self {
         Self {
+            autostart_angewandt: sicht.autostart,
             kern,
             sicht,
             profil,
             angewandt: None,
             gemerkt: None,
+            autostart: None,
+            tray: None,
+            befehle: None,
+            beenden: false,
+        }
+    }
+
+    /// Wie der Autostart geschaltet wird (im Betrieb die Systemdatei).
+    pub fn mit_autostart(mut self, schalter: AutostartSchalter) -> Self {
+        self.autostart = Some(schalter);
+        self
+    }
+
+    /// Tray-Symbol und die Befehle, die es (und eine zweite Instanz) schickt.
+    pub fn mit_tray(mut self, tray: Option<Tray>, befehle: Receiver<Befehl>) -> Self {
+        self.tray = tray;
+        self.befehle = Some(befehle);
+        self
+    }
+
+    /// Das Tray-Menü folgt aus dem Modell (reine Funktion in [`crate::logik`]).
+    fn tray_pflegen(&self) {
+        let Some(tray) = &self.tray else {
+            return;
+        };
+        tray.setzen(crate::logik::tray_menu(
+            &self.sicht.modell,
+            self.sicht.autostart,
+            self.sicht.sprache,
+        ));
+        tray.auffrischen();
+    }
+
+    /// Befehle ausführen, die nicht aus dem Fenster kommen: Tray und zweite
+    /// Instanz. Sie müssen auch dann ankommen, wenn nichts zu sehen ist.
+    fn befehle_ausfuehren(&mut self, ctx: &egui::Context) {
+        let Some(empfaenger) = &self.befehle else {
+            return;
+        };
+        let befehle: Vec<Befehl> = empfaenger.try_iter().collect();
+        for befehl in befehle {
+            match befehl {
+                Befehl::Zeigen => tray::zeigen(ctx),
+                Befehl::AutostartUmschalten => {
+                    self.sicht.autostart = !self.sicht.autostart;
+                }
+                Befehl::Beenden => {
+                    self.kern.beenden();
+                    self.beenden = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
+    /// Den Autostart im System nachziehen. Der Haken zeigt, was dort steht:
+    /// scheitert das Schreiben, springt er zurück.
+    fn autostart_pflegen(&mut self) {
+        if self.sicht.autostart == self.autostart_angewandt {
+            return;
+        }
+        let Some(schalter) = &self.autostart else {
+            self.autostart_angewandt = self.sicht.autostart;
+            return;
+        };
+        match schalter(self.sicht.autostart) {
+            Ok(()) => self.autostart_angewandt = self.sicht.autostart,
+            Err(fehler) => {
+                self.sicht.autostart = self.autostart_angewandt;
+                self.sicht.hinweis = Some(format!("Autostart nicht änderbar: {fehler:#}"));
+            }
         }
     }
 
@@ -122,18 +209,44 @@ impl<K: KernZugang> Fenster<K> {
             self.sicht.hinweis = None;
             self.kern.ausfuehren(aktion);
         }
+        self.autostart_pflegen();
     }
 }
 
 impl<K: KernZugang> eframe::App for Fenster<K> {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.bild(ui);
+    /// Läuft auch, wenn das Fenster weggelegt ist (Tray, zweite Instanz).
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.befehle_ausfuehren(ctx);
+        self.tray_pflegen();
     }
 
-    /// Fenster zu heißt: Kern sauber anhalten.
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.befehle_ausfuehren(&ctx);
+        schliessen_abfangen(&ctx, self.beenden);
+        self.bild(ui);
+        self.tray_pflegen();
+    }
+
+    /// Letzter Halt: Kern sauber anhalten (Fenster zu, Beenden aus dem Tray).
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.kern.beenden();
     }
+}
+
+/// Fenster schließen heißt nicht Programm beenden: der Kern läuft im Tray
+/// weiter (Aufgabe 08). Das Schließen wird abgefangen und das Fenster
+/// weggelegt. Nur wenn das Beenden schon angefordert ist (Tray-Menü), bleibt
+/// es beim Schließen — sonst käme das Programm nie zum Ende.
+///
+/// Gibt zurück, ob abgefangen wurde.
+pub fn schliessen_abfangen(ctx: &egui::Context, beenden: bool) -> bool {
+    if beenden || !ctx.input(|i| i.viewport().close_requested()) {
+        return false;
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+    tray::weglegen(ctx);
+    true
 }
 
 #[cfg(test)]
@@ -146,5 +259,54 @@ mod tests {
         let a = Aktion::AgentKoppeln { name: "pi".into() };
         assert_eq!(a.clone(), a);
         assert_ne!(a, Aktion::Abmelden);
+    }
+
+    /// Ein Bild mit „das Fenster will schließen" — wie es der Fensterrahmen
+    /// meldet. Geprüft wird, welche Befehle daraus folgen.
+    fn schliessen(beenden: bool) -> Vec<egui::ViewportCommand> {
+        let ctx = egui::Context::default();
+        let mut eingabe = egui::RawInput::default();
+        eingabe
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .expect("Wurzel-Fenster")
+            .events
+            .push(egui::ViewportEvent::Close);
+        let mut ausgabe = ctx.run_ui(eingabe, |ui| {
+            schliessen_abfangen(ui.ctx(), beenden);
+        });
+        let befehle = ausgabe.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .clone();
+        // Ohne Zeichner nimmt niemand die Texturen ab.
+        ausgabe.textures_delta.clear();
+        befehle
+    }
+
+    #[test]
+    fn fenster_schliessen_legt_weg_statt_zu_beenden() {
+        let befehle = schliessen(false);
+        assert!(
+            befehle.contains(&egui::ViewportCommand::CancelClose),
+            "das Schließen wird abgefangen: {befehle:?}"
+        );
+        let weglegen = if tray::MINIMIEREN {
+            egui::ViewportCommand::Minimized(true)
+        } else {
+            egui::ViewportCommand::Visible(false)
+        };
+        assert!(
+            befehle.contains(&weglegen),
+            "Fenster weggelegt: {befehle:?}"
+        );
+    }
+
+    #[test]
+    fn beenden_schliesst_wirklich() {
+        let befehle = schliessen(true);
+        assert!(
+            !befehle.contains(&egui::ViewportCommand::CancelClose),
+            "beim Beenden darf nichts abgefangen werden: {befehle:?}"
+        );
     }
 }

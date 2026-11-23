@@ -7,6 +7,7 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Abgelaufene Codes werden nur beim Einlösen entfernt, kein Aufräumen im Hintergrund.
 
 ## Client
+- [ ] Ein-Instanz-Port liest die Zeile ohne Längengrenze (nur lokal erreichbar).
 - [ ] Ungetestet: Prozess stirbt → `Fehler` + Neustart mit Backoff; `Remote`-Einträge; Start ohne Server nach Neustart.
 - [ ] `tools/list_changed` wird auch ohne echte Änderung der Tool-Liste geschickt.
 - [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf.
@@ -23,3 +24,22 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 ## Allgemein
 - [ ] `docs/architektur.md` und `docs/datenfluss.md` fehlen noch.
 - [ ] Nach dem MVP: Entra ID, Signaturen, WASM-Laufzeit (SPEC §0).
+
+## Hintergrundbetrieb (Aufgabe 08)
+- [ ] Der Weg für die zweite Instanz (`127.0.0.1:<MCP-Port + 1>`) ist ein
+      einfacher TCP-Port ohne Verschlüsselung. Er kann nur „Fenster zeigen",
+      aber jeder lokale Prozess kann das Fenster damit nach vorn holen.
+- [ ] Ist der Port von etwas anderem belegt, das nicht antwortet, startet
+      quiver ohne Wächter — dann gäbe es zwei Instanzen.
+- [ ] `Waechter` beendet seinen Faden nicht beim Beenden; der Prozess endet
+      ohnehin, deshalb steht es offen.
+- [ ] Start im Hintergrund unter Wayland: `ViewportBuilder::with_visible(false)`
+      wird dort nicht überall beachtet; das Fenster kann kurz erscheinen.
+      (Weglegen beim Schließen geht dort über `Minimized`.)
+- [ ] Tray-Symbol ist das Lucide-Zeichen `package` in Weiß — auf einer hellen
+      Windows-Taskleiste schlecht sichtbar. Wird mit dem Logo ersetzt
+      (AGENTS.md §8).
+- [ ] Linux-Teil (`ksni`) ist hier nicht baubar (macOS) — nur nach Vorlage
+      geschrieben, nicht gelaufen.
+- [ ] `QUIVER_TRESOR=speicher` ist ein Entwicklerweg (Geheimnisse gehen beim
+      Beenden verloren); gedacht für Rechner ohne Schlüsselbund.

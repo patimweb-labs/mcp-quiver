@@ -94,9 +94,30 @@ Aufbau, Bausteine und Bildschirmfotos: [admin/README.md](admin/README.md).
 ### Client-Fenster
 
 ```bash
-cargo run -p quiver-fenster                # das Fenster
-cargo run -p quiver-fenster -- --headless  # nur der Kern, bis Strg+C
+cargo run -p quiver-fenster                  # das Fenster
+cargo run -p quiver-fenster -- --hintergrund # nur Tray und Kern, ohne Fenster
+cargo run -p quiver-fenster -- --headless    # nur der Kern, bis Strg+C
 ```
+
+Das Fenster zu schließen beendet quiver nicht: Kern, MCP-Endpunkt und Abgleich
+laufen weiter, das Tray-Symbol bleibt. **Beenden** steht im Tray-Menü. Ein
+zweiter Start (Doppelklick, während quiver im Tray sitzt) zeigt das Fenster der
+laufenden Instanz und endet selbst — eine Instanz je Gerät.
+
+Das Tray-Menü zeigt den Zustand (`Verbunden · 4 Tools · 1 Agent`), öffnet das
+Fenster, schaltet **Beim Anmelden starten** und beendet. Derselbe Schalter steht
+auf der Seite *Verbindung*; ob er an ist, wird aus dem System gelesen
+(LaunchAgent, Registry-Wert oder `.desktop`-Datei), nicht im Fenster gemerkt.
+Der Autostart startet immer mit `--hintergrund`.
+
+Umgebung (alles optional):
+
+| Variable | Bedeutung |
+| --- | --- |
+| `QUIVER_PROFIL` | Profilordner (Standard `~/Library/Application Support/mcp-quiver` und Entsprechungen) |
+| `QUIVER_MCP_ADRESSE` | MCP-Endpunkt (Standard `127.0.0.1:8741`; ein zweiter Port lässt zwei Instanzen nebeneinander laufen) |
+| `QUIVER_AUTOSTART_DIR` | Ordner für die Autostart-Datei (macOS und Linux; Tests und andere Sitzungen) |
+| `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt im Schlüsselbund (Rechner ohne Schlüsselbund, zum Ausprobieren) |
 
 Aufbau wie die Admin-Oberfläche: Kopf, Navigation links, Inhalt als Karten, drei
 Themes aus denselben Tokens. Die Bildschirmfotos erzeugt der Oberflächentest

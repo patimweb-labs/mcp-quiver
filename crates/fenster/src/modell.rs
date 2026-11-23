@@ -121,6 +121,9 @@ pub struct Sicht {
     pub eingaben: Eingaben,
     /// Was der Kern zuletzt gemeldet hat (Fehler), oben auf jeder Seite.
     pub hinweis: Option<String>,
+    /// Startet quiver beim Anmelden? Der Wert kommt aus dem System
+    /// ([`crate::autostart::aktiv`]) und wird dorthin zurückgeschrieben.
+    pub autostart: bool,
 }
 
 impl Sicht {
@@ -134,6 +137,7 @@ impl Sicht {
             offen: BTreeSet::new(),
             eingaben: Eingaben::default(),
             hinweis: None,
+            autostart: false,
         }
     }
 

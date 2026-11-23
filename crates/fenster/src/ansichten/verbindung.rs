@@ -30,11 +30,40 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
             andere => status(ui, sicht, &andere, aktionen),
         }
         abstand(ui);
+        hintergrund(ui, sicht);
+        abstand(ui);
         ui.add(
             egui::Label::new(text(&f, t(sicht.sprache, "verbindung.fussnote"), Ton::Blass).small())
                 .wrap(),
         );
     });
+}
+
+/// Hintergrundbetrieb: was das Schließen des Fensters bedeutet und ob quiver
+/// beim Anmelden startet. Der Haken zeigt den Stand des Systems — die eine
+/// Wahrheit liegt in der Autostart-Datei, nicht im Fenster.
+fn hintergrund(ui: &mut egui::Ui, sicht: &mut Sicht) {
+    let f = *sicht.thema.farben();
+    let sprache = sicht.sprache;
+    let mut an = sicht.autostart;
+    bausteine::karte(
+        ui,
+        &f,
+        &t(sprache, "autostart.titel"),
+        Some(&t(sprache, "autostart.sub")),
+        |ui| {
+            ui.add_space(thema::SPACE_3);
+            let haken = bausteine::haken(ui, &mut an, &t(sprache, "autostart.haken"));
+            if haken.changed() {
+                sicht.autostart = an;
+            }
+            ui.add_space(thema::SPACE_2);
+            ui.add(
+                egui::Label::new(text(&f, t(sprache, "autostart.hinweis"), Ton::Blass).small())
+                    .wrap(),
+            );
+        },
+    );
 }
 
 /// Das Formular zum Einbinden — die Startseite, solange kein Server da ist.
