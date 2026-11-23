@@ -19,6 +19,14 @@ use crate::thema::{self, Ton};
 /// für ein kleines Fenster.
 const BREITE: f32 = thema::SPACE_8 * 9.0;
 
+/// Höchste Höhe der Feldliste – wie `.felder` in der Verwaltung
+/// (`calc(var(--wp-space-8) * 9)`). Mehr Felder scrollen.
+const FELDER_HOEHE: f32 = thema::SPACE_8 * 9.0;
+
+/// Platz für Titel, Untertitel, Knöpfe und Rahmen, damit der Dialog auch in
+/// einem kleinen Fenster ganz sichtbar bleibt.
+const RAHMEN_HOEHE: f32 = thema::SPACE_8 * 5.0;
+
 pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
     if sicht.dialog == Dialog::Keiner {
         // Der nächste Dialog bekommt den Fokus wieder ins erste Feld.
@@ -36,6 +44,9 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
         .map(|a| a.name.clone())
         .collect();
     let breite = BREITE.min(ctx.content_rect().width() - thema::SPACE_8);
+    let felder_hoehe = FELDER_HOEHE
+        .min(ctx.content_rect().height() - RAHMEN_HOEHE)
+        .max(thema::SPACE_8 * 2.0);
     let mut bestaetigen = false;
     let mut abbrechen = false;
     // Werte, die der Dialog nicht zeigt (Standardwerte der Felder). Ein
@@ -96,60 +107,67 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                             .wrap(),
                     );
                     ui.add_space(thema::SPACE_3);
-                    for i in 0..eingaben.len() {
-                        let name = eingaben[i].name.clone();
-                        let geheim = eingaben[i].geheim;
-                        let gesetzt = eingaben[i].gesetzt;
-                        let link = eingaben[i].link.clone();
-                        let hinweis = (!eingaben[i].beschreibung.is_empty()).then(|| {
-                            if eingaben[i].pflicht {
-                                format!(
-                                    "{} · {}",
-                                    eingaben[i].beschreibung,
-                                    t(sprache, "tools.pflicht")
-                                )
-                            } else {
-                                eingaben[i].beschreibung.clone()
-                            }
-                        });
-                        bausteine::feld(ui, &f, &name, hinweis.as_deref(), |ui| {
-                            let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
-                                .desired_width(bausteine::feldbreite(ui));
-                            if geheim {
-                                feld = feld.password(true);
-                                if gesetzt {
-                                    // Gesetzt heißt: das Feld bleibt leer, der
-                                    // Hinweis sagt, dass schon etwas da ist.
-                                    feld = feld.hint_text("••••");
+                    egui::ScrollArea::vertical()
+                        .id_salt("dialog-werte")
+                        .max_height(felder_hoehe)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for i in 0..eingaben.len() {
+                                let name = eingaben[i].name.clone();
+                                let geheim = eingaben[i].geheim;
+                                let gesetzt = eingaben[i].gesetzt;
+                                let link = eingaben[i].link.clone();
+                                let hinweis = (!eingaben[i].beschreibung.is_empty()).then(|| {
+                                    if eingaben[i].pflicht {
+                                        format!(
+                                            "{} · {}",
+                                            eingaben[i].beschreibung,
+                                            t(sprache, "tools.pflicht")
+                                        )
+                                    } else {
+                                        eingaben[i].beschreibung.clone()
+                                    }
+                                });
+                                bausteine::feld(ui, &f, &name, hinweis.as_deref(), |ui| {
+                                    let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
+                                        .desired_width(bausteine::feldbreite(ui));
+                                    if geheim {
+                                        feld = feld.password(true);
+                                        if gesetzt {
+                                            // Gesetzt heißt: das Feld bleibt leer, der
+                                            // Hinweis sagt, dass schon etwas da ist.
+                                            feld = feld.hint_text("••••");
+                                        }
+                                    }
+                                    ui.add(feld)
+                                });
+                                // Hilfe-Link neben dem Feld: nur aktiv, wenn die
+                                // **aktuellen** Eingaben eine Adresse ergeben; sonst
+                                // gesperrt mit dem Hinweis, was noch fehlt.
+                                if let Some(link) = link {
+                                    let adresse = logik::link_adresse(&link, eingaben, &basis);
+                                    let fehlende = logik::link_fehlende(&link, eingaben, &basis);
+                                    ui.add_space(thema::SPACE_1);
+                                    let geklickt = ui
+                                        .add_enabled_ui(adresse.is_some(), |ui| {
+                                            let knopf =
+                                                bausteine::knopf(ui, &f, Icon::Extern, &link.text);
+                                            if fehlende.is_empty() {
+                                                knopf
+                                            } else {
+                                                knopf.on_disabled_hover_text(logik::link_hinweis(
+                                                    &fehlende, sprache,
+                                                ))
+                                            }
+                                        })
+                                        .inner
+                                        .clicked();
+                                    if let (true, Some(url)) = (geklickt, adresse) {
+                                        aktionen.push(Aktion::LinkOeffnen(url));
+                                    }
                                 }
                             }
-                            ui.add(feld)
                         });
-                        // Hilfe-Link neben dem Feld: nur aktiv, wenn die
-                        // **aktuellen** Eingaben eine Adresse ergeben; sonst
-                        // gesperrt mit dem Hinweis, was noch fehlt.
-                        if let Some(link) = link {
-                            let adresse = logik::link_adresse(&link, eingaben, &basis);
-                            let fehlende = logik::link_fehlende(&link, eingaben, &basis);
-                            ui.add_space(thema::SPACE_1);
-                            let geklickt = ui
-                                .add_enabled_ui(adresse.is_some(), |ui| {
-                                    let knopf = bausteine::knopf(ui, &f, Icon::Extern, &link.text);
-                                    if fehlende.is_empty() {
-                                        knopf
-                                    } else {
-                                        knopf.on_disabled_hover_text(logik::link_hinweis(
-                                            &fehlende, sprache,
-                                        ))
-                                    }
-                                })
-                                .inner
-                                .clicked();
-                            if let (true, Some(url)) = (geklickt, adresse) {
-                                aktionen.push(Aktion::LinkOeffnen(url));
-                            }
-                        }
-                    }
                     ui.add_space(thema::SPACE_3);
                     ui.horizontal(|ui| {
                         if bausteine::hauptknopf_mit(
@@ -376,78 +394,85 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                         },
                     );
                     ui.add_space(thema::SPACE_2);
-                    for i in 0..eingaben.len() {
-                        let feldname = eingaben[i].name.clone();
-                        let geheim = eingaben[i].geheim;
-                        let gesetzt = eingaben[i].gesetzt;
-                        let link = eingaben[i].link.clone();
-                        let mut teile = Vec::new();
-                        if !eingaben[i].beschreibung.is_empty() {
-                            teile.push(eingaben[i].beschreibung.clone());
-                        }
-                        if eingaben[i].pflicht {
-                            teile.push(t(sprache, "tools.pflicht"));
-                        }
-                        if geheim && gesetzt {
-                            teile.push(t(sprache, "zugaenge.geheim_gesetzt"));
-                        }
-                        let hinweis = (!teile.is_empty()).then(|| teile.join(" · "));
-                        bausteine::feld(ui, &f, &feldname, hinweis.as_deref(), |ui| {
-                            let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
-                                .desired_width(bausteine::feldbreite(ui));
-                            if geheim {
-                                feld = feld.password(true);
-                                if gesetzt {
-                                    // Gesetzt heißt: leer lassen behält es.
-                                    feld = feld.hint_text("••••");
+                    egui::ScrollArea::vertical()
+                        .id_salt("dialog-zugang")
+                        .max_height(felder_hoehe)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for i in 0..eingaben.len() {
+                                let feldname = eingaben[i].name.clone();
+                                let geheim = eingaben[i].geheim;
+                                let gesetzt = eingaben[i].gesetzt;
+                                let link = eingaben[i].link.clone();
+                                let mut teile = Vec::new();
+                                if !eingaben[i].beschreibung.is_empty() {
+                                    teile.push(eingaben[i].beschreibung.clone());
+                                }
+                                if eingaben[i].pflicht {
+                                    teile.push(t(sprache, "tools.pflicht"));
+                                }
+                                if geheim && gesetzt {
+                                    teile.push(t(sprache, "zugaenge.geheim_gesetzt"));
+                                }
+                                let hinweis = (!teile.is_empty()).then(|| teile.join(" · "));
+                                bausteine::feld(ui, &f, &feldname, hinweis.as_deref(), |ui| {
+                                    let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
+                                        .desired_width(bausteine::feldbreite(ui));
+                                    if geheim {
+                                        feld = feld.password(true);
+                                        if gesetzt {
+                                            // Gesetzt heißt: leer lassen behält es.
+                                            feld = feld.hint_text("••••");
+                                        }
+                                    }
+                                    ui.add(feld)
+                                });
+                                // Ein gesetztes Geheimnis lässt sich einzeln entfernen –
+                                // etwa das Anmelde-Passwort, nachdem der Schlüssel steht.
+                                // Den Knopf gibt es nur, wo ein Geheimnis gesetzt ist –
+                                // die Kurzschluss-Auswertung zeichnet ihn auch nur dann.
+                                if geheim
+                                    && gesetzt
+                                    && bausteine::knopf(
+                                        ui,
+                                        &f,
+                                        Icon::Papierkorb,
+                                        &t(sprache, "zugaenge.geheim_loeschen"),
+                                    )
+                                    .clicked()
+                                {
+                                    eingaben[i].gesetzt = false;
+                                    aktionen.push(Aktion::ZugangGeheimLoeschen {
+                                        eintrag: eintrag.clone(),
+                                        name: zugangsname.clone(),
+                                        feld: feldname.clone(),
+                                    });
+                                }
+                                // Hilfe-Link neben dem Feld wie im Angaben-Dialog.
+                                if let Some(link) = link {
+                                    let adresse = logik::link_adresse(&link, eingaben, &basis);
+                                    let fehlende = logik::link_fehlende(&link, eingaben, &basis);
+                                    ui.add_space(thema::SPACE_1);
+                                    let geklickt = ui
+                                        .add_enabled_ui(adresse.is_some(), |ui| {
+                                            let knopf =
+                                                bausteine::knopf(ui, &f, Icon::Extern, &link.text);
+                                            if fehlende.is_empty() {
+                                                knopf
+                                            } else {
+                                                knopf.on_disabled_hover_text(logik::link_hinweis(
+                                                    &fehlende, sprache,
+                                                ))
+                                            }
+                                        })
+                                        .inner
+                                        .clicked();
+                                    if let (true, Some(url)) = (geklickt, adresse) {
+                                        aktionen.push(Aktion::LinkOeffnen(url));
+                                    }
                                 }
                             }
-                            ui.add(feld)
                         });
-                        // Ein gesetztes Geheimnis lässt sich einzeln entfernen –
-                        // etwa das Anmelde-Passwort, nachdem der Schlüssel steht.
-                        // Den Knopf gibt es nur, wo ein Geheimnis gesetzt ist –
-                        // die Kurzschluss-Auswertung zeichnet ihn auch nur dann.
-                        if geheim
-                            && gesetzt
-                            && bausteine::knopf(
-                                ui,
-                                &f,
-                                Icon::Papierkorb,
-                                &t(sprache, "zugaenge.geheim_loeschen"),
-                            )
-                            .clicked()
-                        {
-                            eingaben[i].gesetzt = false;
-                            aktionen.push(Aktion::ZugangGeheimLoeschen {
-                                eintrag: eintrag.clone(),
-                                name: zugangsname.clone(),
-                                feld: feldname.clone(),
-                            });
-                        }
-                        // Hilfe-Link neben dem Feld wie im Angaben-Dialog.
-                        if let Some(link) = link {
-                            let adresse = logik::link_adresse(&link, eingaben, &basis);
-                            let fehlende = logik::link_fehlende(&link, eingaben, &basis);
-                            ui.add_space(thema::SPACE_1);
-                            let geklickt = ui
-                                .add_enabled_ui(adresse.is_some(), |ui| {
-                                    let knopf = bausteine::knopf(ui, &f, Icon::Extern, &link.text);
-                                    if fehlende.is_empty() {
-                                        knopf
-                                    } else {
-                                        knopf.on_disabled_hover_text(logik::link_hinweis(
-                                            &fehlende, sprache,
-                                        ))
-                                    }
-                                })
-                                .inner
-                                .clicked();
-                            if let (true, Some(url)) = (geklickt, adresse) {
-                                aktionen.push(Aktion::LinkOeffnen(url));
-                            }
-                        }
-                    }
                     ui.add_space(thema::SPACE_3);
                     ui.horizontal(|ui| {
                         let geklickt = ui

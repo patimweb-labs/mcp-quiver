@@ -365,6 +365,42 @@ fn tools_seite_zeigt_drei_karten_mit_drei_zustaenden() {
 }
 
 #[test]
+fn viele_felder_scrollen_und_speichern_bleibt_sichtbar() {
+    // Ein Eintrag mit vielen Feldern (z. B. E-Mail) in einem kleinen Fenster:
+    // der Dialog darf nicht oben und unten aus dem Fenster ragen.
+    let (breite, hoehe) = (900.0, 560.0);
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        (breite, hoehe),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+        .click();
+    h.run();
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        let vorlage = eingaben[0].clone();
+        for i in 0..12 {
+            let mut feld = vorlage.clone();
+            feld.name = format!("FELD_{i}");
+            eingaben.push(feld);
+        }
+    } else {
+        panic!("kein Angaben-Dialog");
+    }
+    h.run();
+    h.run();
+    let speichern = h.get_by_label("Speichern").rect();
+    assert!(
+        speichern.top() >= 0.0 && speichern.bottom() <= hoehe,
+        "Speichern liegt außerhalb des Fensters: {speichern:?}"
+    );
+    let titel = h.get_by_label("Angaben für Dateien").rect();
+    assert!(titel.top() >= 0.0, "der Titel ragt oben heraus: {titel:?}");
+}
+
+#[test]
 fn braucht_angaben_oeffnet_die_eingaben() {
     let mut h = fenster(
         modell(verbunden(), eintraege()),
@@ -1599,6 +1635,13 @@ fn zugang_bearbeiten_hat_festen_namen_und_loescht_ein_geheimnis() {
         "der Hinweis am Geheimfeld fehlt"
     );
     // „Löschen“ am Geheimfeld entfernt genau dieses Geheimnis.
+    let knopf = h
+        .get_all_by_role_and_label(Role::Button, "Geheimnis löschen")
+        .next()
+        .expect("Knopf am Geheimfeld");
+    // Die Feldliste scrollt (Höhe wie in der Verwaltung) – erst hinscrollen.
+    knopf.scroll_to_me();
+    h.run();
     let knopf = h
         .get_all_by_role_and_label(Role::Button, "Geheimnis löschen")
         .next()
