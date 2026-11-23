@@ -123,6 +123,19 @@ Auf der Admin-Seite lässt sich ein Eintrag abschalten, ohne ihn zu löschen
 Bibliothek und Sätzen, läuft aber auf keinem Gerät; der Client beendet ihn beim
 nächsten Abgleich.
 
+Manche Tools verwalten ihre Zugänge in **Profilen** (mehrere Wikis, Postfächer,
+Hosts, SAP-Systeme). Solche Einträge tragen eine *Einrichtung*; die Tools-Karte
+zeigt dann **Einrichten**. Der Client startet dafür dasselbe Programm mit
+derselben Umgebung und denselben `${feld}`-Platzhaltern wie die Laufzeit und
+wartet **ohne Frist**, bis der User die Seite im Browser abschließt: Exit 0 heißt
+eingerichtet und der Eintrag startet neu (neue Profile wirken sofort), Exit 1
+heißt abgebrochen, alles andere steht als Fehler in der Karte. Zugangsdaten
+durchlaufen dabei nie einen Agenten. In der Verwaltung steht der Befehl im
+Abschnitt *Einrichtung (optional)*, die Liste zeigt das Abzeichen *mit
+Einrichtung*.
+
+![Einrichten auf der Tools-Karte](docs/bilder/fenster-dark-einrichten.png)
+
 Umgebung (alles optional):
 
 | Variable | Bedeutung |

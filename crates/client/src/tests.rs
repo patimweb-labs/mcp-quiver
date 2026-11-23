@@ -86,7 +86,14 @@ fn sicht_zeigt_nur_client_und_geheim_felder() {
         },
     )]);
 
-    let sicht = eintraege_sicht(&soll, &lokal, &geheim, &laeufer, &BTreeMap::new());
+    let sicht = eintraege_sicht(
+        &soll,
+        &lokal,
+        &geheim,
+        &laeufer,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
     assert_eq!(sicht.len(), 1);
     let eintrag = &sicht[0];
     assert_eq!(eintrag.id, id);
@@ -125,6 +132,7 @@ fn sicht_ohne_laeufer_wartet() {
     }]);
     let sicht = eintraege_sicht(
         &soll,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -168,6 +176,7 @@ fn fehlende_werte_stehen_in_der_sicht() {
         &BTreeMap::new(),
         &BTreeMap::new(),
         &laeufer,
+        &BTreeMap::new(),
         &BTreeMap::new(),
     );
     assert_eq!(
@@ -256,6 +265,7 @@ fn anmeldung_steht_nur_bei_eintraegen_die_eine_brauchen() {
         &BTreeMap::new(),
         &BTreeMap::new(),
         &anmeldung,
+        &BTreeMap::new(),
     );
     let postfach = sicht.iter().find(|e| e.id == id).expect("postfach");
     assert_eq!(
@@ -280,7 +290,70 @@ fn anmeldung_steht_nur_bei_eintraegen_die_eine_brauchen() {
         &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
+        &BTreeMap::new(),
     );
     let postfach = sicht.iter().find(|e| e.id == id).expect("postfach");
     assert_eq!(postfach.anmeldung, Some(AnmeldeZustand::Unbekannt));
+}
+
+#[test]
+fn einrichtung_steht_nur_bei_eintraegen_die_eine_anbieten() {
+    let mut mit = eintrag("outline");
+    mit.einrichtung = Some(quiver_domain::Einrichtung {
+        einrichten: vec!["einrichten".into()],
+    });
+    let soll = Soll::neu(vec![
+        SollEintrag {
+            eintrag: mit,
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: eintrag("echo"),
+            werte: Werte::new(),
+        },
+    ]);
+    let id = EintragId::neu("outline");
+
+    // Ohne eigenen Zustand ist die Einrichtung bereit – nicht „läuft“.
+    let sicht = eintraege_sicht(
+        &soll,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let outline = sicht.iter().find(|e| e.id == id).expect("outline");
+    assert_eq!(outline.einrichtung, Some(EinrichtZustand::Bereit));
+    let echo = sicht
+        .iter()
+        .find(|e| e.id == EintragId::neu("echo"))
+        .expect("echo");
+    assert_eq!(
+        echo.einrichtung, None,
+        "ohne Einrichtung im Eintrag bleibt das Feld leer"
+    );
+
+    // Ein gemeldeter Zustand steht genau so in der Sicht.
+    let zustaende = BTreeMap::from([(
+        id.clone(),
+        EinrichtZustand::Fehler {
+            text: "Die Einrichtung endet mit Code 3".into(),
+        },
+    )]);
+    let sicht = eintraege_sicht(
+        &soll,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &zustaende,
+    );
+    let outline = sicht.iter().find(|e| e.id == id).expect("outline");
+    assert_eq!(
+        outline.einrichtung,
+        Some(EinrichtZustand::Fehler {
+            text: "Die Einrichtung endet mit Code 3".into()
+        })
+    );
 }

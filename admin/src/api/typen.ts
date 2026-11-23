@@ -60,6 +60,18 @@ export interface Anmeldung {
   abmelden: string[];
 }
 
+/**
+ * Wie der Client die Einrichtung eines `Stdio`-Tools startet (Aufgabe 11).
+ *
+ * `einrichten` ist eine Argumentliste für **dasselbe** Programm mit
+ * **derselben** Umgebung wie die Laufzeit des Eintrags. Der Befehl öffnet
+ * selbst eine Seite im Browser und endet, wenn der User sie abschließt.
+ */
+export interface Einrichtung {
+  /** Argumente für das Programm; Exit 0 = eingerichtet, Exit 1 = abgebrochen. */
+  einrichten: string[];
+}
+
 /** Ein MCP-Tool in der Bibliothek. */
 export interface Eintrag {
   id: EintragId;
@@ -80,6 +92,12 @@ export interface Eintrag {
    * Eintrag keine Anmeldung (Serde lässt `None` weg).
    */
   anmeldung?: Anmeldung | null;
+  /**
+   * Hat das Tool eine eigene Einrichtungsseite (Profile, Zugänge)? Dann bietet
+   * das Client-Fenster „Einrichten“ an; Zugangsdaten gehen so nie durch einen
+   * Agenten. Fehlt das Feld, gibt es keine Einrichtung (Serde lässt `None` weg).
+   */
+  einrichtung?: Einrichtung | null;
 }
 
 /** Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt. */

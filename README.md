@@ -118,6 +118,18 @@ On the admin side an entry can be switched off without deleting it (*Aktiv* in
 the edit dialog or the switch in the row). It stays in the library and in sets
 but runs on no device; the client stops it on its next sync.
 
+Some tools keep their credentials in **profiles** (several wikis, mailboxes,
+hosts, SAP systems). Such entries carry a *setup*; the tools card then shows
+**Set up**. The client runs the same program with the same environment and the
+same `${feld}` placeholders as the runtime and waits **without a deadline**
+until the user closes the page in the browser: exit 0 means done and the entry
+restarts (new profiles take effect immediately), exit 1 means cancelled,
+anything else is shown as an error on the card. Credentials never pass through
+an agent. In the admin interface the command sits in the *Einrichtung
+(optional)* section and the list shows a *mit Einrichtung* badge.
+
+![Setup on the tools card](docs/bilder/fenster-dark-einrichten.png)
+
 Environment (all optional):
 
 | Variable | Meaning |

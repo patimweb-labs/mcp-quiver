@@ -8,14 +8,20 @@ import {
   anmeldung_von,
   argumente_als_text,
   argumente_aus_text,
+  einrichtung_als_text,
+  einrichtung_aus_text,
+  einrichtung_ist_leer,
+  einrichtung_von,
   eintrag_pruefen,
   eintrag_saeubern,
   filter_eintraege,
   gueltige_kennung,
   hat_anmeldung,
+  hat_einrichtung,
   kennung_aus_titel,
   laufzeit_text,
   leere_anmeldung,
+  leere_einrichtung,
   neuer_eintrag,
   neues_feld,
   server_felder,
@@ -322,5 +328,76 @@ describe("Anmeldung", () => {
       status: ["status"],
       abmelden: ["abmelden"],
     });
+  });
+});
+
+describe("Einrichtung", () => {
+  /** Ein Eintrag mit Einrichtung. */
+  function mit_einrichtung() {
+    const eintrag = beispiel();
+    eintrag.einrichtung = { einrichten: ["einrichten", "${ABLAGE}"] };
+    return eintrag;
+  }
+
+  it("schreibt Argumente durch Leerzeichen getrennt und liest sie zurück", () => {
+    expect(einrichtung_als_text(["einrichten", "${ABLAGE}"])).toBe(
+      "einrichten ${ABLAGE}",
+    );
+    expect(einrichtung_als_text([])).toBe("");
+    expect(einrichtung_aus_text("  einrichten   --still ")).toEqual([
+      "einrichten",
+      "--still",
+    ]);
+    expect(einrichtung_aus_text("")).toEqual([]);
+    // Platzhalter bleiben ein Argument.
+    expect(einrichtung_aus_text("einrichten ${ABLAGE}")).toEqual([
+      "einrichten",
+      "${ABLAGE}",
+    ]);
+  });
+
+  it("erkennt eine leere Einrichtung", () => {
+    expect(einrichtung_ist_leer(leere_einrichtung())).toBe(true);
+    expect(einrichtung_ist_leer(null)).toBe(true);
+    expect(einrichtung_ist_leer(undefined)).toBe(true);
+    expect(einrichtung_ist_leer(mit_einrichtung().einrichtung)).toBe(false);
+    // Ältere Einträge kennen das Feld gar nicht.
+    const alt = beispiel();
+    delete alt.einrichtung;
+    expect(einrichtung_ist_leer(alt.einrichtung)).toBe(true);
+    expect(einrichtung_von(alt)).toEqual(leere_einrichtung());
+  });
+
+  it("zeigt das Abzeichen nur mit Einrichtung", () => {
+    expect(hat_einrichtung(beispiel())).toBe(false);
+    expect(hat_einrichtung(neuer_eintrag("neu"))).toBe(false);
+    expect(hat_einrichtung(mit_einrichtung())).toBe(true);
+  });
+
+  it("verlangt einen Befehl und nur bei Stdio", () => {
+    const eintrag = mit_einrichtung();
+    expect(eintrag_pruefen(eintrag)).toEqual({});
+
+    eintrag.einrichtung = leere_einrichtung();
+    expect(eintrag_pruefen(eintrag)).toHaveProperty("einrichtung.einrichten");
+
+    eintrag.einrichtung = mit_einrichtung().einrichtung;
+    eintrag.laufzeit = { art: "remote", url: "https://example.org", kopfzeilen: {} };
+    expect(eintrag_pruefen(eintrag).einrichtung).toContain("Stdio");
+  });
+
+  it("säubert die Argumente und leert den Abschnitt", () => {
+    const eintrag = mit_einrichtung();
+    eintrag.einrichtung = { einrichten: [" einrichten ", "", "  "] };
+    expect(eintrag_saeubern(eintrag).einrichtung).toEqual({
+      einrichten: ["einrichten"],
+    });
+
+    // Alles leer: dann steht im Vertrag keine Einrichtung.
+    eintrag.einrichtung = { einrichten: [" "] };
+    const leer = eintrag_saeubern(eintrag);
+    expect(leer.einrichtung).toBeNull();
+    // Das ist gültiges JSON für `Option<Einrichtung>`.
+    expect(JSON.parse(JSON.stringify(leer)).einrichtung).toBeNull();
   });
 });

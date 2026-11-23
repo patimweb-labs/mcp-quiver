@@ -5,7 +5,7 @@
 //! welche Farbe ein Zustand hat, was in einem Feld steht, welche Schnipsel
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
-use quiver_client::{AnmeldeZustand, EintragSicht, Modell, Verbindung};
+use quiver_client::{AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung};
 use quiver_domain::{FehlendesFeld, Quelle, Werte};
 use quiver_protocol::EintragZustand;
 
@@ -113,6 +113,48 @@ pub fn anmeldung_zeile(sprache: Sprache, zustand: &AnmeldeZustand) -> AnmeldeZei
             ton: Ton::Fehler,
             text: text.clone(),
             knopf: AnmeldeKnopf::Erneut,
+        },
+    }
+}
+
+/// Welcher Knopf zur Einrichtung gehört (Aufgabe 11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EinrichtKnopf {
+    /// Nichts zu tun – die Einrichtung ist im Browser geöffnet.
+    Keiner,
+    /// „Einrichten“: ein normaler Knopf, kein Hauptknopf.
+    Einrichten,
+    /// „Erneut versuchen“ nach einem Fehler.
+    Erneut,
+}
+
+/// Was die Karte zur Einrichtung eines Eintrags zeigt: Bedeutung, Text, Knopf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EinrichtZeile {
+    pub ton: Ton,
+    pub text: String,
+    pub knopf: EinrichtKnopf,
+}
+
+/// Die Einrichtungszeile eines Eintrags (Aufgabe 11): der Knopf „Einrichten“
+/// öffnet die Seite im Browser. Während sie offen ist, steht dort nur der
+/// leise Hinweis; nach einem Fehler sein Text und „Erneut versuchen“.
+pub fn einrichtung_zeile(sprache: Sprache, zustand: &EinrichtZustand) -> EinrichtZeile {
+    match zustand {
+        EinrichtZustand::Bereit => EinrichtZeile {
+            ton: Ton::Leise,
+            text: t(sprache, "einrichtung.bereit"),
+            knopf: EinrichtKnopf::Einrichten,
+        },
+        EinrichtZustand::Laeuft => EinrichtZeile {
+            ton: Ton::Leise,
+            text: t(sprache, "einrichtung.laeuft"),
+            knopf: EinrichtKnopf::Keiner,
+        },
+        EinrichtZustand::Fehler { text } => EinrichtZeile {
+            ton: Ton::Fehler,
+            text: text.clone(),
+            knopf: EinrichtKnopf::Erneut,
         },
     }
 }
@@ -575,6 +617,7 @@ mod tests {
             geheim_gesetzt: vec!["SCHLUESSEL".into()],
             tools: vec!["echo".into()],
             anmeldung: None,
+            einrichtung: None,
         }
     }
 
@@ -689,6 +732,37 @@ mod tests {
             },
         );
         assert_eq!(en.text, "Signed in as test@beispiel.de");
+    }
+
+    #[test]
+    fn einrichtung_hat_drei_zustaende_und_je_einen_knopf() {
+        let sprache = Sprache::De;
+        // Bereit: der Knopf „Einrichten“, leise erklärt.
+        let bereit = einrichtung_zeile(sprache, &EinrichtZustand::Bereit);
+        assert_eq!(bereit.ton, Ton::Leise);
+        assert_eq!(bereit.text, "Einrichtung im Browser");
+        assert_eq!(bereit.knopf, EinrichtKnopf::Einrichten);
+        // Läuft: derselbe leise Ton, aber kein Knopf – ein zweiter Klick
+        // würde nichts tun.
+        let laeuft = einrichtung_zeile(sprache, &EinrichtZustand::Laeuft);
+        assert_eq!(laeuft.ton, Ton::Leise);
+        assert_eq!(laeuft.text, "Einrichtung im Browser geöffnet …");
+        assert_eq!(laeuft.knopf, EinrichtKnopf::Keiner);
+        // Fehler: sein Text und „Erneut versuchen“.
+        let fehler = einrichtung_zeile(
+            sprache,
+            &EinrichtZustand::Fehler {
+                text: "Die Einrichtung endet mit Code 3".into(),
+            },
+        );
+        assert_eq!(fehler.ton, Ton::Fehler);
+        assert_eq!(fehler.text, "Die Einrichtung endet mit Code 3");
+        assert_eq!(fehler.knopf, EinrichtKnopf::Erneut);
+        // Englisch ist übersetzt, nicht kopiert.
+        let en = einrichtung_zeile(Sprache::En, &EinrichtZustand::Bereit);
+        assert_eq!(en.text, "Setup in the browser");
+        let en = einrichtung_zeile(Sprache::En, &EinrichtZustand::Laeuft);
+        assert_eq!(en.text, "Setup opened in the browser …");
     }
 
     #[test]

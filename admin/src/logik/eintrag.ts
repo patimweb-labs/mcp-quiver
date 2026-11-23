@@ -1,7 +1,15 @@
 // Der Eintrag als Modell: leere Vorlage, Kennung aus dem Titel, Textfelder
 // für Argumente und Umgebung, Prüfung vor dem Senden. Reine Funktionen.
 
-import type { Anmeldung, Eintrag, Feld, Laufzeit, Quelle, Werte } from "../api/typen";
+import type {
+  Anmeldung,
+  Eintrag,
+  Einrichtung,
+  Feld,
+  Laufzeit,
+  Quelle,
+  Werte,
+} from "../api/typen";
 import { tief_kopie } from "./kopie";
 
 /** Leere Vorlage für „Neu"; `id` wird beim Anlegen aus dem Titel gebildet. */
@@ -21,6 +29,7 @@ export function neuer_eintrag(id = ""): Eintrag {
     felder: [],
     aktiv: true,
     anmeldung: null,
+    einrichtung: null,
   };
 }
 
@@ -144,6 +153,45 @@ export function anmeldung_aus_text(text: string): string[] {
     .filter((wort) => wort.length > 0);
 }
 
+/** Ein leerer Eintrag zum Einrichten: ein Befehl, noch ohne Argumente. */
+export function leere_einrichtung(): Einrichtung {
+  return { einrichten: [] };
+}
+
+/** Die Einrichtung eines Eintrags; ältere Daten kennen das Feld nicht. */
+export function einrichtung_von(eintrag: Eintrag): Einrichtung {
+  return eintrag.einrichtung ?? leere_einrichtung();
+}
+
+/** Ohne Argumente gibt es keine Einrichtung. */
+export function einrichtung_ist_leer(
+  einrichtung: Einrichtung | null | undefined,
+): boolean {
+  if (!einrichtung) return true;
+  return einrichtung.einrichten.length === 0;
+}
+
+/** Bietet der Eintrag eine Einrichtung an? Für das Abzeichen in der Liste. */
+export function hat_einrichtung(eintrag: Eintrag): boolean {
+  return !einrichtung_ist_leer(eintrag.einrichtung);
+}
+
+/**
+ * Die Argumente der Einrichtung als ein Text, durch Leerzeichen getrennt
+ * (Aufgabe 11: „Argumente, Leerzeichen-getrennt“).
+ */
+export function einrichtung_als_text(argumente: string[]): string {
+  return argumente.join(" ");
+}
+
+/** Umkehrung: ein Argument je Wort, leere Wörter fallen weg. */
+export function einrichtung_aus_text(text: string): string[] {
+  return text
+    .split(/\s+/)
+    .map((wort) => wort.trim())
+    .filter((wort) => wort.length > 0);
+}
+
 /** Nur die Felder, die der Admin (Server) füllt. */
 export function server_felder(eintrag: Eintrag): Feld[] {
   return eintrag.felder.filter((feld) => feld.quelle === "server");
@@ -223,6 +271,16 @@ export function eintrag_saeubern(eintrag: Eintrag): Eintrag {
     // Drei leere Befehle sind keine Anmeldung – dann steht auch nichts im Vertrag.
     if (anmeldung_ist_leer(sauber.anmeldung)) sauber.anmeldung = null;
   }
+  if (sauber.einrichtung) {
+    const einrichtung = einrichtung_von(sauber);
+    sauber.einrichtung = {
+      einrichten: einrichtung.einrichten
+        .map((teil) => teil.trim())
+        .filter((teil) => teil.length > 0),
+    };
+    // Ohne Argumente gibt es keine Einrichtung.
+    if (einrichtung_ist_leer(sauber.einrichtung)) sauber.einrichtung = null;
+  }
   return sauber;
 }
 
@@ -281,6 +339,14 @@ export function eintrag_pruefen(eintrag: Eintrag): Record<string, string> {
           fehler[`anmeldung.${befehl}`] = "Befehl fehlt.";
         }
       }
+    }
+  }
+
+  if (eintrag.einrichtung) {
+    if (eintrag.laufzeit.art !== "stdio") {
+      fehler.einrichtung = "Eine Einrichtung gibt es nur für Stdio-Einträge.";
+    } else if (eintrag.einrichtung.einrichten.length === 0) {
+      fehler["einrichtung.einrichten"] = "Befehl fehlt.";
     }
   }
 

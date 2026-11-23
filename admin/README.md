@@ -55,6 +55,11 @@ In der Bibliothek trägt jeder Eintrag ein `aktiv` (Standard `true`, siehe
 läuft aber auf keinem Gerät: die Liste zeigt das Abzeichen *Abgeschaltet* und
 der Schalter in der Zeile dreht den Wert ohne den Bearbeiten-Dialog.
 
+Ein Eintrag kann außerdem eine *Anmeldung* und eine *Einrichtung* haben (beide
+nur für `stdio`, beide als Argumentliste für dasselbe Programm). Die Liste zeigt
+*mit Anmeldung* bzw. *mit Einrichtung*; im Bearbeiten-Dialog stehen dafür zwei
+zugeklappte Abschnitte, die sich öffnen, sobald etwas drinsteht.
+
 ## Themes und Tokens
 
 Drei Themes, sonst nichts: `dark`, `light`, `mono` (`data-theme` am `<html>`).

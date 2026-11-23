@@ -27,6 +27,9 @@ import {
   anmeldung_von,
   argumente_als_text,
   argumente_aus_text,
+  einrichtung_als_text,
+  einrichtung_aus_text,
+  einrichtung_von,
   eintrag_pruefen,
   eintrag_saeubern,
   kennung_aus_titel,
@@ -59,8 +62,11 @@ const idSelbstGesetzt = ref(false);
 const adressId = useId();
 const kopfzeilenId = useId();
 const anmeldungId = useId();
+const einrichtungId = useId();
 // Der Abschnitt „Anmeldung“ ist zugeklappt, solange niemand ihn braucht.
 const anmeldungOffen = ref(false);
+// Dasselbe für die Einrichtung (Aufgabe 11).
+const einrichtungOffen = ref(false);
 
 watch(
   () => props.offen,
@@ -73,6 +79,7 @@ watch(
     speicherfehler.value = "";
     idSelbstGesetzt.value = !props.neu;
     anmeldungOffen.value = !anmeldung_ist_leer_entwurf();
+    einrichtungOffen.value = !einrichtung_ist_leer_entwurf();
   },
   { immediate: true },
 );
@@ -108,7 +115,10 @@ function artSetzen(wert: string): void {
       ? { art: "remote", url: "", kopfzeilen: {} }
       : { art: "stdio", befehl: "", argumente: [], umgebung: {} };
   // Eine Anmeldung gibt es nur für Stdio-Einträge.
-  if (entwurf.value.laufzeit.art === "remote") entwurf.value.anmeldung = null;
+  if (entwurf.value.laufzeit.art === "remote") {
+    entwurf.value.anmeldung = null;
+    entwurf.value.einrichtung = null;
+  }
 }
 
 const befehl = computed(() => {
@@ -196,6 +206,21 @@ function anmeldungSetzen(befehl: Anmeldebefehl, text: string): void {
     ...bisher,
     [befehl]: anmeldung_aus_text(text),
   };
+}
+
+/** Ist im Entwurf schon eine Einrichtung angelegt? */
+function einrichtung_ist_leer_entwurf(): boolean {
+  const einrichtung = entwurf.value.einrichtung;
+  return !einrichtung || einrichtung.einrichten.length === 0;
+}
+
+/** Die Argumente der Einrichtung im Feld (Leerzeichen-getrennt). */
+const einrichtung = computed(() =>
+  einrichtung_als_text(einrichtung_von(entwurf.value).einrichten),
+);
+
+function einrichtungSetzen(text: string): void {
+  entwurf.value.einrichtung = { einrichten: einrichtung_aus_text(text) };
 }
 
 function feldHinzufuegen(): void {
@@ -457,6 +482,43 @@ async function speichern(): Promise<void> {
         </div>
       </section>
 
+      <section v-if="entwurf.laufzeit.art === 'stdio'" class="einrichtung">
+        <Klappknopf
+          :offen="einrichtungOffen"
+          :steuert="einrichtungId"
+          @umschalten="einrichtungOffen = !einrichtungOffen"
+        >
+          Einrichtung (optional)
+        </Klappknopf>
+        <p class="blass">
+          Verwalten Tools ihre Zugänge in Profilen, öffnet der Client die Seite
+          des Tools im Browser – nie ein Agent. Die Argumente gelten für
+          dasselbe Programm wie die Laufzeit. Exit 0 = eingerichtet, der
+          Eintrag startet danach neu; Exit 1 = abgebrochen.
+        </p>
+
+        <div v-if="einrichtungOffen" :id="einrichtungId" class="einrichtung__felder">
+          <p v-if="fehler.einrichtung" class="fehler" role="alert">
+            {{ fehler.einrichtung }}
+          </p>
+          <Feld
+            beschriftung="Argumente"
+            :fehler="fehler['einrichtung.einrichten']"
+            hinweis="Leerzeichen-getrennt, z. B. „einrichten“. Platzhalter ${feld} sind erlaubt."
+          >
+            <template #default="{ id }">
+              <WpInput
+                :id="id"
+                :model-value="einrichtung"
+                :state="fehler['einrichtung.einrichten'] ? 'invalid' : 'default'"
+                placeholder="einrichten"
+                @update:model-value="einrichtungSetzen"
+              />
+            </template>
+          </Feld>
+        </div>
+      </section>
+
       <div class="felder">
         <div class="felder__kopf">
           <span class="felder__titel">Felder</span>
@@ -571,6 +633,18 @@ async function speichern(): Promise<void> {
 }
 
 .anmeldung__felder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-1);
+}
+.einrichtung {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-1);
+  padding-top: var(--wp-space-3);
+}
+
+.einrichtung__felder {
   display: flex;
   flex-direction: column;
   gap: var(--wp-space-1);

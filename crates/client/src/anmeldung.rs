@@ -128,6 +128,24 @@ pub fn befehl_bauen(
             soll.eintrag.id
         );
     }
+    befehl_aus_liste(soll, liste, lokal, geheim)
+}
+
+/// Eine Befehlszeile aus einer Argumentliste bauen.
+///
+/// Programm, Umgebung und Platzhalter kommen aus derselben Funktion wie die
+/// Laufzeit selbst ([`quiver_domain::konfig_zusammensetzen`]); die Argumente
+/// der Liste werden genauso ersetzt. Gilt für die Anmeldung (Aufgabe 10) und
+/// die Einrichtung (Aufgabe 11) eines Eintrags.
+///
+/// Nur `Stdio`-Einträge haben ein Programm – bei einem entfernten MCP-Server
+/// gibt es nichts zu starten.
+pub fn befehl_aus_liste(
+    soll: &SollEintrag,
+    liste: &[String],
+    lokal: &Werte,
+    geheim: &Werte,
+) -> anyhow::Result<Befehl> {
     let laufzeit = quiver_domain::konfig_zusammensetzen(soll, lokal, geheim)
         .map_err(|fehlend| fehlende_angaben(&fehlend))?;
     let Laufzeit::Stdio {
@@ -135,7 +153,7 @@ pub fn befehl_bauen(
     } = laufzeit
     else {
         anyhow::bail!(
-            "Anmeldung gibt es nur für Stdio-Einträge, {} läuft entfernt",
+            "Einen Befehl gibt es nur für Stdio-Einträge, {} läuft entfernt",
             soll.eintrag.id
         );
     };
@@ -182,7 +200,20 @@ pub struct Ausgang {
 /// Einen Anmelde-Befehl ausführen. stdout und stderr gehen ins Protokoll des
 /// Clients (wie bei den MCP-Prozessen), nie in eine Meldung an den Server.
 pub async fn laufen(id: &EintragId, befehl: &Befehl, frist: Duration) -> anyhow::Result<Ausgang> {
-    tracing::info!(eintrag = %id, "Anmeldung: {}", befehl.zeile());
+    befehl_laufen(id, befehl, Some(frist)).await
+}
+
+/// Einen Befehl ausführen und auf sein Ende warten.
+///
+/// `frist: None` heißt: warten, bis der User fertig ist (so läuft die
+/// Einrichtung, Aufgabe 11). Eine Frist gibt es für die Anmeldung, damit ein
+/// hängender Status-Befehl den Kern nicht blockiert.
+pub async fn befehl_laufen(
+    id: &EintragId,
+    befehl: &Befehl,
+    frist: Option<Duration>,
+) -> anyhow::Result<Ausgang> {
+    tracing::info!(eintrag = %id, "Befehl: {}", befehl.zeile());
     let mut kommando = tokio::process::Command::new(&befehl.programm);
     kommando
         .args(&befehl.argumente)
@@ -204,23 +235,27 @@ pub async fn laufen(id: &EintragId, befehl: &Befehl, frist: Duration) -> anyhow:
         .take()
         .map(|stderr| tokio::spawn(fehler_lesen(id.als_str().to_string(), stderr)));
 
-    let status = match tokio::time::timeout(frist, kind.wait()).await {
-        Ok(status) => status.context("Der Befehl endet nicht ordentlich")?,
-        Err(_) => {
-            let _ = kind.kill().await;
-            if let Some(aufgabe) = &aus_aufgabe {
-                aufgabe.abort();
-            }
-            if let Some(aufgabe) = &err_aufgabe {
-                aufgabe.abort();
-            }
-            anyhow::bail!(
-                "{} antwortet nicht binnen {} s",
-                befehl.programm,
-                frist.as_secs()
-            );
-        }
+    // Ohne Frist wird einfach gewartet: die Einrichtung endet selbst, wenn der
+    // User die Seite abschließt oder abbricht.
+    let gewartet = match frist {
+        None => Some(kind.wait().await),
+        Some(frist) => tokio::time::timeout(frist, kind.wait()).await.ok(),
     };
+    let Some(status) = gewartet else {
+        let _ = kind.kill().await;
+        if let Some(aufgabe) = &aus_aufgabe {
+            aufgabe.abort();
+        }
+        if let Some(aufgabe) = &err_aufgabe {
+            aufgabe.abort();
+        }
+        anyhow::bail!(
+            "{} antwortet nicht binnen {} s",
+            befehl.programm,
+            frist.map(|frist| frist.as_secs()).unwrap_or_default()
+        );
+    };
+    let status = status.context("Der Befehl endet nicht ordentlich")?;
     let ausgabe = match aus_aufgabe {
         Some(aufgabe) => aufgabe.await.unwrap_or_default(),
         None => String::new(),

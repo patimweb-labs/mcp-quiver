@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Eine Attrappe für die Anmeldung eines Eintrags (Aufgabe 10).
+//! Eine Attrappe für die Anmeldung und die Einrichtung eines Eintrags
+//! (Aufgaben 10 und 11).
 //!
 //! Sie steht für ein Werkzeug wie quiver-m365: **ein** Programm mit
 //! Unterbefehlen. `mcp` startet den MCP-Server über stdin/stdout, die anderen
-//! drei Befehle steuern die Anmeldung. Der Zustand liegt in einer Datei;
+//! Befehle steuern Anmeldung und Einrichtung. Der Zustand liegt in einer Datei;
 //! Aufgabe 10 verlangt, dass alle Befehle dasselbe Programm mit derselben
 //! Umgebung sind, deshalb kommt der Pfad der Datei aus
 //! `QUIVER_ATTRAPPE_DATEI` – also aus der Umgebung des Eintrags.
@@ -14,12 +15,20 @@
 //! QUIVER_ATTRAPPE_DATEI=/tmp/stand quiver-anmelde-attrappe status
 //! QUIVER_ATTRAPPE_DATEI=/tmp/stand quiver-anmelde-attrappe anmelden test@beispiel.de
 //! QUIVER_ATTRAPPE_DATEI=/tmp/stand quiver-anmelde-attrappe abmelden
+//! quiver-anmelde-attrappe einrichten /tmp/einrichtung.stand
+//! quiver-anmelde-attrappe einrichten abbruch
 //! QUIVER_ATTRAPPE_MCP=/pfad/quiver-demo-mcp quiver-anmelde-attrappe mcp
 //! ```
 //!
 //! - `status`: angemeldet → Konto ausgeben, Exit 0; sonst Exit 1.
 //! - `anmelden [konto]`: schreibt das Konto in die Datei, Exit 0.
 //! - `abmelden`: leert die Datei, Exit 0.
+//! - `einrichten <datei>`: schreibt „eingerichtet“ in die Datei, Exit 0 – so
+//!   wie ein Tool, das die Seite im Browser öffnet und danach Profile hat.
+//!   `einrichten abbruch`: Exit 1 (der User hat die Seite geschlossen).
+//!   Steht `QUIVER_ATTRAPPE_WARTE_AUF` in der Umgebung, wartet der Befehl
+//!   vorher auf diese Datei – damit ein Test den Zustand „läuft“ festhalten
+//!   und den zweiten Klick prüfen kann.
 //! - `mcp`: reicht stdin/stdout an den MCP-Server aus `QUIVER_ATTRAPPE_MCP`
 //!   weiter – so kann ein Test den Neustart an dessen Protokoll abzählen.
 //! - `kaputt`: Exit 3 – für den Fehlerfall im Test.
@@ -70,6 +79,27 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         }
+        // Einrichten (Aufgabe 11): die Seite im Browser öffnen und danach
+        // Profile haben. Hier steht dafür eine Datei.
+        "einrichten" => {
+            if konto.trim() == "abbruch" {
+                println!("abgebrochen");
+                return ExitCode::from(1);
+            }
+            if konto.trim().is_empty() {
+                eprintln!("einrichten braucht eine Datei");
+                return ExitCode::from(2);
+            }
+            if !warten_erlaubt() {
+                return ExitCode::from(2);
+            }
+            if schreiben(&konto, "eingerichtet") {
+                println!("eingerichtet");
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(2)
+            }
+        }
         "kaputt" => {
             eprintln!("kaputt");
             ExitCode::from(3)
@@ -98,6 +128,27 @@ fn mcp() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// Auf eine Datei warten, wenn der Test das verlangt (Aufgabe 11): so lässt
+/// sich der Zustand „läuft“ festhalten. Ohne die Variable geht es sofort
+/// weiter; `false`, wenn die Frist abläuft.
+fn warten_erlaubt() -> bool {
+    let Ok(datei) = std::env::var("QUIVER_ATTRAPPE_WARTE_AUF") else {
+        return true;
+    };
+    if datei.trim().is_empty() {
+        return true;
+    }
+    let frist = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !std::path::Path::new(&datei).exists() {
+        if std::time::Instant::now() > frist {
+            eprintln!("{datei} kam nicht");
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    true
 }
 
 /// Den Zustand ablegen; `false`, wenn die Datei nicht schreibbar ist.

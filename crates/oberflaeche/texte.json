@@ -410,5 +410,21 @@
   "anmeldung.beenden_text": {
     "de": "{} wird abgemeldet. Der Eintrag wird danach neu gestartet.",
     "en": "{} will be signed out. The entry restarts afterwards."
+  },
+  "einrichtung.bereit": {
+    "de": "Einrichtung im Browser",
+    "en": "Setup in the browser"
+  },
+  "einrichtung.einrichten": {
+    "de": "Einrichten",
+    "en": "Set up"
+  },
+  "einrichtung.laeuft": {
+    "de": "Einrichtung im Browser geöffnet …",
+    "en": "Setup opened in the browser …"
+  },
+  "einrichtung.erneut": {
+    "de": "Erneut versuchen",
+    "en": "Try again"
   }
 }

@@ -30,6 +30,7 @@ import Status from "../bausteine/Status.vue";
 import {
   filter_eintraege,
   hat_anmeldung,
+  hat_einrichtung,
   herkunft_text,
   laufzeit_text,
   neuer_eintrag,
@@ -222,6 +223,9 @@ onMounted(laden);
               <span class="marke-chip">{{ laufzeit_text(eintrag.laufzeit) }}</span>
               <span v-if="hat_anmeldung(eintrag)" class="marke-chip">
                 mit Anmeldung
+              </span>
+              <span v-if="hat_einrichtung(eintrag)" class="marke-chip">
+                mit Einrichtung
               </span>
               <Status
                 v-if="!eintrag.aktiv"

@@ -216,16 +216,19 @@ fn musterseite_steht_in_allen_teilen() {
     );
 }
 
-/// Wohin die Bilder gehen (relativ ab dem Wurzelverzeichnis des Repos).
+/// Wohin die Bilder gehen (relativ ab dem Wurzelverzeichnis des Repos). Ein
+/// leerer Wert heißt „keine Bilder“; sonst landeten sie im Wurzelverzeichnis.
 fn bilder_ordner() -> Option<PathBuf> {
-    Some(
-        match std::env::var_os("QUIVER_BILDER").map(PathBuf::from)? {
-            pfad if pfad.is_absolute() => pfad,
-            pfad => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join(pfad),
-        },
-    )
+    let gesetzt = std::env::var_os("QUIVER_BILDER").map(PathBuf::from)?;
+    if gesetzt.as_os_str().is_empty() {
+        return None;
+    }
+    Some(match gesetzt {
+        pfad if pfad.is_absolute() => pfad,
+        pfad => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(pfad),
+    })
 }
 
 /// Die beiden Bilder für die Doku — dasselbe Bild in beiden Themes.

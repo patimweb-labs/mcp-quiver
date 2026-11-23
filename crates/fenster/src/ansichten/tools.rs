@@ -55,6 +55,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let mut aufklappen = false;
     let mut anmelden = false;
     let mut abmelden = false;
+    let mut einrichten = false;
     let offen = sicht.offen.contains(&eintrag.id);
 
     bausteine::karte(ui, &f, &eintrag.titel, unter.as_deref(), |ui| {
@@ -154,6 +155,50 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     },
                 );
         }
+        // Die Einrichtung (Aufgabe 11): Tools verwalten Zugänge in Profilen.
+        // Eingerichtet wird auf der Seite des Tools selbst — „Einrichten“ ist
+        // ein normaler Knopf, kein Hauptknopf.
+        if let Some(zustand) = &eintrag.einrichtung {
+            ui.add_space(thema::SPACE_2);
+            let zeile = logik::einrichtung_zeile(sprache, zustand);
+            egui::Sides::new()
+                .height(thema::SIZE_CONTROL_SM)
+                .shrink_right()
+                .truncate()
+                .show(
+                    ui,
+                    |ui| {
+                        bausteine::status(ui, &f, zeile.ton, &zeile.text);
+                    },
+                    |ui| match zeile.knopf {
+                        logik::EinrichtKnopf::Keiner => {}
+                        logik::EinrichtKnopf::Einrichten => {
+                            if bausteine::knopf(
+                                ui,
+                                &f,
+                                Icon::Einstellungen,
+                                &t(sprache, "einrichtung.einrichten"),
+                            )
+                            .clicked()
+                            {
+                                einrichten = true;
+                            }
+                        }
+                        logik::EinrichtKnopf::Erneut => {
+                            if bausteine::knopf(
+                                ui,
+                                &f,
+                                Icon::Neuladen,
+                                &t(sprache, "einrichtung.erneut"),
+                            )
+                            .clicked()
+                            {
+                                einrichten = true;
+                            }
+                        }
+                    },
+                );
+        }
         // Was fehlt, mit der Erklärung des Felds — nicht nur der Name.
         let fehlende = logik::fehlende_texte(&eintrag.fehlende);
         if !fehlende.is_empty() {
@@ -203,6 +248,11 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     }
     if anmelden {
         aktionen.push(Aktion::EintragAnmelden {
+            eintrag: eintrag.id.clone(),
+        });
+    }
+    if einrichten {
+        aktionen.push(Aktion::EintragEinrichten {
             eintrag: eintrag.id.clone(),
         });
     }

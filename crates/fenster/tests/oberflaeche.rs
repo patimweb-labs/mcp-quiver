@@ -14,7 +14,9 @@ use std::rc::Rc;
 
 use egui_kittest::kittest::{By, NodeT, Queryable};
 use egui_kittest::Harness;
-use quiver_client::{AgentSicht, AnmeldeZustand, EintragSicht, Modell, Verbindung};
+use quiver_client::{
+    AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung,
+};
 use quiver_domain::{EintragId, FehlendesFeld, Feld, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
 use quiver_fenster::egui::accesskit::Role;
@@ -102,6 +104,7 @@ fn eintrag(
         geheim_gesetzt: Vec::new(),
         tools: Vec::new(),
         anmeldung: None,
+        einrichtung: None,
     }
 }
 
@@ -179,6 +182,35 @@ fn anmelde_zustaende() -> Vec<EintragSicht> {
             "Freigaben",
             AnmeldeZustand::Fehler {
                 text: "Der Status endet mit Code 3".into(),
+            },
+        ),
+    ]
+}
+
+/// Ein Eintrag mit Einrichtung, in einem bestimmten Zustand (Aufgabe 11).
+fn einricht_eintrag(id: &str, titel: &str, einrichtung: EinrichtZustand) -> EintragSicht {
+    let mut eintrag = eintrag(
+        id,
+        titel,
+        "Verwaltet Zugänge in Profilen.",
+        EintragZustand::Laeuft { tools: 1 },
+        Vec::new(),
+    );
+    eintrag.tools = vec!["lesen".into()];
+    eintrag.einrichtung = Some(einrichtung);
+    eintrag
+}
+
+/// Drei Einträge, drei Einrichtungszustände – wie sie die Karte unterscheiden muss.
+fn einricht_zustaende() -> Vec<EintragSicht> {
+    vec![
+        einricht_eintrag("outline", "Outline", EinrichtZustand::Bereit),
+        einricht_eintrag("ssh", "SSH", EinrichtZustand::Laeuft),
+        einricht_eintrag(
+            "abap",
+            "ABAP",
+            EinrichtZustand::Fehler {
+                text: "Die Einrichtung endet mit Code 3".into(),
             },
         ),
     ]
@@ -612,16 +644,19 @@ fn hand_cursor_ueber_jedem_knopf_der_toolsseite() {
 
 /// Wohin die Bildschirmfotos gehen. Ein relativer Pfad gilt ab dem
 /// Wurzelverzeichnis des Repos — so tut `QUIVER_BILDER=docs/bilder` überall
-/// dasselbe, auch wenn cargo im Paketordner testet.
+/// dasselbe, auch wenn cargo im Paketordner testet. Ein leerer Wert heißt
+/// „keine Bilder“; sonst landeten sie im Wurzelverzeichnis.
 fn bilder_ordner() -> Option<PathBuf> {
-    Some(
-        match std::env::var_os("QUIVER_BILDER").map(PathBuf::from)? {
-            pfad if pfad.is_absolute() => pfad,
-            pfad => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join(pfad),
-        },
-    )
+    let gesetzt = std::env::var_os("QUIVER_BILDER").map(PathBuf::from)?;
+    if gesetzt.as_os_str().is_empty() {
+        return None;
+    }
+    Some(match gesetzt {
+        pfad if pfad.is_absolute() => pfad,
+        pfad => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(pfad),
+    })
 }
 
 /// Alle Seiten in allen drei Themes: nichts stürzt ab, jede Seite hat ihren
@@ -902,6 +937,148 @@ fn anmeldefehler_zeigt_text_und_erneut_versuchen() {
         .borrow()
         .contains(&Aktion::EintragAnmelden {
             eintrag: EintragId::neu("freigaben")
+        }));
+}
+
+/// Die Einrichtung auf der Tools-Karte: alle drei Zustände in einem Bild
+/// (`fenster-{dark,light}-einrichten.png`). Alle drei Themes werden gezeichnet,
+/// gespeichert werden nur die beiden, die die Doku zeigt.
+#[test]
+fn bildschirmfoto_der_einrichtung() {
+    for thema in Thema::ALLE {
+        let ziel = bilder_ordner();
+        let mut h = fenster(
+            modell(verbunden(), einricht_zustaende()),
+            Some(Seite::Tools),
+            thema,
+            (1200.0, 1000.0),
+        );
+        h.run();
+        // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
+        assert!(
+            h.query_by_label("Einrichtung im Browser").is_some(),
+            "{}: „Bereit“ fehlt",
+            thema.name()
+        );
+        assert!(
+            h.query_by_label("Einrichtung im Browser geöffnet …")
+                .is_some(),
+            "{}: „Läuft“ fehlt",
+            thema.name()
+        );
+        assert!(
+            h.query_by_label("Die Einrichtung endet mit Code 3")
+                .is_some(),
+            "{}: der Fehlertext fehlt",
+            thema.name()
+        );
+        let Some(ziel) = &ziel else {
+            continue;
+        };
+        if matches!(thema, Thema::Dunkel | Thema::Hell) {
+            let bild = h.render().expect("zeichnen (wgpu)");
+            bild.save(ziel.join(format!("fenster-{}-einrichten.png", thema.name())))
+                .expect("Bild schreibbar");
+        }
+    }
+}
+
+#[test]
+fn bereit_zeigt_den_knopf_einrichten() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![einricht_eintrag(
+                "outline",
+                "Outline",
+                EinrichtZustand::Bereit,
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h.query_by_label("Einrichtung im Browser").is_some());
+    // Hand-Cursor auf dem Knopf, der die Seite im Browser öffnet
+    // (AGENTS.md §2.12).
+    let knopf = h.get_by_role_and_label(Role::Button, "Einrichten");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Einrichten“"
+    );
+    h.get_by_role_and_label(Role::Button, "Einrichten").click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EintragEinrichten {
+                eintrag: EintragId::neu("outline")
+            }),
+        "der Klick muss die Einrichtung auslösen: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+}
+
+#[test]
+fn laufende_einrichtung_hat_keinen_knopf() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![einricht_eintrag("ssh", "SSH", EinrichtZustand::Laeuft)],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h
+        .query_by_label("Einrichtung im Browser geöffnet …")
+        .is_some());
+    for knopf in ["Einrichten", "Erneut versuchen"] {
+        assert!(
+            h.query_by_role_and_label(Role::Button, knopf).is_none(),
+            "„{knopf}“ darf während der Einrichtung nicht da sein"
+        );
+    }
+}
+
+#[test]
+fn einrichtungsfehler_zeigt_text_und_erneut_versuchen() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![einricht_eintrag(
+                "abap",
+                "ABAP",
+                EinrichtZustand::Fehler {
+                    text: "Die Einrichtung endet mit Code 3".into(),
+                },
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h
+        .query_by_label("Die Einrichtung endet mit Code 3")
+        .is_some());
+    h.get_by_role_and_label(Role::Button, "Erneut versuchen")
+        .click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::EintragEinrichten {
+            eintrag: EintragId::neu("abap")
         }));
 }
 

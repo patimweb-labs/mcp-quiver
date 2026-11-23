@@ -63,6 +63,9 @@ pub enum Aktion {
     EintragAnmelden { eintrag: EintragId },
     /// Die Anmeldung eines Eintrags beenden (nach der Rückfrage im Dialog).
     EintragAbmelden { eintrag: EintragId },
+    /// Die Einrichtung eines Eintrags im Browser starten (Aufgabe 11): das
+    /// Tool öffnet seine Seite selbst, ein Agent löst sie nie aus.
+    EintragEinrichten { eintrag: EintragId },
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -274,6 +277,15 @@ mod tests {
                 eintrag: EintragId::neu("postfach")
             },
             "anmelden und abmelden sind zwei Aktionen"
+        );
+        assert_ne!(
+            Aktion::EintragAnmelden {
+                eintrag: EintragId::neu("postfach")
+            },
+            Aktion::EintragEinrichten {
+                eintrag: EintragId::neu("postfach")
+            },
+            "anmelden und einrichten sind zwei Aktionen"
         );
     }
 

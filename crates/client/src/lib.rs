@@ -30,6 +30,7 @@
 
 mod abgleich;
 mod anmeldung;
+mod einrichtung;
 mod endpunkt;
 mod hilfen;
 mod laufzeit;
@@ -52,6 +53,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Notify};
 
 pub use anmeldung::AnmeldeZustand;
+pub use einrichtung::EinrichtZustand;
 use hilfen::Abbruch;
 pub use tresor::{Schluesselbund, SpeicherTresor, Tresor};
 
@@ -137,6 +139,9 @@ pub struct EintragSicht {
     /// Wie es um die Anmeldung steht — `None`, wenn der Eintrag keine braucht.
     /// Der Zustand bleibt lokal und geht nie an den Server.
     pub anmeldung: Option<AnmeldeZustand>,
+    /// Wie es um die Einrichtung steht — `None`, wenn der Eintrag keine
+    /// anbietet. Auch dieser Zustand bleibt lokal.
+    pub einrichtung: Option<EinrichtZustand>,
 }
 
 /// Ein gekoppelter Agent, wie ihn das Fenster zeigt.
@@ -203,6 +208,10 @@ struct Stand {
     laeufer: BTreeMap<EintragId, Laeufer>,
     /// Anmeldezustand je Eintrag; nur lokal, gehört nicht zur Meldung.
     anmeldung: BTreeMap<EintragId, AnmeldeZustand>,
+    /// Einrichtungszustand je Eintrag; ebenfalls nur lokal.
+    einrichtung: BTreeMap<EintragId, EinrichtZustand>,
+    /// Einträge, deren Einrichtung gerade läuft (höchstens einer je Eintrag).
+    einrichtung_laufend: BTreeSet<EintragId>,
     verbindung: Verbindung,
     endpunkt: String,
 }
@@ -222,6 +231,7 @@ impl Stand {
                 &geheim_gesetzt,
                 &self.laeufer,
                 &self.anmeldung,
+                &self.einrichtung,
             ),
             agenten: self
                 .agenten
@@ -258,6 +268,7 @@ fn eintraege_sicht(
     geheim_gesetzt: &BTreeMap<EintragId, BTreeSet<String>>,
     laeufer: &BTreeMap<EintragId, Laeufer>,
     anmeldung: &BTreeMap<EintragId, AnmeldeZustand>,
+    einrichtung: &BTreeMap<EintragId, EinrichtZustand>,
 ) -> Vec<EintragSicht> {
     soll.eintraege
         .iter()
@@ -317,6 +328,12 @@ fn eintraege_sicht(
                         .get(id)
                         .cloned()
                         .unwrap_or(AnmeldeZustand::Unbekannt)
+                }),
+                einrichtung: eintrag.eintrag.einrichtung.as_ref().map(|_| {
+                    einrichtung
+                        .get(id)
+                        .cloned()
+                        .unwrap_or(EinrichtZustand::Bereit)
                 }),
             }
         })
@@ -446,6 +463,43 @@ impl Innen {
             stand.anmeldung.insert(id.clone(), zustand);
         }
         self.modell_schicken();
+    }
+
+    /// Den Einrichtungszustand eines Eintrags setzen – nur lokal, nie an den Server.
+    pub(crate) fn einrichtung_setzen(&self, id: &EintragId, zustand: EinrichtZustand) {
+        {
+            let mut stand = self.stand();
+            if !stand.soll.eintraege.iter().any(|e| &e.eintrag.id == id) {
+                return;
+            }
+            if stand.einrichtung.get(id) == Some(&zustand) {
+                return;
+            }
+            stand.einrichtung.insert(id.clone(), zustand);
+        }
+        self.modell_schicken();
+    }
+
+    /// Eine Einrichtung beginnen. `false`, wenn für diesen Eintrag schon eine
+    /// läuft – dann tut ein zweiter Klick nichts (Aufgabe 11).
+    pub(crate) fn einrichtung_beginnen(&self, id: &EintragId) -> bool {
+        {
+            let mut stand = self.stand();
+            if !stand.einrichtung_laufend.insert(id.clone()) {
+                return false;
+            }
+            stand
+                .einrichtung
+                .insert(id.clone(), EinrichtZustand::Laeuft);
+        }
+        self.modell_schicken();
+        true
+    }
+
+    /// Die Marke „läuft“ wieder freigeben; den Zustand setzt der Aufrufer
+    /// (`Bereit` oder `Fehler`), weil nur er den Ausgang kennt.
+    pub(crate) fn einrichtung_freigeben(&self, id: &EintragId) {
+        self.stand().einrichtung_laufend.remove(id);
     }
 
     /// Lokale und geheime Werte eines Eintrags.
@@ -841,6 +895,16 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
                 .iter()
                 .any(|eintrag| &eintrag.eintrag.id == id)
         });
+        stand.einrichtung.retain(|id, _| {
+            soll.eintraege
+                .iter()
+                .any(|eintrag| &eintrag.eintrag.id == id)
+        });
+        stand.einrichtung_laufend.retain(|id| {
+            soll.eintraege
+                .iter()
+                .any(|eintrag| &eintrag.eintrag.id == id)
+        });
         stand.soll = soll.clone();
     }
     for aktion in aktionen {
@@ -917,6 +981,8 @@ impl Kern {
                 .unwrap_or_else(|| Soll::neu(Vec::new())),
             laeufer: BTreeMap::new(),
             anmeldung: BTreeMap::new(),
+            einrichtung: BTreeMap::new(),
+            einrichtung_laufend: BTreeSet::new(),
             verbindung,
             endpunkt: endpunkt.clone(),
         };
@@ -1014,6 +1080,8 @@ impl Kern {
             stand.token = None;
             stand.soll = Soll::neu(Vec::new());
             stand.anmeldung.clear();
+            stand.einrichtung.clear();
+            stand.einrichtung_laufend.clear();
             stand.verbindung = Verbindung::NichtEingebunden;
         }
         self.innen.speichern();
@@ -1044,6 +1112,63 @@ impl Kern {
         status_pruefen(&self.innen, eintrag).await;
         self.innen.neu_starten(eintrag).await;
         Ok(())
+    }
+
+    /// Die Einrichtung eines Eintrags im Fenster auslösen (Aufgabe 11).
+    ///
+    /// Der Befehl öffnet selbst die Seite im Browser und endet, wenn der User
+    /// fertig ist – **ohne Frist**. Exit 0 heißt „eingerichtet“; dann wird der
+    /// Eintrag **neu gestartet**, damit neue Profile sofort wirken. Exit 1
+    /// heißt „abgebrochen“: `Bereit`, ohne Neustart. Alles andere ist ein
+    /// Fehler und steht im Einrichtungszustand.
+    ///
+    /// Höchstens eine Einrichtung je Eintrag: ein zweiter Klick tut nichts.
+    pub async fn einrichten(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        let soll = self.innen.soll_eintrag(eintrag).ok_or_else(|| {
+            anyhow::anyhow!("Eintrag {eintrag} ist diesem Gerät nicht zugewiesen")
+        })?;
+        if !self.innen.einrichtung_beginnen(eintrag) {
+            return Ok(());
+        }
+        let ergebnis = self.einrichtung_ausfuehren(eintrag, &soll).await;
+        self.innen.einrichtung_freigeben(eintrag);
+        match ergebnis {
+            Ok(ausgang) => match einrichtung::ergebnis_aus(&ausgang) {
+                einrichtung::Ergebnis::Fertig { neustart } => {
+                    self.innen
+                        .einrichtung_setzen(eintrag, EinrichtZustand::Bereit);
+                    if neustart {
+                        self.innen.neu_starten(eintrag).await;
+                    }
+                    Ok(())
+                }
+                einrichtung::Ergebnis::Fehler { text } => {
+                    tracing::warn!(eintrag = %eintrag, "{text}");
+                    self.innen.einrichtung_setzen(
+                        eintrag,
+                        EinrichtZustand::Fehler { text: text.clone() },
+                    );
+                    anyhow::bail!(text)
+                }
+            },
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen
+                    .einrichtung_setzen(eintrag, EinrichtZustand::Fehler { text: text.clone() });
+                Err(fehler)
+            }
+        }
+    }
+
+    /// Die Befehlszeile bauen und ausführen.
+    async fn einrichtung_ausfuehren(
+        &self,
+        eintrag: &EintragId,
+        soll: &SollEintrag,
+    ) -> anyhow::Result<anmeldung::Ausgang> {
+        let (lokal, geheim) = self.innen.werte(eintrag);
+        let befehl = einrichtung::befehl_bauen(soll, &lokal, &geheim)?;
+        einrichtung::laufen(eintrag, &befehl).await
     }
 
     /// Einen der drei Anmelde-Befehle ausführen. Scheitert er, steht der
