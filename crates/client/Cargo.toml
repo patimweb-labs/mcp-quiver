@@ -11,6 +11,10 @@ description = "mcp-quiver: Client-Kern â€” Abgleich, Laufzeiten, MCP-Endpunkt fÃ
 name = "quiver-echo-mcp"
 path = "src/bin/quiver-echo-mcp.rs"
 
+[[bin]]
+name = "quiver-demo-mcp"
+path = "src/bin/quiver-demo-mcp.rs"
+
 [dependencies]
 quiver-domain.workspace = true
 quiver-protocol.workspace = true
