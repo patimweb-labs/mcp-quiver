@@ -29,6 +29,7 @@
 //! eines Eintrags in dessen Umgebung eingesetzt. Der Agent sieht sie nie.
 
 mod abgleich;
+mod anmeldung;
 mod endpunkt;
 mod hilfen;
 mod laufzeit;
@@ -50,8 +51,12 @@ use rmcp::{Peer, RoleClient, RoleServer};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Notify};
 
+pub use anmeldung::AnmeldeZustand;
 use hilfen::Abbruch;
 pub use tresor::{Schluesselbund, SpeicherTresor, Tresor};
+
+/// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
+const STATUS_ABSTAND: Duration = Duration::from_secs(10 * 60);
 
 /// Die Version dieses Clients, wie sie in der Meldung an den Server steht.
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -129,6 +134,9 @@ pub struct EintragSicht {
     pub geheim_gesetzt: Vec<String>,
     /// Werkzeugnamen ohne Präfix (`echo`, nicht `echo__echo`).
     pub tools: Vec<String>,
+    /// Wie es um die Anmeldung steht — `None`, wenn der Eintrag keine braucht.
+    /// Der Zustand bleibt lokal und geht nie an den Server.
+    pub anmeldung: Option<AnmeldeZustand>,
 }
 
 /// Ein gekoppelter Agent, wie ihn das Fenster zeigt.
@@ -193,6 +201,8 @@ struct Stand {
     agenten: Vec<profil::Agent>,
     soll: Soll,
     laeufer: BTreeMap<EintragId, Laeufer>,
+    /// Anmeldezustand je Eintrag; nur lokal, gehört nicht zur Meldung.
+    anmeldung: BTreeMap<EintragId, AnmeldeZustand>,
     verbindung: Verbindung,
     endpunkt: String,
 }
@@ -211,6 +221,7 @@ impl Stand {
                 &self.lokale_werte,
                 &geheim_gesetzt,
                 &self.laeufer,
+                &self.anmeldung,
             ),
             agenten: self
                 .agenten
@@ -246,6 +257,7 @@ fn eintraege_sicht(
     lokale_werte: &BTreeMap<EintragId, Werte>,
     geheim_gesetzt: &BTreeMap<EintragId, BTreeSet<String>>,
     laeufer: &BTreeMap<EintragId, Laeufer>,
+    anmeldung: &BTreeMap<EintragId, AnmeldeZustand>,
 ) -> Vec<EintragSicht> {
     soll.eintraege
         .iter()
@@ -300,6 +312,12 @@ fn eintraege_sicht(
                             .collect()
                     })
                     .unwrap_or_default(),
+                anmeldung: eintrag.eintrag.anmeldung.as_ref().map(|_| {
+                    anmeldung
+                        .get(id)
+                        .cloned()
+                        .unwrap_or(AnmeldeZustand::Unbekannt)
+                }),
             }
         })
         .collect()
@@ -413,6 +431,21 @@ impl Innen {
             .iter()
             .find(|eintrag| &eintrag.eintrag.id == id)
             .cloned()
+    }
+
+    /// Den Anmeldezustand eines Eintrags setzen – nur lokal, nie an den Server.
+    pub(crate) fn anmeldung_setzen(&self, id: &EintragId, zustand: AnmeldeZustand) {
+        {
+            let mut stand = self.stand();
+            if !stand.soll.eintraege.iter().any(|e| &e.eintrag.id == id) {
+                return;
+            }
+            if stand.anmeldung.get(id) == Some(&zustand) {
+                return;
+            }
+            stand.anmeldung.insert(id.clone(), zustand);
+        }
+        self.modell_schicken();
     }
 
     /// Lokale und geheime Werte eines Eintrags.
@@ -551,6 +584,74 @@ pub(crate) fn geheim_schluessel(id: &EintragId, feld: &str) -> String {
     format!("wert/{id}/{feld}")
 }
 
+/// Den Anmeldezustand eines Eintrags prüfen und ablegen.
+///
+/// `None`, wenn der Eintrag keine Anmeldung braucht (dann passiert nichts).
+/// Sonst das Ergebnis des `status`-Befehls: Exit 0 = angemeldet (erste Zeile
+/// von stdout ist das Konto), Exit 1 = abgemeldet, alles andere ein Fehler.
+async fn status_pruefen(innen: &Arc<Innen>, id: &EintragId) -> Option<AnmeldeZustand> {
+    let soll = innen.soll_eintrag(id)?;
+    soll.eintrag.anmeldung.as_ref()?;
+    let (lokal, geheim) = innen.werte(id);
+    let zustand =
+        match anmeldung::befehl_bauen(&soll, anmeldung::Anmeldebefehl::Status, &lokal, &geheim) {
+            Ok(befehl) => {
+                let frist = anmeldung::Anmeldebefehl::Status.frist();
+                match anmeldung::laufen(id, &befehl, frist).await {
+                    Ok(ausgang) => anmeldung::zustand_aus(&ausgang),
+                    Err(fehler) => AnmeldeZustand::Fehler {
+                        text: format!("{fehler:#}"),
+                    },
+                }
+            }
+            Err(fehler) => AnmeldeZustand::Fehler {
+                text: format!("{fehler:#}"),
+            },
+        };
+    innen.anmeldung_setzen(id, zustand.clone());
+    Some(zustand)
+}
+
+/// Den Status im Hintergrund prüfen – ein startender Eintrag wartet nicht
+/// darauf.
+fn status_im_hintergrund(innen: &Arc<Innen>, id: &EintragId) {
+    let aufsicht = innen.clone();
+    let id = id.clone();
+    let aufgabe = tokio::spawn(async move {
+        let _ = status_pruefen(&aufsicht, &id).await;
+    });
+    innen
+        .aufgaben
+        .lock()
+        .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+        .push(aufgabe);
+}
+
+/// Alle 10 Minuten nachsehen, ob die Anmeldungen noch stehen (das Token kann
+/// im Browser ablaufen, ohne dass der Eintrag etwas davon merkt).
+async fn anmeldung_lauf(innen: Arc<Innen>) {
+    loop {
+        tokio::select! {
+            _ = innen.ende.warten() => return,
+            _ = tokio::time::sleep(STATUS_ABSTAND) => {}
+        }
+        let ids: Vec<EintragId> = innen
+            .stand()
+            .soll
+            .eintraege
+            .iter()
+            .filter(|eintrag| eintrag.eintrag.anmeldung.is_some())
+            .map(|eintrag| eintrag.eintrag.id.clone())
+            .collect();
+        for id in ids {
+            if innen.ende.ist_abgebrochen() {
+                return;
+            }
+            status_pruefen(&innen, &id).await;
+        }
+    }
+}
+
 /// Der Eintrag startet: Zustand merken und die Aufsicht starten.
 async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
     let id = eintrag.eintrag.id.clone();
@@ -588,6 +689,8 @@ fn stoppe_in(innen: &Arc<Innen>, id: &EintragId) {
 /// Die Aufsicht eines Eintrags: starten, Werkzeuge holen, warten, neu starten.
 async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
     let mut backoff = 1u64;
+    // Einmal beim Start: steht die Anmeldung noch?
+    status_im_hintergrund(&innen, &id);
     loop {
         if abbruch.ist_abgebrochen() || innen.ende.ist_abgebrochen() {
             return;
@@ -733,6 +836,11 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
     let aktionen = quiver_domain::abgleichen(&soll, &ist);
     {
         let mut stand = innen.stand();
+        stand.anmeldung.retain(|id, _| {
+            soll.eintraege
+                .iter()
+                .any(|eintrag| &eintrag.eintrag.id == id)
+        });
         stand.soll = soll.clone();
     }
     for aktion in aktionen {
@@ -808,6 +916,7 @@ impl Kern {
                 .clone()
                 .unwrap_or_else(|| Soll::neu(Vec::new())),
             laeufer: BTreeMap::new(),
+            anmeldung: BTreeMap::new(),
             verbindung,
             endpunkt: endpunkt.clone(),
         };
@@ -845,6 +954,7 @@ impl Kern {
             }
         });
         let abgleich = tokio::spawn(abgleich::lauf(innen.clone()));
+        let status = tokio::spawn(anmeldung_lauf(innen.clone()));
         {
             let mut aufgaben = innen
                 .aufgaben
@@ -852,6 +962,7 @@ impl Kern {
                 .unwrap_or_else(|vergiftet| vergiftet.into_inner());
             aufgaben.push(server);
             aufgaben.push(abgleich);
+            aufgaben.push(status);
         }
 
         tracing::info!("MCP-Endpunkt für Agenten: {endpunkt}");
@@ -902,12 +1013,72 @@ impl Kern {
             stand.geraet = None;
             stand.token = None;
             stand.soll = Soll::neu(Vec::new());
+            stand.anmeldung.clear();
             stand.verbindung = Verbindung::NichtEingebunden;
         }
         self.innen.speichern();
         self.innen.modell_schicken();
         self.innen.liste_geaendert().await;
         Ok(())
+    }
+
+    /// Die Anmeldung eines Eintrags im Fenster auslösen (Aufgabe 10).
+    ///
+    /// Der Befehl öffnet selbst den Browser und wartet auf den User. Danach
+    /// wird der Status geprüft und der Eintrag **neu gestartet**, damit der
+    /// laufende MCP-Prozess das neue Token sieht.
+    pub async fn anmelden(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        self.innen.anmeldung_setzen(eintrag, AnmeldeZustand::Laeuft);
+        self.anmelde_befehl(eintrag, anmeldung::Anmeldebefehl::Anmelden)
+            .await?;
+        status_pruefen(&self.innen, eintrag).await;
+        self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
+    /// Die Anmeldung eines Eintrags beenden: `abmelden`-Befehl, Status
+    /// prüfen, Eintrag neu starten.
+    pub async fn abmelden_eintrag(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        self.anmelde_befehl(eintrag, anmeldung::Anmeldebefehl::Abmelden)
+            .await?;
+        status_pruefen(&self.innen, eintrag).await;
+        self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
+    /// Einen der drei Anmelde-Befehle ausführen. Scheitert er, steht der
+    /// Grund im Anmeldezustand — das Fenster zeigt ihn dann selbst.
+    async fn anmelde_befehl(
+        &self,
+        eintrag: &EintragId,
+        art: anmeldung::Anmeldebefehl,
+    ) -> anyhow::Result<()> {
+        let soll = self.innen.soll_eintrag(eintrag).ok_or_else(|| {
+            anyhow::anyhow!("Eintrag {eintrag} ist diesem Gerät nicht zugewiesen")
+        })?;
+        let (lokal, geheim) = self.innen.werte(eintrag);
+        let befehl = anmeldung::befehl_bauen(&soll, art, &lokal, &geheim)?;
+        let ausgang = match anmeldung::laufen(eintrag, &befehl, art.frist()).await {
+            Ok(ausgang) => ausgang,
+            Err(fehler) => {
+                self.innen.anmeldung_setzen(
+                    eintrag,
+                    AnmeldeZustand::Fehler {
+                        text: format!("{fehler:#}"),
+                    },
+                );
+                return Err(fehler);
+            }
+        };
+        let text = match ausgang.code {
+            Some(0) => return Ok(()),
+            Some(code) => format!("Der Befehl „{}“ endet mit Code {code}", art.name()),
+            None => format!("Der Befehl „{}“ wurde abgebrochen", art.name()),
+        };
+        tracing::warn!(eintrag = %eintrag, "{text}");
+        self.innen
+            .anmeldung_setzen(eintrag, AnmeldeZustand::Fehler { text: text.clone() });
+        anyhow::bail!(text)
     }
 
     /// Werte eines Eintrags setzen. Geheimes landet im Tresor, nie im Profil.

@@ -29,6 +29,7 @@ import Seitenkopf from "../bausteine/Seitenkopf.vue";
 import Status from "../bausteine/Status.vue";
 import {
   filter_eintraege,
+  hat_anmeldung,
   herkunft_text,
   laufzeit_text,
   neuer_eintrag,
@@ -219,6 +220,9 @@ onMounted(laden);
               <span class="marke-chip">{{ eintrag.version }}</span>
               <span class="marke-chip">{{ herkunft_text(eintrag.herkunft) }}</span>
               <span class="marke-chip">{{ laufzeit_text(eintrag.laufzeit) }}</span>
+              <span v-if="hat_anmeldung(eintrag)" class="marke-chip">
+                mit Anmeldung
+              </span>
               <Status
                 v-if="!eintrag.aktiv"
                 ton="leise"

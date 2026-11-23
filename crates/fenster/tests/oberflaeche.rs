@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use egui_kittest::kittest::{By, NodeT, Queryable};
 use egui_kittest::Harness;
-use quiver_client::{AgentSicht, EintragSicht, Modell, Verbindung};
+use quiver_client::{AgentSicht, AnmeldeZustand, EintragSicht, Modell, Verbindung};
 use quiver_domain::{EintragId, FehlendesFeld, Feld, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
 use quiver_fenster::egui::accesskit::Role;
@@ -101,6 +101,7 @@ fn eintrag(
         lokale_werte: Werte::new(),
         geheim_gesetzt: Vec::new(),
         tools: Vec::new(),
+        anmeldung: None,
     }
 }
 
@@ -145,6 +146,42 @@ fn eintraege() -> Vec<EintragSicht> {
     );
 
     vec![laeuft, wartet, fehler]
+}
+
+/// Ein Eintrag, der eine Anmeldung braucht, in einem bestimmten Zustand.
+fn anmelde_eintrag(id: &str, titel: &str, anmeldung: AnmeldeZustand) -> EintragSicht {
+    let mut eintrag = eintrag(
+        id,
+        titel,
+        "Braucht eine Anmeldung im Browser.",
+        EintragZustand::Laeuft { tools: 1 },
+        Vec::new(),
+    );
+    eintrag.tools = vec!["lesen".into()];
+    eintrag.anmeldung = Some(anmeldung);
+    eintrag
+}
+
+/// Vier Einträge, vier Anmeldezustände – wie sie die Karte unterscheiden muss.
+fn anmelde_zustaende() -> Vec<EintragSicht> {
+    vec![
+        anmelde_eintrag("postfach", "Postfach", AnmeldeZustand::Abgemeldet),
+        anmelde_eintrag("kalender", "Kalender", AnmeldeZustand::Laeuft),
+        anmelde_eintrag(
+            "mail",
+            "Mail",
+            AnmeldeZustand::Angemeldet {
+                konto: Some("test@beispiel.de".into()),
+            },
+        ),
+        anmelde_eintrag(
+            "freigaben",
+            "Freigaben",
+            AnmeldeZustand::Fehler {
+                text: "Der Status endet mit Code 3".into(),
+            },
+        ),
+    ]
 }
 
 fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
@@ -652,6 +689,220 @@ fn alle_seiten_in_allen_themes() {
                 .expect("Bild schreibbar");
         }
     }
+}
+
+/// Die Anmeldung auf der Tools-Karte: alle vier Zustände in einem Bild
+/// (`fenster-{dark,light}-anmeldung.png`).
+#[test]
+fn bildschirmfoto_der_anmeldung() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in [Thema::Dunkel, Thema::Hell] {
+        let mut h = fenster(
+            modell(verbunden(), anmelde_zustaende()),
+            Some(Seite::Tools),
+            thema,
+            (1200.0, 1000.0),
+        );
+        h.run();
+        // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
+        assert!(h.query_by_label("Anmeldung nötig").is_some());
+        assert!(h.query_by_label("Anmeldung im Browser läuft …").is_some());
+        assert!(h
+            .query_by_label("Angemeldet als test@beispiel.de")
+            .is_some());
+        assert!(h.query_by_label("Der Status endet mit Code 3").is_some());
+        let bild = h.render().expect("zeichnen (wgpu)");
+        bild.save(ziel.join(format!("fenster-{}-anmeldung.png", thema.name())))
+            .expect("Bild schreibbar");
+    }
+}
+
+#[test]
+fn abgemeldet_zeigt_hinweis_und_anmelden() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "postfach",
+                "Postfach",
+                AnmeldeZustand::Abgemeldet,
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(
+        h.query_by_label("Anmeldung nötig").is_some(),
+        "der Hinweis fehlt"
+    );
+    // Hand-Cursor auf dem Knopf, der die Anmeldung auslöst (AGENTS.md §2.12).
+    let knopf = h.get_by_role_and_label(Role::Button, "Anmelden");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Anmelden“"
+    );
+    h.get_by_role_and_label(Role::Button, "Anmelden").click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EintragAnmelden {
+                eintrag: EintragId::neu("postfach")
+            }),
+        "der Klick muss die Anmeldung auslösen: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+    // Unbekannt ist derselbe Fall wie abgemeldet.
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "postfach",
+                "Postfach",
+                AnmeldeZustand::Unbekannt,
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h.query_by_label("Anmeldung nötig").is_some());
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Anmelden")
+        .is_some());
+}
+
+#[test]
+fn laufende_anmeldung_hat_keinen_knopf() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "kalender",
+                "Kalender",
+                AnmeldeZustand::Laeuft,
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h.query_by_label("Anmeldung im Browser läuft …").is_some());
+    for knopf in ["Anmelden", "Abmelden", "Erneut versuchen"] {
+        assert!(
+            h.query_by_role_and_label(Role::Button, knopf).is_none(),
+            "„{knopf}“ darf während der Anmeldung nicht da sein"
+        );
+    }
+}
+
+#[test]
+fn angemeldet_zeigt_das_konto_und_fragt_vor_dem_abmelden() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "mail",
+                "Mail",
+                AnmeldeZustand::Angemeldet {
+                    konto: Some("test@beispiel.de".into()),
+                },
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h
+        .query_by_label("Angemeldet als test@beispiel.de")
+        .is_some());
+    let knopf = h.get_by_role_and_label(Role::Button, "Abmelden");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Abmelden“"
+    );
+    h.get_by_role_and_label(Role::Button, "Abmelden").click();
+    h.run();
+    assert!(
+        matches!(
+            &h.state().0.sicht.dialog,
+            Dialog::AnmeldungBeenden { eintrag, .. } if eintrag.als_str() == "mail"
+        ),
+        "vor dem Abmelden kommt eine Rückfrage: {:?}",
+        h.state().0.sicht.dialog
+    );
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .iter()
+            .any(|a| matches!(a, Aktion::EintragAbmelden { .. })),
+        "ohne Bestätigung wird nicht abgemeldet"
+    );
+    // Der Knopf im Dialog bestätigt.
+    h.get_all_by_role_and_label(Role::Button, "Abmelden")
+        .last()
+        .expect("Knopf im Dialog")
+        .click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::EintragAbmelden {
+            eintrag: EintragId::neu("mail")
+        }));
+    assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+#[test]
+fn anmeldefehler_zeigt_text_und_erneut_versuchen() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "freigaben",
+                "Freigaben",
+                AnmeldeZustand::Fehler {
+                    text: "Der Status endet mit Code 3".into(),
+                },
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h.query_by_label("Der Status endet mit Code 3").is_some());
+    h.get_by_role_and_label(Role::Button, "Erneut versuchen")
+        .click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::EintragAnmelden {
+            eintrag: EintragId::neu("freigaben")
+        }));
 }
 
 #[test]

@@ -5,7 +5,7 @@
 //! welche Farbe ein Zustand hat, was in einem Feld steht, welche Schnipsel
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
-use quiver_client::{EintragSicht, Modell, Verbindung};
+use quiver_client::{AnmeldeZustand, EintragSicht, Modell, Verbindung};
 use quiver_domain::{FehlendesFeld, Quelle, Werte};
 use quiver_protocol::EintragZustand;
 
@@ -62,6 +62,58 @@ pub fn fehlertext(zustand: &EintragZustand) -> Option<&str> {
     match zustand {
         EintragZustand::Fehler { text } => Some(text),
         _ => None,
+    }
+}
+
+/// Welcher Knopf zur Anmeldung gehört.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnmeldeKnopf {
+    /// Nichts zu tun – die Anmeldung läuft gerade.
+    Keiner,
+    /// „Anmelden“: der User löst sie im Fenster aus, nie ein Agent.
+    Anmelden,
+    /// „Erneut versuchen“ nach einem Fehler.
+    Erneut,
+    /// „Abmelden“ – mit Rückfrage.
+    Abmelden,
+}
+
+/// Was die Karte zur Anmeldung eines Eintrags zeigt: Bedeutung, Text, Knopf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnmeldeZeile {
+    pub ton: Ton,
+    pub text: String,
+    pub knopf: AnmeldeKnopf,
+}
+
+/// Die Anmeldezeile eines Eintrags (Aufgabe 10): abgemeldet und unbekannt
+/// warnen, „läuft“ ist leise, angemeldet ist gut, ein Fehler zeigt seinen Text.
+pub fn anmeldung_zeile(sprache: Sprache, zustand: &AnmeldeZustand) -> AnmeldeZeile {
+    let warnung = AnmeldeZeile {
+        ton: Ton::Warnung,
+        text: t(sprache, "anmeldung.noetig"),
+        knopf: AnmeldeKnopf::Anmelden,
+    };
+    match zustand {
+        AnmeldeZustand::Unbekannt | AnmeldeZustand::Abgemeldet => warnung,
+        AnmeldeZustand::Laeuft => AnmeldeZeile {
+            ton: Ton::Leise,
+            text: t(sprache, "anmeldung.laeuft"),
+            knopf: AnmeldeKnopf::Keiner,
+        },
+        AnmeldeZustand::Angemeldet { konto } => AnmeldeZeile {
+            ton: Ton::Gut,
+            text: match konto {
+                Some(konto) => tf(sprache, "anmeldung.angemeldet", &[konto]),
+                None => t(sprache, "anmeldung.angemeldet_ohne_konto"),
+            },
+            knopf: AnmeldeKnopf::Abmelden,
+        },
+        AnmeldeZustand::Fehler { text } => AnmeldeZeile {
+            ton: Ton::Fehler,
+            text: text.clone(),
+            knopf: AnmeldeKnopf::Erneut,
+        },
     }
 }
 
@@ -522,6 +574,7 @@ mod tests {
             lokale_werte: Werte::from([("PFAD".to_string(), "/tmp".to_string())]),
             geheim_gesetzt: vec!["SCHLUESSEL".into()],
             tools: vec!["echo".into()],
+            anmeldung: None,
         }
     }
 
@@ -586,6 +639,56 @@ mod tests {
             ),
             "Braucht Angaben"
         );
+    }
+
+    #[test]
+    fn anmeldung_hat_vier_zustaende_und_je_einen_knopf() {
+        let sprache = Sprache::De;
+        // Abgemeldet und unbekannt: derselbe Hinweis, „Anmelden“.
+        for zustand in [AnmeldeZustand::Abgemeldet, AnmeldeZustand::Unbekannt] {
+            let zeile = anmeldung_zeile(sprache, &zustand);
+            assert_eq!(zeile.ton, Ton::Warnung);
+            assert_eq!(zeile.text, "Anmeldung nötig");
+            assert_eq!(zeile.knopf, AnmeldeKnopf::Anmelden);
+        }
+        // Läuft: leise, kein Knopf.
+        let laeuft = anmeldung_zeile(sprache, &AnmeldeZustand::Laeuft);
+        assert_eq!(laeuft.ton, Ton::Leise);
+        assert_eq!(laeuft.text, "Anmeldung im Browser läuft …");
+        assert_eq!(laeuft.knopf, AnmeldeKnopf::Keiner);
+        // Angemeldet: Konto und „Abmelden“; ohne Konto bleibt der Name weg.
+        let angemeldet = anmeldung_zeile(
+            sprache,
+            &AnmeldeZustand::Angemeldet {
+                konto: Some("test@beispiel.de".into()),
+            },
+        );
+        assert_eq!(angemeldet.ton, Ton::Gut);
+        assert_eq!(angemeldet.text, "Angemeldet als test@beispiel.de");
+        assert_eq!(angemeldet.knopf, AnmeldeKnopf::Abmelden);
+        let ohne = anmeldung_zeile(sprache, &AnmeldeZustand::Angemeldet { konto: None });
+        assert_eq!(ohne.text, "Angemeldet");
+        // Fehler: der Text des Fehlers, „Erneut versuchen“.
+        let fehler = anmeldung_zeile(
+            sprache,
+            &AnmeldeZustand::Fehler {
+                text: "Der Status endet mit Code 3".into(),
+            },
+        );
+        assert_eq!(fehler.ton, Ton::Fehler);
+        assert_eq!(fehler.text, "Der Status endet mit Code 3");
+        assert_eq!(fehler.knopf, AnmeldeKnopf::Erneut);
+
+        // Englisch ist übersetzt, nicht kopiert.
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Abgemeldet);
+        assert_eq!(en.text, "Sign-in required");
+        let en = anmeldung_zeile(
+            Sprache::En,
+            &AnmeldeZustand::Angemeldet {
+                konto: Some("test@beispiel.de".into()),
+            },
+        );
+        assert_eq!(en.text, "Signed in as test@beispiel.de");
     }
 
     #[test]

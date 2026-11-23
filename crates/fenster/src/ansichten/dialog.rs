@@ -273,6 +273,35 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                         }
                     });
                 }
+                Dialog::AnmeldungBeenden { titel, .. } => {
+                    ui.label(RichText::new(t(sprache, "anmeldung.beenden_titel")).heading());
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            tf(sprache, "anmeldung.beenden_text", &[titel]),
+                            Ton::Leise,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if bausteine::knopf(
+                            ui,
+                            &f,
+                            Icon::Trennen,
+                            &t(sprache, "anmeldung.abmelden"),
+                        )
+                        .clicked()
+                        {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
             }
             // Escape schließt jeden Dialog.
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

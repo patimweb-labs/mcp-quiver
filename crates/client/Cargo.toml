@@ -15,6 +15,10 @@ path = "src/bin/quiver-echo-mcp.rs"
 name = "quiver-demo-mcp"
 path = "src/bin/quiver-demo-mcp.rs"
 
+[[bin]]
+name = "quiver-anmelde-attrappe"
+path = "src/bin/quiver-anmelde-attrappe.rs"
+
 [dependencies]
 quiver-domain.workspace = true
 quiver-protocol.workspace = true

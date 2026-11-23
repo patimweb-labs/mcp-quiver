@@ -91,6 +91,8 @@ pub enum Dialog {
     TokenErneuern { id: String, name: String },
     /// Einem Agenten den Zugang nehmen.
     AgentEntfernen { id: String, name: String },
+    /// Die Anmeldung eines Eintrags beenden (Rückfrage).
+    AnmeldungBeenden { eintrag: EintragId, titel: String },
 }
 
 /// Was in den Eingabefeldern der Verbindungsseite steht.
@@ -167,6 +169,9 @@ impl Sicht {
         // Was der Server nicht mehr kennt, hat keinen Dialog mehr verdient.
         let verschwunden = match &self.dialog {
             Dialog::Werte { eintrag, .. } => !neu.eintraege.iter().any(|e| &e.id == eintrag),
+            Dialog::AnmeldungBeenden { eintrag, .. } => {
+                !neu.eintraege.iter().any(|e| &e.id == eintrag)
+            }
             _ => false,
         };
         if verschwunden {
@@ -216,6 +221,9 @@ impl Sicht {
             Dialog::Token { .. } => {}
             Dialog::TokenErneuern { id, .. } => return Some(Aktion::AgentTokenErneuern { id }),
             Dialog::AgentEntfernen { id, .. } => return Some(Aktion::AgentEntfernen { id }),
+            Dialog::AnmeldungBeenden { eintrag, .. } => {
+                return Some(Aktion::EintragAbmelden { eintrag });
+            }
         }
         None
     }

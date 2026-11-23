@@ -21,6 +21,10 @@ import { fehlertext, type Client } from "../api/client";
 import type { Eintrag, Quelle } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
 import {
+  ANMELDEBEFEHLE,
+  anmeldung_als_text,
+  anmeldung_aus_text,
+  anmeldung_von,
   argumente_als_text,
   argumente_aus_text,
   eintrag_pruefen,
@@ -31,7 +35,9 @@ import {
   quelle_text,
   umgebung_als_text,
   umgebung_aus_text,
+  type Anmeldebefehl,
 } from "../logik/eintrag";
+import Klappknopf from "../bausteine/Klappknopf.vue";
 
 const props = defineProps<{
   offen: boolean;
@@ -52,6 +58,9 @@ const speichert = ref(false);
 const idSelbstGesetzt = ref(false);
 const adressId = useId();
 const kopfzeilenId = useId();
+const anmeldungId = useId();
+// Der Abschnitt „Anmeldung“ ist zugeklappt, solange niemand ihn braucht.
+const anmeldungOffen = ref(false);
 
 watch(
   () => props.offen,
@@ -63,6 +72,7 @@ watch(
     fehler.value = {};
     speicherfehler.value = "";
     idSelbstGesetzt.value = !props.neu;
+    anmeldungOffen.value = !anmeldung_ist_leer_entwurf();
   },
   { immediate: true },
 );
@@ -97,6 +107,8 @@ function artSetzen(wert: string): void {
     wert === "remote"
       ? { art: "remote", url: "", kopfzeilen: {} }
       : { art: "stdio", befehl: "", argumente: [], umgebung: {} };
+  // Eine Anmeldung gibt es nur für Stdio-Einträge.
+  if (entwurf.value.laufzeit.art === "remote") entwurf.value.anmeldung = null;
 }
 
 const befehl = computed(() => {
@@ -163,6 +175,28 @@ const kopfzeilen = computed({
     }
   },
 });
+
+/** Ist im Entwurf schon eine Anmeldung angelegt? */
+function anmeldung_ist_leer_entwurf(): boolean {
+  const anmeldung = entwurf.value.anmeldung;
+  return !anmeldung || ANMELDEBEFEHLE.every((b) => anmeldung[b].length === 0);
+}
+
+/** Die Anmeldung als Daten – ein leerer Abschnitt bleibt leer. */
+const anmeldung = computed(() => anmeldung_von(entwurf.value));
+
+/** Argumente eines Anmelde-Befehls im Feld (Leerzeichen-getrennt). */
+function anmeldungText(befehl: Anmeldebefehl): string {
+  return anmeldung_als_text(anmeldung.value[befehl]);
+}
+
+function anmeldungSetzen(befehl: Anmeldebefehl, text: string): void {
+  const bisher = anmeldung_von(entwurf.value);
+  entwurf.value.anmeldung = {
+    ...bisher,
+    [befehl]: anmeldung_aus_text(text),
+  };
+}
 
 function feldHinzufuegen(): void {
   entwurf.value.felder.push(neues_feld());
@@ -352,6 +386,77 @@ async function speichern(): Promise<void> {
         </Feld>
       </template>
 
+      <section
+        v-if="entwurf.laufzeit.art === 'stdio'"
+        class="anmeldung"
+      >
+        <Klappknopf
+          :offen="anmeldungOffen"
+          :steuert="anmeldungId"
+          @umschalten="anmeldungOffen = !anmeldungOffen"
+        >
+          Anmeldung (optional)
+        </Klappknopf>
+        <p class="blass">
+          Braucht das Tool eine Anmeldung des Users, löst er sie im
+          Client-Fenster aus – nie ein Agent. Alle drei Befehle sind
+          Argumente für dasselbe Programm wie die Laufzeit.
+        </p>
+
+        <div v-if="anmeldungOffen" :id="anmeldungId" class="anmeldung__felder">
+          <p v-if="fehler.anmeldung" class="fehler" role="alert">
+            {{ fehler.anmeldung }}
+          </p>
+          <Feld
+            beschriftung="Anmelden"
+            :fehler="fehler['anmeldung.anmelden']"
+            hinweis="Argumente, Leerzeichen-getrennt. Der Befehl öffnet den Browser; Exit 0 = angemeldet."
+          >
+            <template #default="{ id }">
+              <WpInput
+                :id="id"
+                :model-value="anmeldungText('anmelden')"
+                :state="fehler['anmeldung.anmelden'] ? 'invalid' : 'default'"
+                placeholder="anmelden"
+                @update:model-value="(wert) => anmeldungSetzen('anmelden', wert)"
+              />
+            </template>
+          </Feld>
+
+          <Feld
+            beschriftung="Status"
+            :fehler="fehler['anmeldung.status']"
+            hinweis="Exit 0 = angemeldet (erste Zeile von stdout ist das Konto), Exit 1 = abgemeldet."
+          >
+            <template #default="{ id }">
+              <WpInput
+                :id="id"
+                :model-value="anmeldungText('status')"
+                :state="fehler['anmeldung.status'] ? 'invalid' : 'default'"
+                placeholder="status"
+                @update:model-value="(wert) => anmeldungSetzen('status', wert)"
+              />
+            </template>
+          </Feld>
+
+          <Feld
+            beschriftung="Abmelden"
+            :fehler="fehler['anmeldung.abmelden']"
+            hinweis="Exit 0 = abgemeldet. Danach startet der Client den Eintrag neu."
+          >
+            <template #default="{ id }">
+              <WpInput
+                :id="id"
+                :model-value="anmeldungText('abmelden')"
+                :state="fehler['anmeldung.abmelden'] ? 'invalid' : 'default'"
+                placeholder="abmelden"
+                @update:model-value="(wert) => anmeldungSetzen('abmelden', wert)"
+              />
+            </template>
+          </Feld>
+        </div>
+      </section>
+
       <div class="felder">
         <div class="felder__kopf">
           <span class="felder__titel">Felder</span>
@@ -456,6 +561,19 @@ async function speichern(): Promise<void> {
   max-height: calc(var(--wp-space-8) * 9);
   overflow-y: auto;
   padding-right: var(--wp-space-1);
+}
+
+.anmeldung {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-1);
+  padding-top: var(--wp-space-3);
+}
+
+.anmeldung__felder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-1);
 }
 
 .felder {

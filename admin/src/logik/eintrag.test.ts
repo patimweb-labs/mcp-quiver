@@ -2,14 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import type { Eintrag, Werte } from "../api/typen";
 import {
+  anmeldung_als_text,
+  anmeldung_aus_text,
+  anmeldung_ist_leer,
+  anmeldung_von,
   argumente_als_text,
   argumente_aus_text,
   eintrag_pruefen,
   eintrag_saeubern,
   filter_eintraege,
   gueltige_kennung,
+  hat_anmeldung,
   kennung_aus_titel,
   laufzeit_text,
+  leere_anmeldung,
   neuer_eintrag,
   neues_feld,
   server_felder,
@@ -220,5 +226,101 @@ describe("Listen", () => {
     );
     expect(filter_eintraege([a, b], "   ")).toHaveLength(2);
     expect(filter_eintraege([a, b], "nichts")).toHaveLength(0);
+  });
+});
+
+describe("Anmeldung", () => {
+  /** Ein Eintrag mit vollständiger Anmeldung. */
+  function mit_anmeldung() {
+    const eintrag = beispiel();
+    eintrag.anmeldung = {
+      anmelden: ["anmelden", "--konto", "${KONTO}"],
+      status: ["status"],
+      abmelden: ["abmelden"],
+    };
+    return eintrag;
+  }
+
+  it("schreibt Argumente durch Leerzeichen getrennt", () => {
+    expect(anmeldung_als_text(["anmelden", "--konto"])).toBe(
+      "anmelden --konto",
+    );
+    expect(anmeldung_als_text([])).toBe("");
+    // Und zurück: mehrere Leerzeichen und Ränder fallen weg.
+    expect(anmeldung_aus_text("  anmelden   --konto  ")).toEqual([
+      "anmelden",
+      "--konto",
+    ]);
+    expect(anmeldung_aus_text("")).toEqual([]);
+    // Platzhalter bleiben ein Argument.
+    expect(anmeldung_aus_text("anmelden ${KONTO}")).toEqual([
+      "anmelden",
+      "${KONTO}",
+    ]);
+  });
+
+  it("erkennt eine leere Anmeldung", () => {
+    expect(anmeldung_ist_leer(leere_anmeldung())).toBe(true);
+    expect(anmeldung_ist_leer(null)).toBe(true);
+    expect(anmeldung_ist_leer(undefined)).toBe(true);
+    expect(anmeldung_ist_leer(mit_anmeldung().anmeldung)).toBe(false);
+    // Ältere Einträge kennen das Feld gar nicht.
+    const alt = beispiel();
+    delete alt.anmeldung;
+    expect(anmeldung_ist_leer(alt.anmeldung)).toBe(true);
+    expect(anmeldung_von(alt)).toEqual(leere_anmeldung());
+  });
+
+  it("zeigt das Abzeichen nur mit Anmeldung", () => {
+    expect(hat_anmeldung(beispiel())).toBe(false);
+    expect(hat_anmeldung(neuer_eintrag("neu"))).toBe(false);
+    expect(hat_anmeldung(mit_anmeldung())).toBe(true);
+  });
+
+  it("verlangt alle drei Befehle", () => {
+    const eintrag = mit_anmeldung();
+    expect(eintrag_pruefen(eintrag)).toEqual({});
+
+    eintrag.anmeldung = { ...eintrag.anmeldung!, status: [] };
+    expect(eintrag_pruefen(eintrag)).toHaveProperty("anmeldung.status");
+
+    eintrag.anmeldung = leere_anmeldung();
+    expect(Object.keys(eintrag_pruefen(eintrag))).toEqual(
+      expect.arrayContaining(["anmeldung.anmelden", "anmeldung.abmelden"]),
+    );
+  });
+
+  it("gibt eine Anmeldung nur bei Stdio", () => {
+    const eintrag = beispiel();
+    eintrag.anmeldung = mit_anmeldung().anmeldung;
+    eintrag.laufzeit = { art: "remote", url: "https://example.org", kopfzeilen: {} };
+    expect(eintrag_pruefen(eintrag).anmeldung).toContain("Stdio");
+  });
+
+  it("säubert die Argumente und leert den Abschnitt", () => {
+    const eintrag = mit_anmeldung();
+    eintrag.anmeldung = {
+      anmelden: [" anmelden ", "", "  "],
+      status: ["status"],
+      abmelden: ["abmelden"],
+    };
+    const sauber = eintrag_saeubern(eintrag);
+    expect(sauber.anmeldung?.anmelden).toEqual(["anmelden"]);
+
+    // Alles leer: dann steht im Vertrag keine Anmeldung.
+    eintrag.anmeldung = { anmelden: [" "], status: [], abmelden: [] };
+    const leer = eintrag_saeubern(eintrag);
+    expect(leer.anmeldung).toBeNull();
+    // Das ist gültiges JSON für `Option<Anmeldung>`.
+    expect(JSON.parse(JSON.stringify(leer)).anmeldung).toBeNull();
+  });
+
+  it("schreibt die Anmeldung unverändert weiter", () => {
+    const sauber = eintrag_saeubern(mit_anmeldung());
+    expect(sauber.anmeldung).toEqual({
+      anmelden: ["anmelden", "--konto", "${KONTO}"],
+      status: ["status"],
+      abmelden: ["abmelden"],
+    });
   });
 });

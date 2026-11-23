@@ -10,13 +10,13 @@ use crate::ansichten::{abstand, hinweis, leer, seitenkopf, text};
 use crate::app::Aktion;
 use crate::bausteine::{self, Icon};
 use crate::logik;
-use crate::modell::Sicht;
+use crate::modell::{Dialog, Sicht};
 use crate::texte::{t, tf};
 use crate::thema::{self, Ton};
 use quiver_client::EintragSicht;
 use quiver_protocol::EintragZustand;
 
-pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>) {
+pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
     let sprache = sicht.sprache;
     bausteine::seite(ui, |ui| {
         hinweis(ui, sicht);
@@ -36,13 +36,13 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
             return;
         }
         for eintrag in sicht.modell.eintraege.clone() {
-            karte(ui, sicht, &eintrag);
+            karte(ui, sicht, &eintrag, aktionen);
             abstand(ui);
         }
     });
 }
 
-fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht) {
+fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen: &mut Vec<Aktion>) {
     let f = *sicht.thema.farben();
     let sprache = sicht.sprache;
     let ton = logik::zustand_ton(&eintrag.zustand);
@@ -53,6 +53,8 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht) {
     let mut angaben = false;
     let mut bearbeiten = false;
     let mut aufklappen = false;
+    let mut anmelden = false;
+    let mut abmelden = false;
     let offen = sicht.offen.contains(&eintrag.id);
 
     bausteine::karte(ui, &f, &eintrag.titel, unter.as_deref(), |ui| {
@@ -96,6 +98,61 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht) {
         if let Some(fehler) = fehler {
             ui.add_space(thema::SPACE_1);
             ui.add(egui::Label::new(text(&f, fehler, Ton::Fehler)).wrap());
+        }
+        // Die Anmeldung (Aufgabe 10): ein Tool kann eine Anmeldung des Users
+        // brauchen. Sie wird hier im Fenster ausgelöst, nie von einem Agenten.
+        if let Some(zustand) = &eintrag.anmeldung {
+            ui.add_space(thema::SPACE_2);
+            let zeile = logik::anmeldung_zeile(sprache, zustand);
+            egui::Sides::new()
+                .height(thema::SIZE_CONTROL_SM)
+                .shrink_right()
+                .truncate()
+                .show(
+                    ui,
+                    |ui| {
+                        bausteine::status(ui, &f, zeile.ton, &zeile.text);
+                    },
+                    |ui| match zeile.knopf {
+                        logik::AnmeldeKnopf::Keiner => {}
+                        logik::AnmeldeKnopf::Anmelden => {
+                            if bausteine::hauptknopf_mit(
+                                ui,
+                                &f,
+                                Icon::Schluessel,
+                                &t(sprache, "anmeldung.anmelden"),
+                            )
+                            .clicked()
+                            {
+                                anmelden = true;
+                            }
+                        }
+                        logik::AnmeldeKnopf::Erneut => {
+                            if bausteine::hauptknopf_mit(
+                                ui,
+                                &f,
+                                Icon::Neuladen,
+                                &t(sprache, "anmeldung.erneut"),
+                            )
+                            .clicked()
+                            {
+                                anmelden = true;
+                            }
+                        }
+                        logik::AnmeldeKnopf::Abmelden => {
+                            if bausteine::knopf(
+                                ui,
+                                &f,
+                                Icon::Trennen,
+                                &t(sprache, "anmeldung.abmelden"),
+                            )
+                            .clicked()
+                            {
+                                abmelden = true;
+                            }
+                        }
+                    },
+                );
         }
         // Was fehlt, mit der Erklärung des Felds — nicht nur der Name.
         let fehlende = logik::fehlende_texte(&eintrag.fehlende);
@@ -143,5 +200,17 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht) {
     }
     if aufklappen {
         sicht.umschalten(&eintrag.id);
+    }
+    if anmelden {
+        aktionen.push(Aktion::EintragAnmelden {
+            eintrag: eintrag.id.clone(),
+        });
+    }
+    if abmelden {
+        // Abmelden beendet eine laufende Sitzung – deshalb erst die Rückfrage.
+        sicht.dialog = Dialog::AnmeldungBeenden {
+            eintrag: eintrag.id.clone(),
+            titel: eintrag.titel.clone(),
+        };
     }
 }

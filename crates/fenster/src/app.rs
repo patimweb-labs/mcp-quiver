@@ -59,6 +59,10 @@ pub enum Aktion {
     AgentTokenErneuern { id: String },
     /// Einem Agenten den Zugang nehmen.
     AgentEntfernen { id: String },
+    /// Die Anmeldung eines Eintrags im Browser starten (nie ein Agent).
+    EintragAnmelden { eintrag: EintragId },
+    /// Die Anmeldung eines Eintrags beenden (nach der Rückfrage im Dialog).
+    EintragAbmelden { eintrag: EintragId },
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -262,6 +266,15 @@ mod tests {
         let a = Aktion::AgentKoppeln { name: "pi".into() };
         assert_eq!(a.clone(), a);
         assert_ne!(a, Aktion::Abmelden);
+        assert_ne!(
+            Aktion::EintragAnmelden {
+                eintrag: EintragId::neu("postfach")
+            },
+            Aktion::EintragAbmelden {
+                eintrag: EintragId::neu("postfach")
+            },
+            "anmelden und abmelden sind zwei Aktionen"
+        );
     }
 
     /// Ein Bild mit „das Fenster will schließen" — wie es der Fensterrahmen

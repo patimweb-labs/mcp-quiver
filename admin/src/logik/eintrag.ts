@@ -1,7 +1,7 @@
 // Der Eintrag als Modell: leere Vorlage, Kennung aus dem Titel, Textfelder
 // für Argumente und Umgebung, Prüfung vor dem Senden. Reine Funktionen.
 
-import type { Eintrag, Feld, Laufzeit, Quelle, Werte } from "../api/typen";
+import type { Anmeldung, Eintrag, Feld, Laufzeit, Quelle, Werte } from "../api/typen";
 import { tief_kopie } from "./kopie";
 
 /** Leere Vorlage für „Neu"; `id` wird beim Anlegen aus dem Titel gebildet. */
@@ -20,6 +20,7 @@ export function neuer_eintrag(id = ""): Eintrag {
     },
     felder: [],
     aktiv: true,
+    anmeldung: null,
   };
 }
 
@@ -94,6 +95,55 @@ export function umgebung_aus_text(text: string): Werte {
   return werte;
 }
 
+/** Die drei Befehle einer Anmeldung. */
+export type Anmeldebefehl = "anmelden" | "status" | "abmelden";
+
+/** Die Befehle in der Reihenfolge, in der sie im Formular stehen. */
+export const ANMELDEBEFEHLE: Anmeldebefehl[] = [
+  "anmelden",
+  "status",
+  "abmelden",
+];
+
+/** Eine leere Anmeldung: drei Befehle, noch ohne Argumente. */
+export function leere_anmeldung(): Anmeldung {
+  return { anmelden: [], status: [], abmelden: [] };
+}
+
+/** Die Anmeldung eines Eintrags; ältere Daten kennen das Feld nicht. */
+export function anmeldung_von(eintrag: Eintrag): Anmeldung {
+  return eintrag.anmeldung ?? leere_anmeldung();
+}
+
+/** Drei leere Befehle heißen: keine Anmeldung. */
+export function anmeldung_ist_leer(
+  anmeldung: Anmeldung | null | undefined,
+): boolean {
+  if (!anmeldung) return true;
+  return ANMELDEBEFEHLE.every((befehl) => anmeldung[befehl].length === 0);
+}
+
+/** Braucht der Eintrag eine Anmeldung? Für das Abzeichen in der Liste. */
+export function hat_anmeldung(eintrag: Eintrag): boolean {
+  return !anmeldung_ist_leer(eintrag.anmeldung);
+}
+
+/** Argumente eines Anmelde-Befehls als ein Text, durch Leerzeichen getrennt. */
+export function anmeldung_als_text(argumente: string[]): string {
+  return argumente.join(" ");
+}
+
+/**
+ * Umkehrung: ein Argument je Wort. Leerzeichen trennen, leere Wörter fallen
+ * weg (Aufgabe 10: „Argumente je Befehl, Leerzeichen-getrennt“).
+ */
+export function anmeldung_aus_text(text: string): string[] {
+  return text
+    .split(/\s+/)
+    .map((wort) => wort.trim())
+    .filter((wort) => wort.length > 0);
+}
+
 /** Nur die Felder, die der Admin (Server) füllt. */
 export function server_felder(eintrag: Eintrag): Feld[] {
   return eintrag.felder.filter((feld) => feld.quelle === "server");
@@ -163,6 +213,16 @@ export function eintrag_saeubern(eintrag: Eintrag): Eintrag {
   } else {
     sauber.laufzeit.url = sauber.laufzeit.url.trim();
   }
+  if (sauber.anmeldung) {
+    const anmeldung = anmeldung_von(sauber);
+    sauber.anmeldung = {
+      anmelden: anmeldung.anmelden.map((teil) => teil.trim()).filter((teil) => teil.length > 0),
+      status: anmeldung.status.map((teil) => teil.trim()).filter((teil) => teil.length > 0),
+      abmelden: anmeldung.abmelden.map((teil) => teil.trim()).filter((teil) => teil.length > 0),
+    };
+    // Drei leere Befehle sind keine Anmeldung – dann steht auch nichts im Vertrag.
+    if (anmeldung_ist_leer(sauber.anmeldung)) sauber.anmeldung = null;
+  }
   return sauber;
 }
 
@@ -211,6 +271,18 @@ export function eintrag_pruefen(eintrag: Eintrag): Record<string, string> {
       namen.add(name);
     }
   });
+
+  if (eintrag.anmeldung) {
+    if (eintrag.laufzeit.art !== "stdio") {
+      fehler.anmeldung = "Eine Anmeldung gibt es nur für Stdio-Einträge.";
+    } else {
+      for (const befehl of ANMELDEBEFEHLE) {
+        if (eintrag.anmeldung[befehl].length === 0) {
+          fehler[`anmeldung.${befehl}`] = "Befehl fehlt.";
+        }
+      }
+    }
+  }
 
   return fehler;
 }

@@ -85,7 +85,7 @@ fn sicht_zeigt_nur_client_und_geheim_felder() {
         },
     )]);
 
-    let sicht = eintraege_sicht(&soll, &lokal, &geheim, &laeufer);
+    let sicht = eintraege_sicht(&soll, &lokal, &geheim, &laeufer, &BTreeMap::new());
     assert_eq!(sicht.len(), 1);
     let eintrag = &sicht[0];
     assert_eq!(eintrag.id, id);
@@ -122,7 +122,13 @@ fn sicht_ohne_laeufer_wartet() {
         eintrag: eintrag("echo"),
         werte: Werte::new(),
     }]);
-    let sicht = eintraege_sicht(&soll, &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new());
+    let sicht = eintraege_sicht(
+        &soll,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
     assert_eq!(sicht.len(), 1);
     assert_eq!(sicht[0].zustand, EintragZustand::Startet);
     assert!(sicht[0].tools.is_empty());
@@ -156,7 +162,13 @@ fn fehlende_werte_stehen_in_der_sicht() {
             abbruch: Abbruch::neu(),
         },
     )]);
-    let sicht = eintraege_sicht(&soll, &BTreeMap::new(), &BTreeMap::new(), &laeufer);
+    let sicht = eintraege_sicht(
+        &soll,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &laeufer,
+        &BTreeMap::new(),
+    );
     assert_eq!(
         sicht[0].fehlende,
         vec![FehlendesFeld {
@@ -210,4 +222,64 @@ fn jeder_agent_nur_einmal() {
         "der leere Name wird vorher abgefangen"
     );
     assert!(!name_vergeben(&[], "pi"), "noch keiner gekoppelt");
+}
+
+#[test]
+fn anmeldung_steht_nur_bei_eintraegen_die_eine_brauchen() {
+    let mut mit = eintrag("postfach");
+    mit.anmeldung = Some(quiver_domain::Anmeldung {
+        anmelden: vec!["anmelden".into()],
+        status: vec!["status".into()],
+        abmelden: vec!["abmelden".into()],
+    });
+    let soll = Soll::neu(vec![
+        SollEintrag {
+            eintrag: mit,
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: eintrag("echo"),
+            werte: Werte::new(),
+        },
+    ]);
+    let id = EintragId::neu("postfach");
+    let anmeldung = BTreeMap::from([(
+        id.clone(),
+        AnmeldeZustand::Angemeldet {
+            konto: Some("test@beispiel.de".into()),
+        },
+    )]);
+    let sicht = eintraege_sicht(
+        &soll,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &anmeldung,
+    );
+    let postfach = sicht.iter().find(|e| e.id == id).expect("postfach");
+    assert_eq!(
+        postfach.anmeldung,
+        Some(AnmeldeZustand::Angemeldet {
+            konto: Some("test@beispiel.de".into())
+        })
+    );
+    let echo = sicht
+        .iter()
+        .find(|e| e.id == EintragId::neu("echo"))
+        .expect("echo");
+    assert_eq!(
+        echo.anmeldung, None,
+        "ohne Anmeldung im Eintrag bleibt das Feld leer"
+    );
+
+    // Noch nicht geprüft heißt „unbekannt" – nicht „abgemeldet".
+    let sicht = eintraege_sicht(
+        &soll,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let postfach = sicht.iter().find(|e| e.id == id).expect("postfach");
+    assert_eq!(postfach.anmeldung, Some(AnmeldeZustand::Unbekannt));
 }

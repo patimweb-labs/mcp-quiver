@@ -46,6 +46,20 @@ export interface Feld {
   standard: string | null;
 }
 
+/**
+ * Wie der Client die Anmeldung eines `Stdio`-Tools steuert (SPEC.md §7).
+ * Jeder Befehl ist eine Argumentliste für **dasselbe** Programm mit
+ * **derselben** Umgebung wie die Laufzeit des Eintrags.
+ */
+export interface Anmeldung {
+  /** Öffnet den Browser; Exit 0 = angemeldet. */
+  anmelden: string[];
+  /** Exit 0 = angemeldet, Exit 1 = nicht angemeldet, sonst Fehler. */
+  status: string[];
+  /** Exit 0 = abgemeldet. */
+  abmelden: string[];
+}
+
 /** Ein MCP-Tool in der Bibliothek. */
 export interface Eintrag {
   id: EintragId;
@@ -60,6 +74,12 @@ export interface Eintrag {
    * ausgeführt. Fehlt das Feld (ältere Daten), gilt der Eintrag als aktiv.
    */
   aktiv: boolean;
+  /**
+   * Braucht das Tool eine Anmeldung des Users? Dann bietet das Client-Fenster
+   * „Anmelden“ an; ein Agent löst sie nie aus. Fehlt das Feld, braucht der
+   * Eintrag keine Anmeldung (Serde lässt `None` weg).
+   */
+  anmeldung?: Anmeldung | null;
 }
 
 /** Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt. */

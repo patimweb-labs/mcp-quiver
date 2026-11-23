@@ -17,6 +17,7 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] stderr der MCP-Prozesse geht ungefiltert ins Log; ein Tool, das Geheimnisse ausgibt, landet dort.
 
 ## Oberfläche
+- [ ] „1 Tools“ – Einzahl fehlt bei Anzahl 1.
 - [ ] Segmentauswahl: gewählter Text ist in egui fett, in Vue normal.
 - [ ] egui-Zeilen 1–2 px flacher als im Browser (kein line-height-Modell); Karten bis 4 px kürzer.
 - [ ] `image` als Dev-Abhängigkeit in `oberflaeche`, nur zum Zuschneiden der Musterbilder.
