@@ -27,6 +27,7 @@ fn eintrag(id: &str) -> Eintrag {
             feld("pfad", Quelle::Client),
             feld("token", Quelle::Geheim),
         ],
+        aktiv: true,
     }
 }
 
@@ -203,4 +204,21 @@ fn laufzeit_json_form() {
             kopfzeilen: Werte::new()
         }
     );
+}
+
+#[test]
+fn abgeschalteter_eintrag_laeuft_nirgends() {
+    let (g, gr, s, mut e) = welt(vec![satz("a", 0, &[("tenant", "x")])]);
+    e[0].aktiv = false;
+    assert!(soll_berechnen(&g, &gr, &s, &e)
+        .unwrap()
+        .eintraege
+        .is_empty());
+}
+
+#[test]
+fn aktiv_fehlt_in_alten_daten_gilt_als_an() {
+    let json = r#"{"id":"x","version":"1","titel":"X","herkunft":"eigen","laufzeit":{"art":"remote","url":"u"}}"#;
+    let e: Eintrag = serde_json::from_str(json).unwrap();
+    assert!(e.aktiv);
 }

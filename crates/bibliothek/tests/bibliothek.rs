@@ -166,6 +166,7 @@ fn rundlauf_importieren_exportieren() {
         version: "2.1.0".into(),
         titel: "Wetter (eigen)".into(),
         beschreibung: "Von uns gebaut".into(),
+        aktiv: true,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "npx".into(),
@@ -230,6 +231,7 @@ fn rundlauf_mit_unbekanntem_befehl_traegt_meta() {
             umgebung: Werte::new(),
         },
         felder: Vec::new(),
+        aktiv: true,
     };
 
     let json = exportieren(&eintrag);

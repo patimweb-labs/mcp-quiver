@@ -328,6 +328,7 @@ mod tests {
                 umgebung: Default::default(),
             },
             felder: Vec::new(),
+            aktiv: true,
         }
     }
 

@@ -121,6 +121,10 @@ pub struct Eintrag {
     pub laufzeit: Laufzeit,
     #[serde(default)]
     pub felder: Vec<Feld>,
+    /// Abgeschaltet: bleibt in Bibliothek und Sätzen, wird aber auf keinem Gerät
+    /// ausgeführt. Fehlt das Feld (ältere Daten), gilt der Eintrag als aktiv.
+    #[serde(default = "wahr")]
+    pub aktiv: bool,
 }
 
 /// Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt.
@@ -247,6 +251,9 @@ pub fn soll_berechnen(
                     satz: satz.id.clone(),
                     eintrag: se.eintrag.clone(),
                 })?;
+            if !eintrag.aktiv {
+                continue;
+            }
             let felder = gewaehlt.entry(&eintrag.id).or_default();
             for (name, wert) in &se.werte {
                 let ist_server = eintrag

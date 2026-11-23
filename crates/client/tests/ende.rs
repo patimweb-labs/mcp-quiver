@@ -197,6 +197,7 @@ fn eintrag(id: &str, umgebung: Werte, felder: Vec<Feld>) -> Eintrag {
             umgebung,
         },
         felder,
+        aktiv: true,
     }
 }
 

@@ -23,6 +23,7 @@
 //!         kopfzeilen: Default::default(),
 //!     },
 //!     felder: Vec::new(),
+//!     aktiv: true,
 //! };
 //! assert_eq!(importieren(&exportieren(&eintrag)).unwrap(), eintrag);
 //! ```
@@ -110,6 +111,7 @@ pub fn importieren(server_json: &Value) -> Result<Eintrag, ImportFehler> {
         herkunft: Herkunft::Fremd,
         laufzeit,
         felder,
+        aktiv: true,
     })
 }
 

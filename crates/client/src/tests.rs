@@ -30,6 +30,7 @@ fn eintrag(id: &str) -> Eintrag {
         version: "1.0.0".into(),
         titel: format!("Titel {id}"),
         beschreibung: format!("Beschreibung {id}"),
+        aktiv: true,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "echo".into(),

@@ -241,6 +241,7 @@ fn eintrag(id: &str) -> Eintrag {
         version: "1.0.0".into(),
         titel: format!("Titel {id}"),
         beschreibung: "Ein Testeintrag".into(),
+        aktiv: true,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "npx".into(),
