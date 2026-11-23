@@ -42,6 +42,9 @@ rmcp = { version = "3.11", features = [
     "transport-io",
     "transport-streamable-http-server",
     "transport-streamable-http-client-reqwest",
+    # Ohne dieses Feature baut rmcp sein reqwest ohne TLS: entfernte
+    # MCP-Server über https scheitern dann mit „error sending request“.
+    "reqwest",
 ] }
 
 [dev-dependencies]
