@@ -183,6 +183,9 @@ impl LaeuferStand {
 
 /// Ein Eintrag, der gerade läuft (oder es versucht).
 struct Laeufer {
+    /// Zählt jeden Start hoch. Eine Start-Aufgabe darf nur in den Läufer
+    /// schreiben, der zu ihrer Generation gehört (Aufgabe 12).
+    generation: u64,
     fingerabdruck: String,
     stand: LaeuferStand,
     peer: Option<Peer<RoleClient>>,
@@ -348,6 +351,8 @@ pub(crate) struct Innen {
     pub(crate) modell: watch::Sender<Modell>,
     pub(crate) sitzungen: Mutex<BTreeMap<u64, Sitzung>>,
     pub(crate) zaehler: AtomicU64,
+    /// Zählt die Starts je Eintrag hoch (Generation eines Läufers).
+    pub(crate) generation: AtomicU64,
     pub(crate) ende: Abbruch,
     pub(crate) erneut: Notify,
     pub(crate) aufgaben: Mutex<Vec<tokio::task::JoinHandle<()>>>,
@@ -511,11 +516,32 @@ impl Innen {
         )
     }
 
-    pub(crate) fn aendern(&self, id: &EintragId, aenderung: impl FnOnce(&mut Laeufer)) {
+    /// In den Läufer eines Eintrags schreiben – aber nur, wenn er noch zu
+    /// dieser Generation gehört. Sonst ist der Start überholt und schreibt
+    /// nichts (Aufgabe 12). `false` heißt: nicht geschrieben.
+    pub(crate) fn aendern(
+        &self,
+        id: &EintragId,
+        generation: u64,
+        aenderung: impl FnOnce(&mut Laeufer),
+    ) -> bool {
         let mut stand = self.stand();
-        if let Some(laeufer) = stand.laeufer.get_mut(id) {
-            aenderung(laeufer);
+        match stand.laeufer.get_mut(id) {
+            Some(laeufer) if laeufer.generation == generation => {
+                aenderung(laeufer);
+                true
+            }
+            _ => false,
         }
+    }
+
+    /// Fingerabdruck je Eintrag, der gerade läuft (oder es versucht).
+    fn fingerabdruecke(&self) -> BTreeMap<EintragId, String> {
+        self.stand()
+            .laeufer
+            .iter()
+            .map(|(id, laeufer)| (id.clone(), laeufer.fingerabdruck.clone()))
+            .collect()
     }
 
     /// Alle Werkzeuge aller laufenden Einträge, mit Präfix.
@@ -707,24 +733,39 @@ async fn anmeldung_lauf(innen: Arc<Innen>) {
 }
 
 /// Der Eintrag startet: Zustand merken und die Aufsicht starten.
+///
+/// Je Eintrag gibt es genau **einen** Läufer und damit genau eine wirksame
+/// Start-Aufgabe: jeder Start bekommt eine neue Generation, der alte Läufer
+/// wird verworfen und seine Aufgabe über ihr Abbruchsignal beendet. Die alte
+/// Aufgabe wird nicht abgebrochen, sondern lässt ihren Aufbau los – sonst
+/// bliebe ein Kindprozess zurück, dessen Dienst in einer eigenen Aufgabe lebt.
 async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
     let id = eintrag.eintrag.id.clone();
+    let generation = innen
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     let abbruch = Abbruch::neu();
-    {
+    let vorheriger = {
         let mut stand = innen.stand();
         stand.laeufer.insert(
             id.clone(),
             Laeufer {
+                generation,
                 fingerabdruck: eintrag.fingerabdruck(),
                 stand: LaeuferStand::neu(EintragZustand::Startet),
                 peer: None,
                 abbruch: abbruch.clone(),
             },
-        );
+        )
+    };
+    if let Some(vorheriger) = vorheriger {
+        vorheriger.abbruch.abbrechen();
     }
     innen.modell_schicken();
     let aufsicht = innen.clone();
-    let aufgabe = tokio::spawn(async move { eintrag_lauf(aufsicht, id, abbruch).await });
+    let aufgabe =
+        tokio::spawn(async move { eintrag_lauf(aufsicht, id, generation, abbruch).await });
     innen
         .aufgaben
         .lock()
@@ -732,7 +773,7 @@ async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
         .push(aufgabe);
 }
 
-/// Der Eintrag soll aufhören.
+/// Der Eintrag soll aufhören. Die Aufgabe merkt es an ihrem Abbruchsignal.
 fn stoppe_in(innen: &Arc<Innen>, id: &EintragId) {
     let laeufer = innen.stand().laeufer.remove(id);
     if let Some(laeufer) = laeufer {
@@ -741,7 +782,10 @@ fn stoppe_in(innen: &Arc<Innen>, id: &EintragId) {
 }
 
 /// Die Aufsicht eines Eintrags: starten, Werkzeuge holen, warten, neu starten.
-async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
+///
+/// `generation` bindet die Aufgabe an ihren Läufer: schreibt ein neuer Start
+/// denselben Eintrag, ist diese Aufgabe überholt und schreibt nichts mehr.
+async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch: Abbruch) {
     let mut backoff = 1u64;
     // Einmal beim Start: steht die Anmeldung noch?
     status_im_hintergrund(&innen, &id);
@@ -757,7 +801,7 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
             Ok(laufzeit) => laufzeit,
             Err(fehlend) => {
                 let felder = fehlend.iter().map(|feld| feld.name.clone()).collect();
-                innen.aendern(&id, |laeufer| {
+                let geschrieben = innen.aendern(&id, generation, |laeufer| {
                     laeufer.stand = LaeuferStand {
                         zustand: EintragZustand::WartetAufWerte { felder },
                         fehlende: fehlend,
@@ -765,34 +809,47 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
                     };
                     laeufer.peer = None;
                 });
-                innen.modell_schicken();
-                innen.melde().await;
+                if geschrieben {
+                    innen.modell_schicken();
+                    innen.melde().await;
+                }
                 return;
             }
         };
 
-        innen.aendern(&id, |laeufer| {
+        innen.aendern(&id, generation, |laeufer| {
             laeufer.stand.zustand = EintragZustand::Startet;
             laeufer.stand.fehlende.clear();
         });
         innen.modell_schicken();
 
-        let verbunden = tokio::time::timeout(
-            laufzeit::AUFBAU_TIMEOUT,
-            laufzeit::verbinden(id.als_str(), &laufzeit),
-        )
-        .await;
+        // Der Aufbau lauscht auf den Abbruch: wird der Eintrag während des
+        // Startens ersetzt oder angehalten, gibt diese Aufgabe sofort auf,
+        // statt nach dem Aufbau in den neuen Läufer zu schreiben (Aufgabe 12).
+        let verbunden = tokio::select! {
+            _ = abbruch.warten() => return,
+            ergebnis = tokio::time::timeout(
+                laufzeit::AUFBAU_TIMEOUT,
+                laufzeit::verbinden(id.als_str(), &laufzeit),
+            ) => ergebnis,
+        };
         let mut verbindung = match verbunden {
             Ok(Ok(verbindung)) => verbindung,
             Ok(Err(fehler)) => {
-                fehler_setzen(&innen, &id, format!("{fehler:#}")).await;
+                fehler_setzen(&innen, &id, generation, format!("{fehler:#}")).await;
                 if !warten_auf_neustart(&abbruch, &mut backoff).await {
                     return;
                 }
                 continue;
             }
             Err(_) => {
-                fehler_setzen(&innen, &id, "Zeitüberschreitung beim Start".to_string()).await;
+                fehler_setzen(
+                    &innen,
+                    &id,
+                    generation,
+                    "Zeitüberschreitung beim Start".to_string(),
+                )
+                .await;
                 if !warten_auf_neustart(&abbruch, &mut backoff).await {
                     return;
                 }
@@ -800,11 +857,15 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
             }
         };
 
+        if abbruch.ist_abgebrochen() {
+            verbindung.beenden();
+            return;
+        }
         let werkzeuge = match verbindung.werkzeuge().await {
             Ok(werkzeuge) => werkzeuge,
             Err(fehler) => {
                 verbindung.beenden();
-                fehler_setzen(&innen, &id, format!("{fehler:#}")).await;
+                fehler_setzen(&innen, &id, generation, format!("{fehler:#}")).await;
                 if !warten_auf_neustart(&abbruch, &mut backoff).await {
                     return;
                 }
@@ -813,13 +874,18 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
         };
 
         let anzahl = u32::try_from(werkzeuge.len()).unwrap_or(u32::MAX);
-        {
-            let peer = verbindung.peer().clone();
-            innen.aendern(&id, |laeufer| {
-                laeufer.stand.tools = werkzeuge;
-                laeufer.stand.zustand = EintragZustand::Laeuft { tools: anzahl };
-                laeufer.peer = Some(peer);
-            });
+        let peer = verbindung.peer().clone();
+        let geschrieben = innen.aendern(&id, generation, |laeufer| {
+            laeufer.stand.tools = werkzeuge;
+            laeufer.stand.zustand = EintragZustand::Laeuft { tools: anzahl };
+            laeufer.peer = Some(peer);
+        });
+        if !geschrieben {
+            // Ein neuerer Start hat den Eintrag übernommen: dieser hier ist
+            // überholt und gibt seine Verbindung wieder her.
+            tracing::info!(eintrag = %id, "Start überholt, wird verworfen");
+            verbindung.beenden();
+            return;
         }
         innen.modell_schicken();
         innen.liste_geaendert().await;
@@ -833,10 +899,12 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
             _ = verbindung.warten() => true,
         };
         verbindung.beenden();
-        innen.aendern(&id, |laeufer| {
+        if !innen.aendern(&id, generation, |laeufer| {
             laeufer.peer = None;
             laeufer.stand.tools.clear();
-        });
+        }) {
+            return;
+        }
         if !selbst_zu {
             innen.modell_schicken();
             innen.liste_geaendert().await;
@@ -845,6 +913,7 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
         fehler_setzen(
             &innen,
             &id,
+            generation,
             "Der Eintrag hat die Verbindung beendet".to_string(),
         )
         .await;
@@ -855,12 +924,16 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, abbruch: Abbruch) {
 }
 
 /// Zustand `Fehler` setzen, Modell und Agenten informieren, melden.
-async fn fehler_setzen(innen: &Arc<Innen>, id: &EintragId, text: String) {
+/// Ein überholter Start (andere Generation) schreibt nichts.
+async fn fehler_setzen(innen: &Arc<Innen>, id: &EintragId, generation: u64, text: String) {
     tracing::warn!(eintrag = %id, "{text}");
-    innen.aendern(id, |laeufer| {
+    let geschrieben = innen.aendern(id, generation, |laeufer| {
         laeufer.stand = LaeuferStand::neu(EintragZustand::Fehler { text });
         laeufer.peer = None;
     });
+    if !geschrieben {
+        return;
+    }
     innen.modell_schicken();
     innen.liste_geaendert().await;
     innen.melde().await;
@@ -876,17 +949,29 @@ async fn warten_auf_neustart(abbruch: &Abbruch, backoff: &mut u64) -> bool {
     true
 }
 
+/// Ist die Aktion inzwischen überholt? Zwischen dem Vergleich und dem
+/// Ausführen kann ein zweiter Abgleich denselben Eintrag schon gestartet
+/// haben – dann gibt es nichts zu tun (Aufgabe 12).
+pub(crate) fn ueberholt(
+    aktion: &quiver_domain::Aktion,
+    ist: &BTreeMap<EintragId, String>,
+    soll: &Soll,
+) -> bool {
+    match aktion {
+        quiver_domain::Aktion::Stoppen(id) => !ist.contains_key(id),
+        quiver_domain::Aktion::Starten(id) => ist.contains_key(id),
+        quiver_domain::Aktion::Neustarten(id) => soll
+            .eintraege
+            .iter()
+            .find(|eintrag| &eintrag.eintrag.id == id)
+            .is_some_and(|eintrag| ist.get(id) == Some(&eintrag.fingerabdruck())),
+    }
+}
+
 /// Den Soll-Zustand anwenden: vergleichen und die passenden Aktionen ausführen.
 pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
     innen.geheim_laden(&soll);
-    let ist: BTreeMap<EintragId, String> = {
-        let stand = innen.stand();
-        stand
-            .laeufer
-            .iter()
-            .map(|(id, laeufer)| (id.clone(), laeufer.fingerabdruck.clone()))
-            .collect()
-    };
+    let ist = innen.fingerabdruecke();
     let aktionen = quiver_domain::abgleichen(&soll, &ist);
     {
         let mut stand = innen.stand();
@@ -908,6 +993,9 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
         stand.soll = soll.clone();
     }
     for aktion in aktionen {
+        if ueberholt(&aktion, &innen.fingerabdruecke(), &soll) {
+            continue;
+        }
         match aktion {
             quiver_domain::Aktion::Stoppen(id) => stoppe_in(innen, &id),
             quiver_domain::Aktion::Neustarten(id) => {
@@ -997,6 +1085,7 @@ impl Kern {
             ende: Abbruch::neu(),
             erneut: Notify::new(),
             aufgaben: Mutex::new(Vec::new()),
+            generation: AtomicU64::new(0),
         });
 
         // Geheimnisse und den letzten Soll-Zustand wieder aufnehmen. Ist ein

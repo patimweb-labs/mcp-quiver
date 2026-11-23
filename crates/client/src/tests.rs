@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quiver_domain::{
-    Eintrag, EintragId, Feld, Herkunft, Laufzeit, Quelle, Soll, SollEintrag, Werte,
+    Aktion, Eintrag, EintragId, Feld, Herkunft, Laufzeit, Quelle, Soll, SollEintrag, Werte,
 };
 use quiver_protocol::EintragZustand;
 use rmcp::model::{JsonObject, Tool};
@@ -75,6 +75,7 @@ fn sicht_zeigt_nur_client_und_geheim_felder() {
     let laeufer = BTreeMap::from([(
         id.clone(),
         Laeufer {
+            generation: 1,
             fingerabdruck: "abc".into(),
             stand: LaeuferStand {
                 zustand: EintragZustand::Laeuft { tools: 2 },
@@ -155,6 +156,7 @@ fn fehlende_werte_stehen_in_der_sicht() {
     let laeufer = BTreeMap::from([(
         id.clone(),
         Laeufer {
+            generation: 1,
             fingerabdruck: "abc".into(),
             stand: LaeuferStand {
                 zustand: EintragZustand::WartetAufWerte {
@@ -356,4 +358,44 @@ fn einrichtung_steht_nur_bei_eintraegen_die_eine_anbieten() {
             text: "Die Einrichtung endet mit Code 3".into()
         })
     );
+}
+
+#[test]
+fn ein_zweiter_abgleich_startet_denselben_eintrag_nicht_noch_einmal() {
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag: eintrag("echo"),
+        werte: Werte::new(),
+    }]);
+    let id = EintragId::neu("echo");
+    let gleich = BTreeMap::from([(id.clone(), soll.eintraege[0].fingerabdruck())]);
+    let anders = BTreeMap::from([(id.clone(), "aelterer-fingerabdruck".to_string())]);
+
+    // Starten: läuft der Eintrag schon (egal mit welchem Fingerabdruck), gibt
+    // es keine zweite Start-Aufgabe.
+    assert!(
+        !ueberholt(&Aktion::Starten(id.clone()), &BTreeMap::new(), &soll),
+        "noch nicht gestartet: der Start ist nötig"
+    );
+    assert!(
+        ueberholt(&Aktion::Starten(id.clone()), &anders, &soll),
+        "läuft schon: kein zweiter Start"
+    );
+
+    // Neustarten: gleicher Fingerabdruck wie der laufende heißt „nichts zu tun“.
+    assert!(
+        ueberholt(&Aktion::Neustarten(id.clone()), &gleich, &soll),
+        "gleicher Fingerabdruck: nicht neu starten"
+    );
+    assert!(
+        !ueberholt(&Aktion::Neustarten(id.clone()), &anders, &soll),
+        "anderer Fingerabdruck: neu starten"
+    );
+
+    // Stoppen: was schon weg ist, muss nicht gestoppt werden.
+    assert!(ueberholt(
+        &Aktion::Stoppen(id.clone()),
+        &BTreeMap::new(),
+        &soll
+    ));
+    assert!(!ueberholt(&Aktion::Stoppen(id.clone()), &gleich, &soll));
 }

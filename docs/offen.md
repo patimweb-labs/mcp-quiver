@@ -16,7 +16,7 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       blockiert seinen Eintrag, bis der Prozess endet oder der Client beendet wird.
 - [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf.
 - [ ] Tools pro Agent filtern (SPEC §7) – die Agent-Kennung liegt in der Sitzung schon vor.
-- [ ] stderr der MCP-Prozesse geht ungefiltert ins Log; ein Tool, das Geheimnisse ausgibt, landet dort.
+- [ ] stderr der MCP-Prozesse geht ungefiltert ins Log (`laufzeit::stderr_ins_log`); `anmeldung::maskieren` dort ebenfalls anwenden.
 
 ## Oberfläche
 - [ ] „1 Tools“ – Einzahl fehlt bei Anzahl 1.

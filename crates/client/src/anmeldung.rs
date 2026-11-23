@@ -104,6 +104,73 @@ impl Befehl {
     }
 }
 
+/// Was im Protokoll statt eines Geheimwerts steht.
+pub const VERBORGEN: &str = "<verborgen>";
+
+/// Wörter, nach denen der Rest einer Zeile nie im Protokoll steht.
+const GEHEIMWOERTER: [&str; 5] = ["token", "password", "passwort", "secret", "bearer"];
+
+/// Eine Logzeile entschärfen: Einmal-Token in Einrichtungsadressen
+/// (`/e/<token>/`) und alles hinter einem Geheimwort werden verborgen.
+///
+/// Reine Funktion, damit sie prüfbar ist: `quiver-<tool> einrichten` gibt die
+/// Adresse seiner Einrichtungsseite samt Einmal-Token aus – die darf nicht im
+/// Protokoll landen (Aufgabe 12, Teil B).
+pub fn maskieren(zeile: &str) -> String {
+    nach_geheimwort(&adressen_maskieren(zeile))
+}
+
+/// `/e/<hex>/` → `/e/<verborgen>/`.
+fn adressen_maskieren(zeile: &str) -> String {
+    let mut aus = String::with_capacity(zeile.len());
+    let mut rest = zeile;
+    while let Some(stelle) = rest.find("/e/") {
+        let (davor, ab) = rest.split_at(stelle);
+        aus.push_str(davor);
+        aus.push_str("/e/");
+        let nach = &ab[3..];
+        let hex = nach.bytes().take_while(u8::is_ascii_hexdigit).count();
+        let ende = &nach[hex..];
+        if hex >= 4 && (ende.is_empty() || ende.starts_with('/')) {
+            aus.push_str(VERBORGEN);
+            rest = ende;
+        } else {
+            // Kein Token: `/e/` bleibt stehen, dahinter geht es normal weiter.
+            rest = nach;
+        }
+    }
+    aus.push_str(rest);
+    aus
+}
+
+/// Alles hinter dem ersten Geheimwort (`token`, `password`, `passwort`,
+/// `secret`, `Bearer`) verbinden – das Schlüsselwort selbst bleibt lesbar.
+fn nach_geheimwort(zeile: &str) -> String {
+    let klein = zeile.to_ascii_lowercase();
+    let treffer = GEHEIMWOERTER
+        .iter()
+        .filter_map(|wort| klein.find(wort).map(|stelle| (stelle, *wort)))
+        .min_by_key(|(stelle, _)| *stelle);
+    let Some((stelle, wort)) = treffer else {
+        return zeile.to_string();
+    };
+    let nach = &zeile[stelle + wort.len()..];
+    let trenner = nach.len()
+        - nach
+            .trim_start_matches(|zeichen: char| {
+                zeichen.is_whitespace() || zeichen == '=' || zeichen == ':' || zeichen == '"'
+            })
+            .len();
+    let wert = nach[trenner..].trim();
+    if wert.is_empty() {
+        // Hinter dem Wort steht nichts, was man verbergen müsste.
+        return zeile.to_string();
+    }
+    let mut aus = zeile[..stelle + wort.len() + trenner].to_string();
+    aus.push_str(VERBORGEN);
+    aus
+}
+
 /// Die Befehlszeile eines Anmelde-Befehls bauen.
 ///
 /// Programm, Umgebung und Platzhalter kommen aus derselben Funktion wie die
@@ -213,7 +280,7 @@ pub async fn befehl_laufen(
     befehl: &Befehl,
     frist: Option<Duration>,
 ) -> anyhow::Result<Ausgang> {
-    tracing::info!(eintrag = %id, "Befehl: {}", befehl.zeile());
+    tracing::info!(eintrag = %id, "Befehl: {}", maskieren(&befehl.zeile()));
     let mut kommando = tokio::process::Command::new(&befehl.programm);
     kommando
         .args(&befehl.argumente)
@@ -276,7 +343,7 @@ async fn ausgabe_lesen(id: String, mut stdout: tokio::process::ChildStdout) -> S
         tracing::warn!(eintrag = %id, "Anmeldung: stdout nicht lesbar: {fehler}");
     }
     for zeile in ausgabe.lines() {
-        tracing::info!(eintrag = %id, "{zeile}");
+        tracing::info!(eintrag = %id, "{}", maskieren(zeile));
     }
     ausgabe
 }
@@ -285,7 +352,7 @@ async fn ausgabe_lesen(id: String, mut stdout: tokio::process::ChildStdout) -> S
 async fn fehler_lesen(id: String, stderr: tokio::process::ChildStderr) {
     let mut zeilen = BufReader::new(stderr).lines();
     while let Ok(Some(zeile)) = zeilen.next_line().await {
-        tracing::info!(eintrag = %id, "{zeile}");
+        tracing::info!(eintrag = %id, "{}", maskieren(&zeile));
     }
 }
 
@@ -509,5 +576,55 @@ mod tests {
             werte: Werte::new(),
         };
         assert!(befehl_bauen(&ohne, Anmeldebefehl::Status, &Werte::new(), &Werte::new()).is_err());
+    }
+
+    #[test]
+    fn einrichtungstoken_steht_nie_im_protokoll() {
+        let zeile =
+            "Einrichten: http://127.0.0.1:4711/e/9f8e7d6c5b4a39281706f5e4d3c2b1a0/ im Browser";
+        assert_eq!(
+            maskieren(zeile),
+            "Einrichten: http://127.0.0.1:4711/e/<verborgen>/ im Browser"
+        );
+        // Auch ohne Schrägstrich am Ende und bei kurzen Token.
+        assert_eq!(
+            maskieren("http://127.0.0.1:4711/e/abcd"),
+            "http://127.0.0.1:4711/e/<verborgen>"
+        );
+        // Was kein Hex ist, bleibt stehen: das ist kein Einmal-Token.
+        assert_eq!(
+            maskieren("http://127.0.0.1:4711/e/hilfe"),
+            "http://127.0.0.1:4711/e/hilfe"
+        );
+        assert_eq!(maskieren("/e/12/uebersicht"), "/e/12/uebersicht");
+    }
+
+    #[test]
+    fn schluesselwoerter_verbergen_den_rest_der_zeile() {
+        assert_eq!(
+            maskieren("device token: 0123456789abcdef"),
+            "device token: <verborgen>"
+        );
+        assert_eq!(maskieren("password=geheim"), "password=<verborgen>");
+        assert_eq!(maskieren("Passwort geheim"), "Passwort <verborgen>");
+        assert_eq!(maskieren("Bearer abcdef"), "Bearer <verborgen>");
+        assert_eq!(maskieren("secret: so-geheim"), "secret: <verborgen>");
+        // Ohne Wert dahinter gibt es nichts zu verbergen.
+        assert_eq!(maskieren("token"), "token");
+        assert_eq!(maskieren("password: "), "password: ");
+        // Harmlose Zeilen bleiben Zeile.
+        assert_eq!(maskieren("Einrichtung fertig"), "Einrichtung fertig");
+    }
+
+    #[test]
+    fn maskieren_aendert_den_befehl_nicht() {
+        // Die Maske entsteht erst fürs Protokoll, nie für den Aufruf.
+        let befehl = Befehl {
+            programm: "/opt/quiver/outline".into(),
+            argumente: vec!["einrichten".into()],
+            umgebung: Werte::new(),
+        };
+        assert_eq!(maskieren(&befehl.zeile()), "/opt/quiver/outline einrichten");
+        assert_eq!(befehl.zeile(), "/opt/quiver/outline einrichten");
     }
 }

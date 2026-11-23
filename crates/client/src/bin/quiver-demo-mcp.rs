@@ -10,6 +10,9 @@
 //! - `QUIVER_DEMO_TOOLS`: `name=Beschreibung;name2=Beschreibung2`.
 //! - `QUIVER_DEMO_LOG`: optional, Datei, an die jede Zeile angehängt wird.
 //! - `QUIVER_DEMO_GEHEIM`: optional; protokolliert wird nur, **ob** es gesetzt ist.
+//! - `QUIVER_DEMO_WARTE_AUF` + `QUIVER_DEMO_FREIGABE`: Testhilfe. Existiert die
+//!   erste Datei beim Start, wird auf die zweite gewartet, bevor der Dienst
+//!   antwortet – so lässt sich ein Start anhalten (Aufgabe 12: Doppelstart).
 //!
 //! Jede Zeile geht nach stderr (landet im Protokoll des Clients) und ggf. in die Datei.
 
@@ -115,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         Ok(w) if !w.is_empty() => format!("Geheimnis gesetzt ({} Zeichen)", w.chars().count()),
         _ => "kein Geheimnis".into(),
     };
+    warte_auf_freigabe(&demo);
     let namen: Vec<_> = demo.werkzeuge.iter().map(|(n, _)| n.as_str()).collect();
     demo.protokoll(&format!(
         "gestartet, Werkzeuge: {}; {geheim}",
@@ -123,4 +127,26 @@ async fn main() -> anyhow::Result<()> {
     let dienst = demo.serve(rmcp::transport::stdio_pipes()).await?;
     dienst.waiting().await?;
     Ok(())
+}
+
+/// Testhilfe: erst auf die Freigabedatei warten, dann den Dienst anbieten.
+///
+/// Nur wenn `QUIVER_DEMO_WARTE_AUF` beim Start **existiert**, wird gewartet –
+/// so kann ein Test einen Start festhalten, einen zweiten daneben setzen und
+/// den ersten danach freigeben.
+fn warte_auf_freigabe(demo: &Demo) {
+    let (Ok(arm), Ok(frei)) = (
+        std::env::var("QUIVER_DEMO_WARTE_AUF"),
+        std::env::var("QUIVER_DEMO_FREIGABE"),
+    ) else {
+        return;
+    };
+    if arm.trim().is_empty() || !std::path::Path::new(&arm).exists() {
+        return;
+    }
+    demo.protokoll(&format!("warte auf Freigabe: {frei}"));
+    while !std::path::Path::new(&frei).exists() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    demo.protokoll("freigegeben");
 }
