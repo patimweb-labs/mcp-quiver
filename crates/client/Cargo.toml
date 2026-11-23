@@ -7,6 +7,34 @@ authors.workspace = true
 repository.workspace = true
 description = "mcp-quiver: Client-Kern — Abgleich, Laufzeiten, MCP-Endpunkt für Agenten"
 
+[[bin]]
+name = "quiver-echo-mcp"
+path = "src/bin/quiver-echo-mcp.rs"
+
 [dependencies]
 quiver-domain.workspace = true
 quiver-protocol.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true
+axum = "0.8"
+dirs = "6"
+futures-util = "0.3"
+keyring = "4"
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rmcp = { version = "3.11", features = [
+    "client",
+    "server",
+    "transport-child-process",
+    "transport-io",
+    "transport-streamable-http-server",
+    "transport-streamable-http-client-reqwest",
+] }
+
+[dev-dependencies]
+quiver-server = { path = "../server" }
