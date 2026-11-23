@@ -129,6 +129,21 @@ pub struct Eintrag {
     /// Dann bietet das Client-Fenster „Anmelden“ an; ein Agent löst sie nie aus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anmeldung: Option<Anmeldung>,
+    /// Hat das Tool eine eigene Einrichtungsseite (Profile, Zugänge)? Dann bietet
+    /// das Client-Fenster „Einrichten“ an. Zugangsdaten gehen so nie durch einen Agenten.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub einrichtung: Option<Einrichtung>,
+}
+
+/// Wie der Client die Einrichtung eines `Stdio`-Tools startet (SPEC.md §7).
+///
+/// `einrichten` ist eine Argumentliste für **dasselbe** Programm mit **derselben**
+/// Umgebung wie die Laufzeit. Der Befehl öffnet selbst eine Seite im Browser und
+/// endet, wenn der User sie abschließt (Exit 0) oder abbricht (Exit 1).
+/// Beispiel quiver-outline: `["einrichten"]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Einrichtung {
+    pub einrichten: Vec<String>,
 }
 
 /// Wie der Client die Anmeldung eines `Stdio`-Tools steuert (SPEC.md §7).

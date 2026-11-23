@@ -352,6 +352,7 @@ mod tests {
                     status: vec!["status".into()],
                     abmelden: vec!["abmelden".into(), "${KONTO}".into()],
                 }),
+                einrichtung: None,
             },
             werte: Werte::from([("ABLAGE".to_string(), "/tmp/stand".to_string())]),
         }

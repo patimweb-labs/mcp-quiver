@@ -29,6 +29,7 @@ fn eintrag(id: &str) -> Eintrag {
         ],
         aktiv: true,
         anmeldung: None,
+        einrichtung: None,
     }
 }
 

@@ -244,6 +244,7 @@ fn eintrag(p: &Pruefung) -> Eintrag {
             status: vec!["status".into()],
             abmelden: vec!["abmelden".into()],
         }),
+        einrichtung: None,
     }
 }
 
