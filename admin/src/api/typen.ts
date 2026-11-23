@@ -1,0 +1,157 @@
+// Der Vertrag zwischen Server und Verwaltung, eins zu eins aus
+// `crates/domain/src/lib.rs` und `crates/protocol/src/lib.rs`.
+//
+// Die Namen folgen serde: `kebab-case` für Aufzählungen, `art` als Tag der
+// Laufzeit, `zustand` als Tag des Eintrag-Zustands. Ein Feld, das hier anders
+// heißt, ist ein Fehler – nicht eine andere Schreibweise.
+
+/** Kennung eines Eintrags, z. B. `microsoft-mail`. */
+export type EintragId = string;
+/** Kennung eines Satzes. */
+export type SatzId = string;
+/** Kennung einer Gruppe. */
+export type GruppeId = string;
+/** Kennung eines Geräts (vom Server vergeben). */
+export type GeraetId = string;
+
+/** Name eines Felds → Wert. */
+export type Werte = Record<string, string>;
+
+/** Woher ein Eintrag kommt (SPEC.md §4). */
+export type Herkunft = "eigen" | "fremd";
+
+/** Wie ein Eintrag läuft. Werte dürfen Platzhalter `${feld}` enthalten. */
+export type Laufzeit =
+  | {
+      art: "stdio";
+      befehl: string;
+      argumente: string[];
+      umgebung: Werte;
+    }
+  | {
+      art: "remote";
+      url: string;
+      kopfzeilen: Werte;
+    };
+
+/** Wer ein Feld füllt (SPEC.md §6). */
+export type Quelle = "server" | "client" | "geheim";
+
+/** Ein Konfigurationsfeld eines Eintrags. */
+export interface Feld {
+  name: string;
+  beschreibung: string;
+  quelle: Quelle;
+  pflicht: boolean;
+  standard: string | null;
+}
+
+/** Ein MCP-Tool in der Bibliothek. */
+export interface Eintrag {
+  id: EintragId;
+  version: string;
+  titel: string;
+  beschreibung: string;
+  herkunft: Herkunft;
+  laufzeit: Laufzeit;
+  felder: Feld[];
+}
+
+/** Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt. */
+export interface SatzEintrag {
+  eintrag: EintragId;
+  werte: Werte;
+}
+
+/** Eine benannte Sammlung von Einträgen. */
+export interface Satz {
+  id: SatzId;
+  titel: string;
+  prioritaet: number;
+  eintraege: SatzEintrag[];
+}
+
+/** Eine Gruppe bekommt Sätze. */
+export interface Gruppe {
+  id: GruppeId;
+  titel: string;
+  saetze: SatzId[];
+}
+
+/** Ein eingebundenes Gerät. */
+export interface Geraet {
+  id: GeraetId;
+  name: string;
+  gruppen: GruppeId[];
+  gesperrt: boolean;
+}
+
+/** Zustand eines Eintrags auf dem Gerät, wie der Client ihn meldet. */
+export type EintragZustand =
+  | { zustand: "laeuft"; tools: number }
+  | { zustand: "wartet-auf-werte"; felder: string[] }
+  | { zustand: "startet" }
+  | { zustand: "fehler"; text: string };
+
+/** Was der Client nach jedem Abgleich meldet. */
+export interface Meldung {
+  revision: string;
+  client_version: string;
+  /** Serde schreibt `Vec<(EintragId, EintragZustand)>` als Paare. */
+  eintraege: [EintragId, EintragZustand][];
+}
+
+/** Ein Gerät, wie die Verwaltung es sieht. */
+export interface GeraetStand {
+  geraet: Geraet;
+  soll_revision: string;
+  meldung: Meldung | null;
+  zuletzt_gesehen: string | null;
+  verbunden: boolean;
+}
+
+/** Zähler für die Überblicksseite. */
+export interface Ueberblick {
+  eintraege: number;
+  saetze: number;
+  gruppen: number;
+  geraete: number;
+  geraete_verbunden: number;
+  server_version: string;
+}
+
+/** Rumpf für `PUT /admin/geraete/{id}`. */
+export interface GeraetAendern {
+  name: string;
+  gruppen: GruppeId[];
+  gesperrt: boolean;
+}
+
+/** Rumpf für `POST /admin/codes`. */
+export interface CodeAnlegen {
+  gruppen: GruppeId[];
+  minuten: number | null;
+}
+
+/** Antwort auf `POST /admin/codes`. */
+export interface Code {
+  code: string;
+  /** RFC 3339. */
+  gueltig_bis: string;
+}
+
+/** Fehlerantwort des Servers. */
+export interface Fehler {
+  fehler: string;
+}
+
+/** Die Seiten der Verwaltung. */
+export type Seite =
+  | "ueberblick"
+  | "bibliothek"
+  | "saetze"
+  | "gruppen"
+  | "geraete";
+
+/** Die drei Themes, sonst nichts (AGENTS.md §2.7). */
+export type Thema = "dark" | "light" | "mono";

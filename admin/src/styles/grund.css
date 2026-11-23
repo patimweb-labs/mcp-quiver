@@ -1,0 +1,143 @@
+/* Grundlage der Verwaltung. Nur Tokens, keine Hex-Werte, keine Pixel-Magie
+   (AGENTS.md §2.6). Die Maße kommen aus `tokens.css`, die Schrift aus
+   `schriften.css` – dieselben Quellen wie im egui-Fenster. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--wp-color-bg-canvas);
+  color: var(--wp-color-text-default);
+  font-family: var(--wp-font-family-sans);
+  font-size: var(--wp-font-size-md);
+  line-height: var(--wp-font-line-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+dt {
+  margin: 0;
+}
+
+a {
+  color: var(--wp-color-accent-default);
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--wp-font-family-mono);
+}
+
+/* Die Wortmarke: `mcp-quiver` in der fetten Schrift, wie `bausteine::marke`
+   im Fenster. */
+.marke {
+  font-family: var(--wp-font-family-sans);
+  font-size: var(--wp-font-size-lg);
+  font-weight: var(--wp-font-weight-semibold);
+  color: var(--wp-color-text-default);
+}
+
+/* Dialoge werden nach <body> teleportiert und liegen damit außerhalb von
+   `.wp-root`; den Fokusrahmen aus der Bibliothek bekommen sie hier. */
+.wp-dialog :focus-visible {
+  outline: var(--wp-size-focus) solid var(--wp-color-focus-ring);
+  outline-offset: var(--wp-size-focus);
+}
+
+/* Ein Wert, den man weiterreicht (Kennung, Fingerabdruck, Code). */
+.mono {
+  font-family: var(--wp-font-family-mono);
+  font-size: var(--wp-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* Nur für Screenreader sichtbar, aber im Fokusbaum. */
+.nur-lesen {
+  position: absolute;
+  width: var(--wp-size-border);
+  height: var(--wp-size-border);
+  padding: 0;
+  margin: calc(var(--wp-size-border) * -1);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Tabellen der Verwaltung: gleiche Kanten und Abstände wie die Tabellen der
+   Bausteine, aber mit aufklappbaren Zeilen (Geräte). */
+.tabelle {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--wp-font-size-md);
+}
+
+.tabelle th {
+  text-align: start;
+  padding: var(--wp-space-2);
+  background: var(--wp-color-bg-raised);
+  color: var(--wp-color-text-muted);
+  font-size: var(--wp-font-size-sm);
+  font-weight: var(--wp-font-weight-medium);
+  border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
+  white-space: nowrap;
+}
+
+.tabelle td {
+  padding: var(--wp-space-2);
+  border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
+  vertical-align: top;
+}
+
+.tabelle tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tabelle tbody tr.zeile--klick {
+  cursor: pointer;
+}
+
+.tabelle tbody tr.zeile--klick:hover {
+  background: var(--wp-color-bg-hover);
+}
+
+.tabelle tbody tr:focus-visible {
+  outline: var(--wp-size-focus) solid var(--wp-color-focus-ring);
+  outline-offset: calc(var(--wp-size-focus) * -1);
+}
+
+/* Ein Hinweis unter einer Zeile („wird aktualisiert"). */
+.leise {
+  color: var(--wp-color-text-muted);
+}
+
+.blass {
+  color: var(--wp-color-text-faint);
+  font-size: var(--wp-font-size-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

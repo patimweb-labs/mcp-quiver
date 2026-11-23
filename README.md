@@ -63,6 +63,20 @@ generated from them and checked in; never edit it by hand:
 cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
 ```
 
+### Admin interface
+
+```bash
+git submodule update --init admin/vendor/weppelmann-ui
+cd admin
+npm ci
+npm run dev     # Vite on 5173, /api → 127.0.0.1:8740
+npm run build   # to admin/dist; the server serves it at /
+npm run typecheck
+npm test
+```
+
+Layout, components and screenshots: [admin/README.md](admin/README.md).
+
 ## License
 
 [MIT](LICENSE)

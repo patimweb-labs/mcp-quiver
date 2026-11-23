@@ -66,6 +66,20 @@ geändert:
 cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
 ```
 
+### Admin-Oberfläche
+
+```bash
+git submodule update --init admin/vendor/weppelmann-ui
+cd admin
+npm ci
+npm run dev     # Vite auf 5173, /api → 127.0.0.1:8740
+npm run build   # nach admin/dist; der Server liefert sie unter / aus
+npm run typecheck
+npm test
+```
+
+Aufbau, Bausteine und Bildschirmfotos: [admin/README.md](admin/README.md).
+
 ## Lizenz
 
 [MIT](LICENSE)
