@@ -713,7 +713,7 @@ pub fn status_klein(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str)
 /// Ein Wert zum Weitergeben (Fingerabdruck, Kennung): umbrechend, daneben
 /// ein Knopf zum Kopieren.
 pub fn kopierbar(ui: &mut egui::Ui, f: &Farben, wert: &str, kopieren: &str) {
-    ui.horizontal_top(|ui| {
+    ui.horizontal(|ui| {
         if icon_knopf(ui, f, Icon::Kopieren, kopieren, false).clicked() {
             ui.ctx().copy_text(wert.to_string());
         }

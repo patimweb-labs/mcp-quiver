@@ -36,7 +36,7 @@ pub fn hinweis(ui: &mut egui::Ui, sicht: &Sicht) {
     };
     let f = sicht.thema.farben();
     bausteine::kasten(ui, f, |ui| {
-        ui.horizontal_top(|ui| {
+        ui.horizontal(|ui| {
             bausteine::icon(ui, f, Icon::Hinweis, Ton::Fehler);
             ui.add(egui::Label::new(bausteine::text(f, text, Ton::Fehler)).wrap());
         });

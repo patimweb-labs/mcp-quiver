@@ -45,7 +45,7 @@ onBeforeUnmount(() => clearTimeout(uhr));
 <style scoped>
 .kopierbar {
   display: inline-flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--wp-space-1);
   min-width: 0;
 }
