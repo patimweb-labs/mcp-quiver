@@ -31,6 +31,7 @@ import {
   filter_eintraege,
   hat_anmeldung,
   hat_einrichtung,
+  hat_mehrfach,
   herkunft_text,
   laufzeit_text,
   neuer_eintrag,
@@ -226,6 +227,9 @@ onMounted(laden);
               </span>
               <span v-if="hat_einrichtung(eintrag)" class="marke-chip">
                 mit Einrichtung
+              </span>
+              <span v-if="hat_mehrfach(eintrag)" class="marke-chip">
+                mehrere Zugänge
               </span>
               <Status
                 v-if="!eintrag.aktiv"

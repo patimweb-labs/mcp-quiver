@@ -120,6 +120,20 @@ impl KernZugang for EchterKern {
                 Aktion::EintragAnmelden { eintrag } => kern.anmelden(&eintrag).await,
                 Aktion::EintragAbmelden { eintrag } => kern.abmelden_eintrag(&eintrag).await,
                 Aktion::EintragEinrichten { eintrag } => kern.einrichten(&eintrag).await,
+                Aktion::ZugangSpeichern {
+                    eintrag,
+                    name,
+                    lokal,
+                    geheim,
+                } => kern.zugang_speichern(&eintrag, &name, lokal, geheim).await,
+                Aktion::ZugangLoeschen { eintrag, name } => {
+                    kern.zugang_loeschen(&eintrag, &name).await
+                }
+                Aktion::ZugangGeheimLoeschen {
+                    eintrag,
+                    name,
+                    feld,
+                } => kern.zugang_geheim_loeschen(&eintrag, &name, &feld).await,
                 // Den Browser öffnet das Fenster selbst (siehe `Fenster::bild`):
                 // hier gibt es nichts zu tun.
                 Aktion::LinkOeffnen(_) => Ok(()),

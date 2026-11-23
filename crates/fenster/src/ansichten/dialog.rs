@@ -48,7 +48,34 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
             .find(|e| &e.id == eintrag)
             .map(logik::link_basis)
             .unwrap_or_default(),
+        // Die Felder eines Zugangs haben ihre eigenen Standardwerte.
+        Dialog::Zugang { eintrag, .. } => sicht
+            .modell
+            .eintraege
+            .iter()
+            .find(|e| &e.id == eintrag)
+            .and_then(|e| e.zugaenge.as_ref())
+            .map(|zugaenge| logik::link_basis_aus_feldern(&zugaenge.felder))
+            .unwrap_or_default(),
         _ => Werte::new(),
+    };
+    // Schon vergebene Zugangsnamen: sie entscheiden, ob ein neuer Name geht.
+    let vorhandene_zugaenge: Vec<String> = match &sicht.dialog {
+        Dialog::Zugang { eintrag, .. } => sicht
+            .modell
+            .eintraege
+            .iter()
+            .find(|e| &e.id == eintrag)
+            .and_then(|e| e.zugaenge.as_ref())
+            .map(|zugaenge| {
+                zugaenge
+                    .liste
+                    .iter()
+                    .map(|zugang| zugang.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
     };
 
     // Innenabstand wie `WpDialog` in der Verwaltung (`--wp-space-5`); der
@@ -298,6 +325,172 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                             &f,
                             Icon::Papierkorb,
                             &t(sprache, "agenten.entfernen"),
+                        )
+                        .clicked()
+                        {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
+                // Ein Zugang: Name (beim Bearbeiten fest), die Felder, Geheimes
+                // als Passwortfeld mit „gesetzt“ und einem eigenen „Löschen“
+                // je gesetztem Geheimnis (Aufgabe 14).
+                Dialog::Zugang {
+                    eintrag,
+                    einzahl,
+                    name,
+                    neu,
+                    eingaben,
+                    ..
+                } => {
+                    let frei = *neu;
+                    let zugangsname = name.trim().to_string();
+                    ui.label(RichText::new(logik::zugang_titel(sprache, einzahl, frei)).heading());
+                    ui.add(
+                        egui::Label::new(text(&f, t(sprache, "zugaenge.sub"), Ton::Leise)).wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    let name_fehler = if frei {
+                        logik::zugang_name_fehler(name, &vorhandene_zugaenge)
+                    } else {
+                        None
+                    };
+                    let name_hinweis = name_fehler
+                        .map(|schluessel| t(sprache, schluessel))
+                        .or_else(|| Some(t(sprache, "zugaenge.name_hinweis")));
+                    bausteine::feld(
+                        ui,
+                        &f,
+                        &t(sprache, "zugaenge.name"),
+                        name_hinweis.as_deref(),
+                        |ui| {
+                            let feld = bausteine::eingabefeld(name)
+                                .desired_width(bausteine::feldbreite(ui));
+                            // Beim Bearbeiten bleibt der Name, wie er ist.
+                            ui.add(if frei { feld } else { feld.interactive(false) })
+                        },
+                    );
+                    ui.add_space(thema::SPACE_2);
+                    for i in 0..eingaben.len() {
+                        let feldname = eingaben[i].name.clone();
+                        let geheim = eingaben[i].geheim;
+                        let gesetzt = eingaben[i].gesetzt;
+                        let link = eingaben[i].link.clone();
+                        let mut teile = Vec::new();
+                        if !eingaben[i].beschreibung.is_empty() {
+                            teile.push(eingaben[i].beschreibung.clone());
+                        }
+                        if eingaben[i].pflicht {
+                            teile.push(t(sprache, "tools.pflicht"));
+                        }
+                        if geheim && gesetzt {
+                            teile.push(t(sprache, "zugaenge.geheim_gesetzt"));
+                        }
+                        let hinweis = (!teile.is_empty()).then(|| teile.join(" · "));
+                        bausteine::feld(ui, &f, &feldname, hinweis.as_deref(), |ui| {
+                            let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
+                                .desired_width(bausteine::feldbreite(ui));
+                            if geheim {
+                                feld = feld.password(true);
+                                if gesetzt {
+                                    // Gesetzt heißt: leer lassen behält es.
+                                    feld = feld.hint_text("••••");
+                                }
+                            }
+                            ui.add(feld)
+                        });
+                        // Ein gesetztes Geheimnis lässt sich einzeln entfernen –
+                        // etwa das Anmelde-Passwort, nachdem der Schlüssel steht.
+                        // Den Knopf gibt es nur, wo ein Geheimnis gesetzt ist –
+                        // die Kurzschluss-Auswertung zeichnet ihn auch nur dann.
+                        if geheim
+                            && gesetzt
+                            && bausteine::knopf(
+                                ui,
+                                &f,
+                                Icon::Papierkorb,
+                                &t(sprache, "zugaenge.geheim_loeschen"),
+                            )
+                            .clicked()
+                        {
+                            eingaben[i].gesetzt = false;
+                            aktionen.push(Aktion::ZugangGeheimLoeschen {
+                                eintrag: eintrag.clone(),
+                                name: zugangsname.clone(),
+                                feld: feldname.clone(),
+                            });
+                        }
+                        // Hilfe-Link neben dem Feld wie im Angaben-Dialog.
+                        if let Some(link) = link {
+                            let adresse = logik::link_adresse(&link, eingaben, &basis);
+                            let fehlende = logik::link_fehlende(&link, eingaben, &basis);
+                            ui.add_space(thema::SPACE_1);
+                            let geklickt = ui
+                                .add_enabled_ui(adresse.is_some(), |ui| {
+                                    let knopf = bausteine::knopf(ui, &f, Icon::Extern, &link.text);
+                                    if fehlende.is_empty() {
+                                        knopf
+                                    } else {
+                                        knopf.on_disabled_hover_text(logik::link_hinweis(
+                                            &fehlende, sprache,
+                                        ))
+                                    }
+                                })
+                                .inner
+                                .clicked();
+                            if let (true, Some(url)) = (geklickt, adresse) {
+                                aktionen.push(Aktion::LinkOeffnen(url));
+                            }
+                        }
+                    }
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        let geklickt = ui
+                            .add_enabled_ui(name_fehler.is_none(), |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Haken,
+                                    &t(sprache, "tools.speichern"),
+                                )
+                            })
+                            .inner
+                            .clicked();
+                        if geklickt {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
+                Dialog::ZugangEntfernen { name, einzahl, .. } => {
+                    ui.label(
+                        RichText::new(tf(sprache, "zugaenge.entfernen_titel", &[einzahl]))
+                            .heading(),
+                    );
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            tf(sprache, "zugaenge.entfernen_text", &[name]),
+                            Ton::Leise,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if bausteine::knopf(
+                            ui,
+                            &f,
+                            Icon::Papierkorb,
+                            &t(sprache, "zugaenge.loeschen"),
                         )
                         .clicked()
                         {

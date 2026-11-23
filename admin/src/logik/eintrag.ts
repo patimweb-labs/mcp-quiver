@@ -8,6 +8,7 @@ import type {
   Feld,
   FeldLink,
   Laufzeit,
+  Mehrfach,
   Quelle,
   Werte,
 } from "../api/typen";
@@ -31,6 +32,7 @@ export function neuer_eintrag(id = ""): Eintrag {
     aktiv: true,
     anmeldung: null,
     einrichtung: null,
+    mehrfach: null,
   };
 }
 
@@ -44,6 +46,14 @@ export function neues_feld(): Feld {
     standard: null,
     link: null,
   };
+}
+
+/**
+ * Ein leeres Feld in einer Zugangsliste (Aufgabe 14). Die Liste gehört dem
+ * Gerät, deshalb beginnt sie mit „Gerät (Angaben)“ und nie mit dem Server.
+ */
+export function neues_zugang_feld(): Feld {
+  return { ...neues_feld(), quelle: "client" };
 }
 
 /**
@@ -207,6 +217,39 @@ export function einrichtung_aus_text(text: string): string[] {
     .filter((wort) => wort.length > 0);
 }
 
+/**
+ * Eine leere Zugangsliste (Aufgabe 14): Titel, Einzahl und noch kein Feld.
+ * Erst mit einem Feld wird daraus ein `mehrfach` im Vertrag.
+ */
+export function leeres_mehrfach(): Mehrfach {
+  return { titel: "", einzahl: "", felder: [] };
+}
+
+/** Die Zugangsliste eines Eintrags; ältere Daten kennen das Feld nicht. */
+export function mehrfach_von(eintrag: Eintrag): Mehrfach {
+  return eintrag.mehrfach ?? leeres_mehrfach();
+}
+
+/** Ohne Überschrift, Bezeichnung und Felder gibt es keine Zugangsliste. */
+export function mehrfach_ist_leer(
+  mehrfach: Mehrfach | null | undefined,
+): boolean {
+  if (!mehrfach) return true;
+  return (
+    mehrfach.titel.trim().length === 0 &&
+    mehrfach.einzahl.trim().length === 0 &&
+    mehrfach.felder.length === 0
+  );
+}
+
+/** Führt der Eintrag eine Zugangsliste? Für das Abzeichen in der Liste. */
+export function hat_mehrfach(eintrag: Eintrag): boolean {
+  return !mehrfach_ist_leer(eintrag.mehrfach);
+}
+
+/** Die Quellen, die eine Zugangsliste kennt: das Gerät, offen oder geheim. */
+export const ZUGANG_QUELLEN: Quelle[] = ["client", "geheim"];
+
 /** Nur die Felder, die der Admin (Server) füllt. */
 export function server_felder(eintrag: Eintrag): Feld[] {
   return eintrag.felder.filter((feld) => feld.quelle === "server");
@@ -255,6 +298,18 @@ export function laufzeit_text(laufzeit: Laufzeit): string {
     : "Remote";
 }
 
+/** Ein Feld für den Versand vorbereiten: Ränder weg, leerer Standard `null`. */
+function feld_saeubern(feld: Feld): Feld {
+  const standard = feld.standard?.trim() ?? "";
+  return {
+    ...feld,
+    name: feld.name.trim(),
+    beschreibung: feld.beschreibung.trim(),
+    standard: standard.length > 0 ? standard : null,
+    link: link_saeubern(feld.link),
+  };
+}
+
 /** Vor dem Senden: Ränder weg, leere Standardwerte werden `null`. */
 export function eintrag_saeubern(eintrag: Eintrag): Eintrag {
   const sauber = tief_kopie(eintrag);
@@ -262,16 +317,7 @@ export function eintrag_saeubern(eintrag: Eintrag): Eintrag {
   sauber.titel = sauber.titel.trim();
   sauber.version = sauber.version.trim();
   sauber.beschreibung = sauber.beschreibung.trim();
-  sauber.felder = sauber.felder.map((feld) => {
-    const standard = feld.standard?.trim() ?? "";
-    return {
-      ...feld,
-      name: feld.name.trim(),
-      beschreibung: feld.beschreibung.trim(),
-      standard: standard.length > 0 ? standard : null,
-      link: link_saeubern(feld.link),
-    };
-  });
+  sauber.felder = sauber.felder.map(feld_saeubern);
   if (sauber.laufzeit.art === "stdio") {
     sauber.laufzeit.befehl = sauber.laufzeit.befehl.trim();
   } else {
@@ -296,6 +342,16 @@ export function eintrag_saeubern(eintrag: Eintrag): Eintrag {
     };
     // Ohne Argumente gibt es keine Einrichtung.
     if (einrichtung_ist_leer(sauber.einrichtung)) sauber.einrichtung = null;
+  }
+  if (sauber.mehrfach) {
+    const mehrfach = mehrfach_von(sauber);
+    sauber.mehrfach = {
+      titel: mehrfach.titel.trim(),
+      einzahl: mehrfach.einzahl.trim(),
+      felder: mehrfach.felder.map(feld_saeubern),
+    };
+    // Ohne Titel, Bezeichnung und Felder ist es keine Zugangsliste.
+    if (mehrfach_ist_leer(sauber.mehrfach)) sauber.mehrfach = null;
   }
   return sauber;
 }
@@ -364,6 +420,41 @@ export function eintrag_pruefen(eintrag: Eintrag): Record<string, string> {
     } else if (eintrag.einrichtung.einrichten.length === 0) {
       fehler["einrichtung.einrichten"] = "Befehl fehlt.";
     }
+  }
+
+  if (eintrag.mehrfach) {
+    const mehrfach = mehrfach_von(eintrag);
+    if (eintrag.laufzeit.art !== "stdio") {
+      fehler.mehrfach = "Eine Zugangsliste gibt es nur für Stdio-Einträge.";
+    }
+    if (mehrfach.titel.trim().length === 0) {
+      fehler["mehrfach.titel"] = "Überschrift fehlt.";
+    }
+    if (mehrfach.einzahl.trim().length === 0) {
+      fehler["mehrfach.einzahl"] = "Bezeichnung fehlt.";
+    }
+    if (mehrfach.felder.length === 0) {
+      fehler.mehrfach = "Die Zugangsliste braucht mindestens ein Feld.";
+    }
+    const zugangsnamen = new Set<string>();
+    mehrfach.felder.forEach((feld, i) => {
+      const name = feld.name.trim();
+      if (name.length === 0) {
+        fehler[`mehrfach.feld.${i}.name`] = "Name fehlt.";
+      } else if (!FELDNAME.test(name)) {
+        fehler[`mehrfach.feld.${i}.name`] =
+          "Nur Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich.";
+      } else if (zugangsnamen.has(name)) {
+        fehler[`mehrfach.feld.${i}.name`] =
+          "Diesen Namen gibt es in der Zugangsliste schon.";
+      } else {
+        zugangsnamen.add(name);
+      }
+      if (!ZUGANG_QUELLEN.includes(feld.quelle)) {
+        fehler[`mehrfach.feld.${i}.quelle`] =
+          "Eine Zugangsliste füllt das Gerät: nur Gerät (Angaben) oder Gerät (geheim).";
+      }
+    });
   }
 
   return fehler;

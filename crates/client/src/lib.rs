@@ -45,7 +45,10 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use quiver_domain::{EintragId, FehlendesFeld, Feld, Geraet, Quelle, Soll, SollEintrag, Werte};
+use quiver_domain::{
+    EintragId, FehlendesFeld, Feld, Geraet, Mehrfach, Quelle, Soll, SollEintrag, Werte, Zugang,
+    MEHRFACH_UMGEBUNG,
+};
 use quiver_protocol::EintragZustand;
 use rmcp::model::Tool;
 use rmcp::{Peer, RoleClient, RoleServer};
@@ -142,6 +145,32 @@ pub struct EintragSicht {
     /// Wie es um die Einrichtung steht — `None`, wenn der Eintrag keine
     /// anbietet. Auch dieser Zustand bleibt lokal.
     pub einrichtung: Option<EinrichtZustand>,
+    /// Die Zugänge des Eintrags (Aufgabe 14) — `None`, wenn er keine
+    /// Zugangsliste führt. Geheimes steht auch hier nie im Modell.
+    pub zugaenge: Option<ZugaengeSicht>,
+}
+
+/// Ein Zugang eines Eintrags mit `mehrfach`, wie ihn das Fenster zeigt:
+/// Name und nicht-geheime Werte; von Geheimnissen nur, **welche** gesetzt sind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZugangSicht {
+    pub name: String,
+    /// Die nicht-geheimen Werte des Zugangs.
+    pub werte: Werte,
+    /// Welche Geheimfelder gesetzt sind (nie der Wert selbst).
+    pub geheim_gesetzt: Vec<String>,
+}
+
+/// Die Zugangsliste eines Eintrags ([`quiver_domain::Mehrfach`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZugaengeSicht {
+    /// Überschrift der Liste, z. B. „Verbindungen“.
+    pub titel: String,
+    /// Bezeichnung eines Elements, z. B. „Verbindung“.
+    pub einzahl: String,
+    /// Die Felder eines Zugangs (Client- und Geheimfelder).
+    pub felder: Vec<Feld>,
+    pub liste: Vec<ZugangSicht>,
 }
 
 /// Ein gekoppelter Agent, wie ihn das Fenster zeigt.
@@ -206,6 +235,10 @@ struct Stand {
     lokale_werte: BTreeMap<EintragId, Werte>,
     /// Geheimwerte im Speicher (Quelle bleibt der Tresor).
     geheim: BTreeMap<EintragId, Werte>,
+    /// Zugänge je Eintrag: Name → nicht-geheime Werte (Aufgabe 14).
+    zugaenge: BTreeMap<EintragId, BTreeMap<String, Werte>>,
+    /// Geheimwerte der Zugänge im Speicher (Quelle bleibt der Tresor).
+    zugang_geheim: BTreeMap<EintragId, BTreeMap<String, Werte>>,
     agenten: Vec<profil::Agent>,
     soll: Soll,
     laeufer: BTreeMap<EintragId, Laeufer>,
@@ -230,8 +263,12 @@ impl Stand {
             verbindung: self.verbindung.clone(),
             eintraege: eintraege_sicht(
                 &self.soll,
-                &self.lokale_werte,
-                &geheim_gesetzt,
+                &Lokales {
+                    werte: &self.lokale_werte,
+                    geheim_gesetzt: &geheim_gesetzt,
+                    zugaenge: &self.zugaenge,
+                    zugang_geheim: &self.zugang_geheim,
+                },
                 &self.laeufer,
                 &self.anmeldung,
                 &self.einrichtung,
@@ -258,21 +295,41 @@ impl Stand {
                 .iter()
                 .map(|(id, werte)| (id.als_str().to_string(), werte.clone()))
                 .collect(),
+            zugaenge: self
+                .zugaenge
+                .iter()
+                .map(|(id, liste)| (id.als_str().to_string(), liste.clone()))
+                .collect(),
             agenten: self.agenten.clone(),
             soll: Some(self.soll.clone()),
         }
     }
 }
 
+/// Was der Client je Eintrag lokal speichert: Werte, Geheimnisse und die
+/// Zugangslisten (Aufgabe 14). Gebündelt, damit die Sicht nicht aus acht
+/// Feldern zusammengesucht werden muss.
+struct Lokales<'a> {
+    werte: &'a BTreeMap<EintragId, Werte>,
+    geheim_gesetzt: &'a BTreeMap<EintragId, BTreeSet<String>>,
+    zugaenge: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
+    zugang_geheim: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
+}
+
 /// Die Sicht auf die Einträge: Soll + lokale Werte → was das Fenster zeigt.
 fn eintraege_sicht(
     soll: &Soll,
-    lokale_werte: &BTreeMap<EintragId, Werte>,
-    geheim_gesetzt: &BTreeMap<EintragId, BTreeSet<String>>,
+    lokal: &Lokales,
     laeufer: &BTreeMap<EintragId, Laeufer>,
     anmeldung: &BTreeMap<EintragId, AnmeldeZustand>,
     einrichtung: &BTreeMap<EintragId, EinrichtZustand>,
 ) -> Vec<EintragSicht> {
+    let Lokales {
+        werte: lokale_werte,
+        geheim_gesetzt,
+        zugaenge,
+        zugang_geheim,
+    } = lokal;
     soll.eintraege
         .iter()
         .map(|eintrag| {
@@ -338,9 +395,81 @@ fn eintraege_sicht(
                         .cloned()
                         .unwrap_or(EinrichtZustand::Bereit)
                 }),
+                zugaenge: eintrag.eintrag.mehrfach.as_ref().map(|mehrfach| {
+                    zugaenge_sicht(mehrfach, zugaenge.get(id), zugang_geheim.get(id))
+                }),
             }
         })
         .collect()
+}
+
+/// Die Zugangsliste eines Eintrags: Titel, Bezeichnung, Felder und die
+/// gespeicherten Zugänge – ohne Geheimes, nur mit „gesetzt“.
+fn zugaenge_sicht(
+    mehrfach: &Mehrfach,
+    zugaenge: Option<&BTreeMap<String, Werte>>,
+    geheim: Option<&BTreeMap<String, Werte>>,
+) -> ZugaengeSicht {
+    let geheim_namen: BTreeSet<&str> = mehrfach
+        .felder
+        .iter()
+        .filter(|feld| feld.quelle == Quelle::Geheim)
+        .map(|feld| feld.name.as_str())
+        .collect();
+    ZugaengeSicht {
+        titel: mehrfach.titel.clone(),
+        einzahl: mehrfach.einzahl.clone(),
+        felder: mehrfach.felder.clone(),
+        liste: zugaenge
+            .map(|liste| {
+                liste
+                    .iter()
+                    .map(|(name, werte)| ZugangSicht {
+                        name: name.clone(),
+                        werte: werte
+                            .iter()
+                            .filter(|(feld, _)| !geheim_namen.contains(feld.as_str()))
+                            .map(|(feld, wert)| (feld.clone(), wert.clone()))
+                            .collect(),
+                        geheim_gesetzt: geheim
+                            .and_then(|je_eintrag| je_eintrag.get(name))
+                            .map(|werte| werte.keys().cloned().collect())
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// Die Zugänge eines Eintrags als JSON für [`MEHRFACH_UMGEBUNG`]: je Zugang
+/// der Name und alle Werte, Geheimes eingesetzt. Ein Eintrag mit `mehrfach`,
+/// aber ohne Zugang, bekommt eine leere Liste – er läuft trotzdem.
+fn zugaenge_json(
+    mehrfach: &Mehrfach,
+    zugaenge: &BTreeMap<String, Werte>,
+    geheim: &BTreeMap<String, Werte>,
+) -> String {
+    let liste: Vec<Zugang> = zugaenge
+        .iter()
+        .map(|(name, werte)| {
+            let mut alle = Werte::new();
+            for feld in &mehrfach.felder {
+                let wert = match feld.quelle {
+                    Quelle::Geheim => geheim.get(name).and_then(|werte| werte.get(&feld.name)),
+                    _ => werte.get(&feld.name),
+                };
+                if let Some(wert) = wert.filter(|wert| !wert.trim().is_empty()) {
+                    alle.insert(feld.name.clone(), wert.clone());
+                }
+            }
+            Zugang {
+                name: name.clone(),
+                werte: alle,
+            }
+        })
+        .collect();
+    serde_json::to_string(&liste).expect("Zugänge sind serialisierbar")
 }
 
 /// Innerei des Kerns; geteilt zwischen Fassade, Abgleich und Endpunkt.
@@ -421,9 +550,12 @@ impl Innen {
         (stand.server_url.clone(), stand.token.clone())
     }
 
-    /// Die Geheimwerte der Soll-Einträge aus dem Tresor holen.
+    /// Die Geheimwerte der Soll-Einträge aus dem Tresor holen – die des
+    /// Eintrags und die seiner Zugänge (Aufgabe 14).
     pub(crate) fn geheim_laden(&self, soll: &Soll) {
+        let gespeicherte_zugaenge = self.stand().zugaenge.clone();
         let mut alle = BTreeMap::new();
+        let mut zugangs_geheim: BTreeMap<EintragId, BTreeMap<String, Werte>> = BTreeMap::new();
         for eintrag in &soll.eintraege {
             let mut werte = Werte::new();
             for feld in eintrag
@@ -442,8 +574,62 @@ impl Innen {
                 }
             }
             alle.insert(eintrag.eintrag.id.clone(), werte);
+
+            let Some(mehrfach) = &eintrag.eintrag.mehrfach else {
+                continue;
+            };
+            let geheim_felder: Vec<&str> = mehrfach
+                .felder
+                .iter()
+                .filter(|feld| feld.quelle == Quelle::Geheim)
+                .map(|feld| feld.name.as_str())
+                .collect();
+            let mut je_eintrag = BTreeMap::new();
+            for name in gespeicherte_zugaenge
+                .get(&eintrag.eintrag.id)
+                .into_iter()
+                .flat_map(|liste| liste.keys())
+            {
+                let mut werte = Werte::new();
+                for feld in &geheim_felder {
+                    let schluessel = zugang_geheim_schluessel(&eintrag.eintrag.id, name, feld);
+                    match self.konfig.tresor.lesen(&schluessel) {
+                        Ok(Some(wert)) => {
+                            werte.insert((*feld).to_string(), wert);
+                        }
+                        Ok(None) => {}
+                        Err(fehler) => tracing::warn!("{schluessel} nicht lesbar: {fehler}"),
+                    }
+                }
+                je_eintrag.insert(name.clone(), werte);
+            }
+            zugangs_geheim.insert(eintrag.eintrag.id.clone(), je_eintrag);
         }
-        self.stand().geheim = alle;
+        let mut stand = self.stand();
+        stand.geheim = alle;
+        stand.zugang_geheim = zugangs_geheim;
+    }
+
+    /// Die gesetzten Geheimwerte eines Zugangs (leer, wenn keine).
+    pub(crate) fn zugang_geheim(&self, id: &EintragId, name: &str) -> Werte {
+        self.stand()
+            .zugang_geheim
+            .get(id)
+            .and_then(|liste| liste.get(name))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Die Zugänge eines Eintrags als JSON für [`MEHRFACH_UMGEBUNG`]. `None`,
+    /// wenn der Eintrag keine Zugangsliste führt.
+    pub(crate) fn zugaenge_umgebung(&self, id: &EintragId) -> Option<String> {
+        let stand = self.stand();
+        let eintrag = stand.soll.eintraege.iter().find(|e| &e.eintrag.id == id)?;
+        let mehrfach = eintrag.eintrag.mehrfach.as_ref()?;
+        let leer = BTreeMap::new();
+        let zugaenge = stand.zugaenge.get(id).unwrap_or(&leer);
+        let geheim = stand.zugang_geheim.get(id).unwrap_or(&leer);
+        Some(zugaenge_json(mehrfach, zugaenge, geheim))
     }
 
     pub(crate) fn soll_eintrag(&self, id: &EintragId) -> Option<SollEintrag> {
@@ -664,6 +850,11 @@ pub(crate) fn geheim_schluessel(id: &EintragId, feld: &str) -> String {
     format!("wert/{id}/{feld}")
 }
 
+/// Schlüssel eines Geheimwerts eines Zugangs im Tresor (Aufgabe 14).
+pub(crate) fn zugang_geheim_schluessel(id: &EintragId, name: &str, feld: &str) -> String {
+    format!("zugang/{id}/{name}/{feld}")
+}
+
 /// Den Anmeldezustand eines Eintrags prüfen und ablegen.
 ///
 /// `None`, wenn der Eintrag keine Anmeldung braucht (dann passiert nichts).
@@ -816,6 +1007,9 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
                 return;
             }
         };
+        // Die Zugänge gehören in die Umgebung, nicht in die Felder: das Tool
+        // liest sie beim Start (Aufgabe 14).
+        let laufzeit = mit_zugaengen(&innen, &id, laufzeit);
 
         innen.aendern(&id, generation, |laeufer| {
             laeufer.stand.zustand = EintragZustand::Startet;
@@ -920,6 +1114,34 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
         if !warten_auf_neustart(&abbruch, &mut backoff).await {
             return;
         }
+    }
+}
+
+/// Die Zugänge eines Eintrags in die Umgebung der Laufzeit setzen
+/// (Aufgabe 14, [`MEHRFACH_UMGEBUNG`]). Einträge ohne `mehrfach` und entfernte
+/// MCP-Server bleiben, wie sie sind.
+fn mit_zugaengen(
+    innen: &Arc<Innen>,
+    id: &EintragId,
+    laufzeit: quiver_domain::Laufzeit,
+) -> quiver_domain::Laufzeit {
+    let Some(zugaenge) = innen.zugaenge_umgebung(id) else {
+        return laufzeit;
+    };
+    match laufzeit {
+        quiver_domain::Laufzeit::Stdio {
+            befehl,
+            argumente,
+            mut umgebung,
+        } => {
+            umgebung.insert(MEHRFACH_UMGEBUNG.to_string(), zugaenge);
+            quiver_domain::Laufzeit::Stdio {
+                befehl,
+                argumente,
+                umgebung,
+            }
+        }
+        remote => remote,
     }
 }
 
@@ -1062,6 +1284,12 @@ impl Kern {
                 .map(|(id, werte)| (EintragId::neu(id.clone()), werte.clone()))
                 .collect(),
             geheim: BTreeMap::new(),
+            zugaenge: gespeichert
+                .zugaenge
+                .iter()
+                .map(|(id, liste)| (EintragId::neu(id.clone()), liste.clone()))
+                .collect(),
+            zugang_geheim: BTreeMap::new(),
             agenten: gespeichert.agenten.clone(),
             soll: gespeichert
                 .soll
@@ -1333,6 +1561,161 @@ impl Kern {
         self.innen.speichern();
         self.innen.neu_starten(eintrag).await;
         Ok(())
+    }
+
+    /// Einen Zugang anlegen oder ändern (Aufgabe 14).
+    ///
+    /// Die Zugangsliste gehört dem User: der Name muss
+    /// [`quiver_domain::zugangsname_gueltig`] sein, die Pflichtfelder aus
+    /// `mehrfach.felder` müssen gefüllt sein. Nicht-geheime Werte landen in der
+    /// Client-Konfiguration, Geheimes im Tresor unter
+    /// `zugang/<eintrag>/<name>/<feld>`. Ein **leeres Geheimfeld bleibt
+    /// unverändert**; ein leerer lokaler Wert löscht das Feld.
+    ///
+    /// Danach startet der Eintrag neu, damit das Tool die neue Liste sieht.
+    pub async fn zugang_speichern(
+        &self,
+        eintrag: &EintragId,
+        name: &str,
+        lokal: Werte,
+        geheim: Werte,
+    ) -> anyhow::Result<()> {
+        let mehrfach = self.mehrfach(eintrag)?;
+        let name = name.trim();
+        if !quiver_domain::zugangsname_gueltig(name) {
+            anyhow::bail!("„{name}“ ist kein gültiger Name: a–z, 0–9, - und _, 1–40 Zeichen");
+        }
+        // Ein leeres Geheimfeld heißt „unverändert“ – schon Gesetztes zählt mit.
+        let vorhanden = self.innen.zugang_geheim(eintrag, name);
+        let mut fehlend = Vec::new();
+        for feld in mehrfach.felder.iter().filter(|feld| feld.pflicht) {
+            let wert = match feld.quelle {
+                Quelle::Geheim => geheim
+                    .get(&feld.name)
+                    .filter(|wert| !wert.trim().is_empty())
+                    .or_else(|| vorhanden.get(&feld.name)),
+                _ => lokal.get(&feld.name),
+            };
+            if wert.is_none_or(|wert| wert.trim().is_empty()) {
+                fehlend.push(feld.name.clone());
+            }
+        }
+        if !fehlend.is_empty() {
+            anyhow::bail!("Es fehlen Angaben: {}", fehlend.join(", "));
+        }
+        for (feld, wert) in &geheim {
+            if wert.trim().is_empty() {
+                continue;
+            }
+            self.innen
+                .konfig
+                .tresor
+                .schreiben(&zugang_geheim_schluessel(eintrag, name, feld), wert)?;
+        }
+        // Nur die Felder, die die Zugangsliste kennt.
+        let mut gespeichert = Werte::new();
+        for feld in &mehrfach.felder {
+            if feld.quelle == Quelle::Geheim {
+                continue;
+            }
+            let wert = lokal.get(&feld.name).map(|wert| wert.trim()).unwrap_or("");
+            if !wert.is_empty() {
+                gespeichert.insert(feld.name.clone(), wert.to_string());
+            }
+        }
+        {
+            let mut stand = self.innen.stand();
+            stand
+                .zugaenge
+                .entry(eintrag.clone())
+                .or_default()
+                .insert(name.to_string(), gespeichert);
+            let gesetzte_geheim = stand
+                .zugang_geheim
+                .entry(eintrag.clone())
+                .or_default()
+                .entry(name.to_string())
+                .or_default();
+            for (feld, wert) in geheim {
+                if wert.trim().is_empty() {
+                    continue;
+                }
+                gesetzte_geheim.insert(feld, wert);
+            }
+        }
+        self.innen.speichern();
+        self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
+    /// Einen Zugang entfernen – samt seiner Geheimnisse im Tresor (Aufgabe 14).
+    pub async fn zugang_loeschen(&self, eintrag: &EintragId, name: &str) -> anyhow::Result<()> {
+        let mehrfach = self.mehrfach(eintrag)?;
+        let name = name.trim();
+        let vorhanden = self.innen.zugang_geheim(eintrag, name);
+        // Auch Geheimnisse zu Feldern löschen, die es nicht mehr gibt.
+        let mut felder: BTreeSet<String> = mehrfach
+            .felder
+            .iter()
+            .filter(|feld| feld.quelle == Quelle::Geheim)
+            .map(|feld| feld.name.clone())
+            .collect();
+        felder.extend(vorhanden.keys().cloned());
+        for feld in &felder {
+            self.innen
+                .konfig
+                .tresor
+                .loeschen(&zugang_geheim_schluessel(eintrag, name, feld))?;
+        }
+        {
+            let mut stand = self.innen.stand();
+            if let Some(liste) = stand.zugaenge.get_mut(eintrag) {
+                liste.remove(name);
+            }
+            if let Some(liste) = stand.zugang_geheim.get_mut(eintrag) {
+                liste.remove(name);
+            }
+        }
+        self.innen.speichern();
+        self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
+    /// Ein einzelnes Geheimnis eines Zugangs entfernen – etwa das
+    /// Anmelde-Passwort, nachdem der Schlüssel eingerichtet ist (Aufgabe 14).
+    pub async fn zugang_geheim_loeschen(
+        &self,
+        eintrag: &EintragId,
+        name: &str,
+        feld: &str,
+    ) -> anyhow::Result<()> {
+        self.mehrfach(eintrag)?;
+        let name = name.trim();
+        self.innen
+            .konfig
+            .tresor
+            .loeschen(&zugang_geheim_schluessel(eintrag, name, feld))?;
+        {
+            let mut stand = self.innen.stand();
+            if let Some(liste) = stand.zugang_geheim.get_mut(eintrag) {
+                if let Some(werte) = liste.get_mut(name) {
+                    werte.remove(feld);
+                }
+            }
+        }
+        self.innen.speichern();
+        self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
+    /// Die Zugangsliste eines Eintrags – ein Fehler, wenn er keine führt.
+    fn mehrfach(&self, eintrag: &EintragId) -> anyhow::Result<Mehrfach> {
+        let soll = self.innen.soll_eintrag(eintrag).ok_or_else(|| {
+            anyhow::anyhow!("Eintrag {eintrag} ist diesem Gerät nicht zugewiesen")
+        })?;
+        soll.eintrag
+            .mehrfach
+            .ok_or_else(|| anyhow::anyhow!("Eintrag {eintrag} führt keine Zugangsliste"))
     }
 
     /// Einen Agenten koppeln. Das Token kommt **einmal** zurück; gespeichert

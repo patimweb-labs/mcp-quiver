@@ -56,7 +56,13 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let mut anmelden = false;
     let mut abmelden = false;
     let mut einrichten = false;
+    // Zugänge (Aufgabe 14): aufklappen, anlegen, bearbeiten, löschen.
+    let mut zugaenge_aufklappen = false;
+    let mut zugang_neu = false;
+    let mut zugang_bearbeiten: Option<String> = None;
+    let mut zugang_loeschen: Option<String> = None;
     let offen = sicht.offen.contains(&eintrag.id);
+    let zugaenge_offen = sicht.zugaenge_offen.contains(&eintrag.id);
 
     bausteine::karte(ui, &f, &eintrag.titel, unter.as_deref(), |ui| {
         egui::Sides::new()
@@ -199,6 +205,94 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     },
                 );
         }
+        // Mehrere Zugänge (Aufgabe 14): Zeile „Verbindungen (2)“, Knopf
+        // „Verbindung hinzufügen“ und die aufklappbare Liste. Der Eintrag
+        // läuft auch ohne Zugang – das Tool meldet dann selbst „kein Zugang“.
+        if let Some(zugaenge) = &eintrag.zugaenge {
+            ui.add_space(thema::SPACE_2);
+            let kopf = logik::zugang_beschriftung(sprache, zugaenge);
+            ui.horizontal(|ui| {
+                if bausteine::icon_text_knopf(ui, &f, Icon::Schluessel, &kopf, zugaenge_offen)
+                    .clicked()
+                {
+                    zugaenge_aufklappen = true;
+                }
+                if bausteine::knopf(
+                    ui,
+                    &f,
+                    Icon::Plus,
+                    &logik::zugang_hinzufuegen(sprache, zugaenge),
+                )
+                .clicked()
+                {
+                    zugang_neu = true;
+                }
+            });
+            if zugaenge_offen {
+                ui.add_space(thema::SPACE_2);
+                egui::Frame::new()
+                    .fill(f.bg_raised)
+                    .inner_margin(egui::Margin::symmetric(
+                        thema::SPACE_3 as i8,
+                        thema::SPACE_2 as i8,
+                    ))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if zugaenge.liste.is_empty() {
+                            ui.add(
+                                egui::Label::new(
+                                    text(&f, t(sprache, "zugaenge.leer"), Ton::Blass).small(),
+                                )
+                                .wrap(),
+                            );
+                        }
+                        for zugang in &zugaenge.liste {
+                            egui::Sides::new()
+                                .height(thema::SIZE_CONTROL_SM)
+                                .shrink_right()
+                                .truncate()
+                                .show(
+                                    ui,
+                                    |ui| {
+                                        ui.label(RichText::new(&zugang.name).strong());
+                                        let werte =
+                                            logik::zugang_werte_zeile(&zugaenge.felder, zugang);
+                                        if !werte.is_empty() {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    text(&f, werte, Ton::Leise).small(),
+                                                )
+                                                .truncate(),
+                                            );
+                                        }
+                                    },
+                                    |ui| {
+                                        if bausteine::knopf(
+                                            ui,
+                                            &f,
+                                            Icon::Bearbeiten,
+                                            &t(sprache, "zugaenge.bearbeiten"),
+                                        )
+                                        .clicked()
+                                        {
+                                            zugang_bearbeiten = Some(zugang.name.clone());
+                                        }
+                                        if bausteine::knopf(
+                                            ui,
+                                            &f,
+                                            Icon::Papierkorb,
+                                            &t(sprache, "zugaenge.loeschen"),
+                                        )
+                                        .clicked()
+                                        {
+                                            zugang_loeschen = Some(zugang.name.clone());
+                                        }
+                                    },
+                                );
+                        }
+                    });
+            }
+        }
         // Was fehlt, mit der Erklärung des Felds — nicht nur der Name.
         let fehlende = logik::fehlende_texte(&eintrag.fehlende);
         if !fehlende.is_empty() {
@@ -245,6 +339,27 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     }
     if aufklappen {
         sicht.umschalten(&eintrag.id);
+    }
+    if zugaenge_aufklappen {
+        sicht.zugaenge_umschalten(&eintrag.id);
+    }
+    if zugang_neu {
+        sicht.zugang_dialog(eintrag, None);
+    }
+    if let Some(name) = zugang_bearbeiten {
+        sicht.zugang_dialog(eintrag, Some(&name));
+    }
+    if let Some(name) = zugang_loeschen {
+        // Löschen nimmt die Geheimnisse mit – deshalb erst die Rückfrage.
+        sicht.dialog = Dialog::ZugangEntfernen {
+            eintrag: eintrag.id.clone(),
+            name,
+            einzahl: eintrag
+                .zugaenge
+                .as_ref()
+                .map(|zugaenge| zugaenge.einzahl.clone())
+                .unwrap_or_default(),
+        };
     }
     if anmelden {
         aktionen.push(Aktion::EintragAnmelden {

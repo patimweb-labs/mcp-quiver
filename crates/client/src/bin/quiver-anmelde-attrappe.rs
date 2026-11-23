@@ -31,6 +31,11 @@
 //!   und den zweiten Klick prüfen kann.
 //! - `mcp`: reicht stdin/stdout an den MCP-Server aus `QUIVER_ATTRAPPE_MCP`
 //!   weiter – so kann ein Test den Neustart an dessen Protokoll abzählen.
+//!   Steht `QUIVER_ZUGAENGE_DATEI` in der Umgebung, schreibt sie vorher den
+//!   Inhalt von `QUIVER_ZUGAENGE` dorthin (Aufgabe 14: was das Tool beim
+//!   Start sieht).
+//! - `zugaenge <datei>`: schreibt `QUIVER_ZUGAENGE` (oder `[]`) in die Datei
+//!   und endet, Exit 0 – derselbe Blick auf die Umgebung ohne MCP-Server.
 //! - `kaputt`: Exit 3 – für den Fehlerfall im Test.
 
 use std::process::ExitCode;
@@ -104,6 +109,17 @@ fn main() -> ExitCode {
             eprintln!("kaputt");
             ExitCode::from(3)
         }
+        // Die Zugänge, wie das Tool sie beim Start sieht (Aufgabe 14).
+        "zugaenge" => {
+            if konto.trim().is_empty() {
+                eprintln!("zugaenge braucht eine Datei");
+                return ExitCode::from(2);
+            }
+            match schreiben(&konto, &zugaenge_env()) {
+                true => ExitCode::SUCCESS,
+                false => ExitCode::from(2),
+            }
+        }
         _ => {
             eprintln!("unbekannter Befehl: {befehl}");
             ExitCode::from(2)
@@ -114,6 +130,13 @@ fn main() -> ExitCode {
 /// Den MCP-Server aus der Umgebung übernehmen: stdin und stdout bleiben die
 /// Leitungen des Clients, der Prozess ersetzt so den eigentlichen Server.
 fn mcp() -> ExitCode {
+    // Was das Tool beim Start sieht: erst die Zugänge festhalten, dann den
+    // MCP-Server übernehmen (Aufgabe 14).
+    if let Ok(datei) = std::env::var("QUIVER_ZUGAENGE_DATEI") {
+        if !datei.trim().is_empty() {
+            schreiben(&datei, &zugaenge_env());
+        }
+    }
     let programm = match std::env::var("QUIVER_ATTRAPPE_MCP") {
         Ok(pfad) if !pfad.trim().is_empty() => pfad,
         _ => {
@@ -149,6 +172,14 @@ fn warten_erlaubt() -> bool {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     true
+}
+
+/// Der Inhalt von `QUIVER_ZUGAENGE`; ohne die Variable eine leere Liste.
+fn zugaenge_env() -> String {
+    match std::env::var("QUIVER_ZUGAENGE") {
+        Ok(wert) if !wert.trim().is_empty() => wert,
+        _ => "[]".to_string(),
+    }
 }
 
 /// Den Zustand ablegen; `false`, wenn die Datei nicht schreibbar ist.

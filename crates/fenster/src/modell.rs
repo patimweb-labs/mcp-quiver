@@ -96,6 +96,22 @@ pub enum Dialog {
     AgentEntfernen { id: String, name: String },
     /// Die Anmeldung eines Eintrags beenden (Rückfrage).
     AnmeldungBeenden { eintrag: EintragId, titel: String },
+    /// Einen Zugang anlegen (`neu`) oder ändern (Aufgabe 14). Beim Ändern ist
+    /// der Name fest; die Felder stehen als Eingaben im Dialog.
+    Zugang {
+        eintrag: EintragId,
+        titel: String,
+        einzahl: String,
+        name: String,
+        neu: bool,
+        eingaben: Vec<Feldeingabe>,
+    },
+    /// Einen Zugang samt seiner Geheimnisse entfernen (Rückfrage).
+    ZugangEntfernen {
+        eintrag: EintragId,
+        name: String,
+        einzahl: String,
+    },
 }
 
 /// Was in den Eingabefeldern der Verbindungsseite steht.
@@ -125,6 +141,8 @@ pub struct Sicht {
     pub sprache: Sprache,
     /// Aufgeklappte Werkzeuglisten (je Eintrag).
     pub offen: BTreeSet<EintragId>,
+    /// Aufgeklappte Zugangslisten (je Eintrag, Aufgabe 14).
+    pub zugaenge_offen: BTreeSet<EintragId>,
     pub eingaben: Eingaben,
     /// Was der Kern zuletzt gemeldet hat (Fehler), oben auf jeder Seite.
     pub hinweis: Option<String>,
@@ -142,6 +160,7 @@ impl Sicht {
             thema: einstellungen.thema(),
             sprache: einstellungen.sprache(),
             offen: BTreeSet::new(),
+            zugaenge_offen: BTreeSet::new(),
             eingaben: Eingaben::default(),
             hinweis: None,
             autostart: false,
@@ -175,6 +194,9 @@ impl Sicht {
             Dialog::AnmeldungBeenden { eintrag, .. } => {
                 !neu.eintraege.iter().any(|e| &e.id == eintrag)
             }
+            Dialog::Zugang { eintrag, .. } | Dialog::ZugangEntfernen { eintrag, .. } => {
+                !neu.eintraege.iter().any(|e| &e.id == eintrag)
+            }
             _ => false,
         };
         if verschwunden {
@@ -197,6 +219,29 @@ impl Sicht {
         if !self.offen.remove(id) {
             self.offen.insert(id.clone());
         }
+    }
+
+    /// Zugangsliste eines Eintrags ein- oder ausklappen (Aufgabe 14).
+    pub fn zugaenge_umschalten(&mut self, id: &EintragId) {
+        if !self.zugaenge_offen.remove(id) {
+            self.zugaenge_offen.insert(id.clone());
+        }
+    }
+
+    /// Den Zugangs-Dialog öffnen: `name: None` legt einen neuen an, `Some`
+    /// bearbeitet einen vorhandenen (der Name bleibt dann fest).
+    pub fn zugang_dialog(&mut self, eintrag: &EintragSicht, name: Option<&str>) {
+        let Some(zugaenge) = &eintrag.zugaenge else {
+            return;
+        };
+        self.dialog = Dialog::Zugang {
+            eintrag: eintrag.id.clone(),
+            titel: eintrag.titel.clone(),
+            einzahl: zugaenge.einzahl.clone(),
+            name: name.unwrap_or_default().to_string(),
+            neu: name.is_none(),
+            eingaben: logik::zugang_eingaben(zugaenge, name),
+        };
     }
 
     /// Der bestätigte Dialog als Aktion; schließt den Dialog.
@@ -226,6 +271,27 @@ impl Sicht {
             Dialog::AgentEntfernen { id, .. } => return Some(Aktion::AgentEntfernen { id }),
             Dialog::AnmeldungBeenden { eintrag, .. } => {
                 return Some(Aktion::EintragAbmelden { eintrag });
+            }
+            Dialog::Zugang {
+                eintrag,
+                name,
+                eingaben,
+                ..
+            } => {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return None;
+                }
+                let (lokal, geheim) = logik::werte_splitten(&eingaben);
+                return Some(Aktion::ZugangSpeichern {
+                    eintrag,
+                    name,
+                    lokal,
+                    geheim,
+                });
+            }
+            Dialog::ZugangEntfernen { eintrag, name, .. } => {
+                return Some(Aktion::ZugangLoeschen { eintrag, name })
             }
         }
         None

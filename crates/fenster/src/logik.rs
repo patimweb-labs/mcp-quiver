@@ -5,8 +5,10 @@
 //! welche Farbe ein Zustand hat, was in einem Feld steht, welche Schnipsel
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
-use quiver_client::{AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung};
-use quiver_domain::{link_aufloesen, FehlendesFeld, FeldLink, Quelle, Werte};
+use quiver_client::{
+    AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, ZugaengeSicht, ZugangSicht,
+};
+use quiver_domain::{link_aufloesen, zugangsname_gueltig, FehlendesFeld, FeldLink, Quelle, Werte};
 use quiver_protocol::EintragZustand;
 
 use crate::modell::{Feldeingabe, Seite};
@@ -313,8 +315,13 @@ pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
 /// (Aufgabe 13). Was der Server selbst einsetzt, kennt das Fenster nicht —
 /// `EintragSicht` führt nur Client- und Geheimfelder.
 pub fn link_basis(eintrag: &EintragSicht) -> Werte {
-    eintrag
-        .felder
+    link_basis_aus_feldern(&eintrag.felder)
+}
+
+/// Wie [`link_basis`], aber für eine beliebige Feldliste — etwa die Felder
+/// einer Zugangsliste (Aufgabe 14).
+pub fn link_basis_aus_feldern(felder: &[quiver_domain::Feld]) -> Werte {
+    felder
         .iter()
         .filter_map(|feld| {
             let wert = feld.standard.as_deref()?.trim();
@@ -394,6 +401,92 @@ pub fn werte_splitten(eingaben: &[Feldeingabe]) -> (Werte, Werte) {
         }
     }
     (lokal, geheim)
+}
+
+/// Die Eingaben eines Zugangs (Aufgabe 14): die Felder der Zugangsliste,
+/// vorbelegt mit den nicht-geheimen Werten. Geheimes wird nie angezeigt,
+/// nur „gesetzt“.
+pub fn zugang_eingaben(zugaenge: &ZugaengeSicht, name: Option<&str>) -> Vec<Feldeingabe> {
+    let zugang = name.and_then(|name| zugaenge.liste.iter().find(|zugang| zugang.name == name));
+    zugaenge
+        .felder
+        .iter()
+        .map(|feld| {
+            let geheim = feld.quelle == Quelle::Geheim;
+            Feldeingabe {
+                name: feld.name.clone(),
+                beschreibung: feld.beschreibung.clone(),
+                geheim,
+                pflicht: feld.pflicht,
+                gesetzt: geheim
+                    && zugang.is_some_and(|zugang| zugang.geheim_gesetzt.contains(&feld.name)),
+                wert: if geheim {
+                    String::new()
+                } else {
+                    zugang
+                        .and_then(|zugang| zugang.werte.get(&feld.name))
+                        .cloned()
+                        .unwrap_or_default()
+                },
+                link: feld.link.clone(),
+            }
+        })
+        .collect()
+}
+
+/// Die Überschrift einer Zugangsliste: „Verbindungen (2)“.
+pub fn zugang_beschriftung(sprache: Sprache, zugaenge: &ZugaengeSicht) -> String {
+    tf(
+        sprache,
+        "zugaenge.kopf",
+        &[&zugaenge.titel, &zugaenge.liste.len()],
+    )
+}
+
+/// Der Knopf, der einen Zugang anlegt: „Verbindung hinzufügen“.
+pub fn zugang_hinzufuegen(sprache: Sprache, zugaenge: &ZugaengeSicht) -> String {
+    tf(sprache, "zugaenge.hinzufuegen", &[&zugaenge.einzahl])
+}
+
+/// Die Überschrift des Zugangs-Dialogs: anlegen oder bearbeiten.
+pub fn zugang_titel(sprache: Sprache, einzahl: &str, neu: bool) -> String {
+    let schluessel = if neu {
+        "zugaenge.anlegen_titel"
+    } else {
+        "zugaenge.bearbeiten_titel"
+    };
+    tf(sprache, schluessel, &[&einzahl])
+}
+
+/// Eine Zeile unter dem Namen eines Zugangs: ein bis zwei nicht-geheime
+/// Werte in der Reihenfolge der Felder (z. B. `benutzer@host`).
+pub fn zugang_werte_zeile(felder: &[quiver_domain::Feld], zugang: &ZugangSicht) -> String {
+    felder
+        .iter()
+        .filter(|feld| feld.quelle != Quelle::Geheim)
+        .filter_map(|feld| zugang.werte.get(&feld.name))
+        .map(|wert| wert.trim())
+        .filter(|wert| !wert.is_empty())
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("@")
+}
+
+/// Warum dieser Name für einen Zugang nicht geht – `None` heißt: in Ordnung.
+/// Dieselbe Regel wie [`quiver_domain::zugangsname_gueltig`], zusätzlich
+/// eindeutig: `vorhandene` sind die Namen der schon gespeicherten Zugänge.
+pub fn zugang_name_fehler(name: &str, vorhandene: &[String]) -> Option<&'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Some("zugaenge.name_fehlt");
+    }
+    if !zugangsname_gueltig(name) {
+        return Some("zugaenge.name_ungueltig");
+    }
+    if vorhandene.iter().any(|vorhanden| vorhanden == name) {
+        return Some("zugaenge.name_doppelt");
+    }
+    None
 }
 
 /// Der Befehl für pi 1.5 (`pi mcp add --help`: `--url <url>`, `--header <KEY=VALUE>`).
@@ -689,6 +782,7 @@ mod tests {
             tools: vec!["echo".into()],
             anmeldung: None,
             einrichtung: None,
+            zugaenge: None,
         }
     }
 
@@ -1102,6 +1196,187 @@ mod tests {
         // … und bei „Andere", wenn alles Bekannte vergeben ist.
         let alle = ["pi", "claude-code", "opencode", "copilot", "hermes"].map(String::from);
         assert!(erste_freie(&alle).gleich(&AgentArt::Andere(String::new())));
+    }
+
+    /// Ein Eintrag mit Zugangsliste wie bei quiver-ssh (Aufgabe 14).
+    fn zugang_eintrag() -> EintragSicht {
+        let mut port = Feld {
+            name: "port".into(),
+            beschreibung: "Port".into(),
+            quelle: Quelle::Client,
+            pflicht: false,
+            standard: None,
+            link: None,
+        };
+        port.standard = Some("22".into());
+        let mut eintrag = eintrag();
+        eintrag.zugaenge = Some(ZugaengeSicht {
+            titel: "Verbindungen".into(),
+            einzahl: "Verbindung".into(),
+            felder: vec![
+                Feld {
+                    name: "benutzer".into(),
+                    beschreibung: "Benutzer".into(),
+                    quelle: Quelle::Client,
+                    pflicht: true,
+                    standard: None,
+                    link: None,
+                },
+                Feld {
+                    name: "host".into(),
+                    beschreibung: "Host".into(),
+                    quelle: Quelle::Client,
+                    pflicht: true,
+                    standard: None,
+                    link: None,
+                },
+                port,
+                Feld {
+                    name: "passwort".into(),
+                    beschreibung: "Passwort".into(),
+                    quelle: Quelle::Geheim,
+                    pflicht: false,
+                    standard: None,
+                    link: None,
+                },
+            ],
+            liste: vec![
+                ZugangSicht {
+                    name: "db-01".into(),
+                    werte: Werte::from([
+                        ("benutzer".to_string(), "admin".to_string()),
+                        ("host".to_string(), "db-01.example".to_string()),
+                    ]),
+                    geheim_gesetzt: vec!["passwort".into()],
+                },
+                ZugangSicht {
+                    name: "web-01".into(),
+                    werte: Werte::from([
+                        ("benutzer".to_string(), "root".to_string()),
+                        ("host".to_string(), "web-01.example".to_string()),
+                        ("port".to_string(), "2222".to_string()),
+                    ]),
+                    geheim_gesetzt: Vec::new(),
+                },
+            ],
+        });
+        eintrag
+    }
+
+    #[test]
+    fn zugangsliste_hat_ueberschrift_anzahl_und_knopf() {
+        let eintrag = zugang_eintrag();
+        let zugaenge = eintrag.zugaenge.clone().expect("Liste");
+        assert_eq!(
+            zugang_beschriftung(Sprache::De, &zugaenge),
+            "Verbindungen (2)"
+        );
+        assert_eq!(
+            zugang_hinzufuegen(Sprache::De, &zugaenge),
+            "Verbindung hinzufügen"
+        );
+        assert_eq!(
+            zugang_hinzufuegen(Sprache::En, &zugaenge),
+            "Add Verbindung",
+            "der Name des Elements kommt aus den Daten"
+        );
+        assert_eq!(
+            zugang_titel(Sprache::De, &zugaenge.einzahl, true),
+            "Verbindung anlegen"
+        );
+        assert_eq!(
+            zugang_titel(Sprache::De, &zugaenge.einzahl, false),
+            "Verbindung bearbeiten"
+        );
+    }
+
+    #[test]
+    fn zugangszeile_zeigt_zwei_werte_ohne_geheimes() {
+        let eintrag = zugang_eintrag();
+        let zugaenge = eintrag.zugaenge.clone().expect("Liste");
+        let db = &zugaenge.liste[0];
+        assert_eq!(
+            zugang_werte_zeile(&zugaenge.felder, db),
+            "admin@db-01.example",
+            "Name und die ersten zwei Werte, Geheimes bleibt weg"
+        );
+        // Ein Zugang ohne Werte ergibt eine leere Zeile, keine „@“-Kette.
+        let leer = ZugangSicht {
+            name: "neu".into(),
+            werte: Werte::new(),
+            geheim_gesetzt: Vec::new(),
+        };
+        assert_eq!(zugang_werte_zeile(&zugaenge.felder, &leer), "");
+    }
+
+    #[test]
+    fn zugang_eingaben_vorbelegt_und_geheim_leer() {
+        let eintrag = zugang_eintrag();
+        let zugaenge = eintrag.zugaenge.clone().expect("Liste");
+        // Bearbeiten: die Werte stehen da, das Geheimnis nur als „gesetzt“.
+        let eingaben = zugang_eingaben(&zugaenge, Some("db-01"));
+        assert_eq!(eingaben.len(), 4);
+        assert_eq!(eingaben[0].name, "benutzer");
+        assert_eq!(eingaben[0].wert, "admin");
+        assert_eq!(eingaben[1].wert, "db-01.example");
+        assert_eq!(eingaben[2].wert, "", "port ist bei db-01 nicht gesetzt");
+        assert!(eingaben[3].geheim);
+        assert!(eingaben[3].gesetzt);
+        assert_eq!(eingaben[3].wert, "", "Geheimes wird nie angezeigt");
+        // Der Standard des Felds füllt den Port bei einem leeren Zugang.
+        let neu = zugang_eingaben(&zugaenge, None);
+        assert_eq!(neu[2].wert, "", "Standard steht nicht im Feld");
+        assert!(!neu[3].gesetzt, "ein neuer Zugang hat keine Geheimnisse");
+        assert!(!neu[0].gesetzt);
+        // Der Hilfe-Link eines Zugangsfelds nutzt dessen Standardwerte.
+        let basis = link_basis_aus_feldern(&zugaenge.felder);
+        assert_eq!(basis.get("port").map(String::as_str), Some("22"));
+    }
+
+    #[test]
+    fn zugangsname_folgt_der_regel_und_ist_eindeutig() {
+        let vorhanden = vec!["web-01".to_string()];
+        assert_eq!(
+            zugang_name_fehler("", &vorhanden),
+            Some("zugaenge.name_fehlt")
+        );
+        assert_eq!(
+            zugang_name_fehler("  ", &vorhanden),
+            Some("zugaenge.name_fehlt"),
+            "Leerzeichen sind kein Name"
+        );
+        for name in ["web 01", "Web-01", "web/01", "ä"] {
+            assert_eq!(
+                zugang_name_fehler(name, &vorhanden),
+                Some("zugaenge.name_ungueltig"),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            zugang_name_fehler(&"a".repeat(41), &vorhanden),
+            Some("zugaenge.name_ungueltig"),
+            "41 Zeichen sind zu lang"
+        );
+        assert_eq!(
+            zugang_name_fehler(&"a".repeat(40), &vorhanden),
+            None,
+            "40 Zeichen gehen"
+        );
+        assert_eq!(
+            zugang_name_fehler("web-01", &vorhanden),
+            Some("zugaenge.name_doppelt")
+        );
+        assert_eq!(zugang_name_fehler(" web-02 ", &vorhanden), None);
+        // Die Texte gibt es in beiden Sprachen.
+        for schluessel in [
+            "zugaenge.name_fehlt",
+            "zugaenge.name_ungueltig",
+            "zugaenge.name_doppelt",
+        ] {
+            for sprache in Sprache::ALLE {
+                assert_ne!(t(sprache, schluessel), schluessel, "{schluessel}");
+            }
+        }
     }
 
     #[test]

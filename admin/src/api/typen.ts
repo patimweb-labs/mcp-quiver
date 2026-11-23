@@ -87,6 +87,21 @@ export interface Einrichtung {
   einrichten: string[];
 }
 
+/**
+ * Mehrere gleichartige Zugänge, die der User im Client-Fenster anlegt
+ * (Aufgabe 14; in Rust `Mehrfach`, `crates/domain`). Der Client speichert je
+ * Zugang einen Namen und die Werte, Geheimes im Schlüsselbund, und übergibt
+ * beim Start alle Zugänge als JSON in `QUIVER_ZUGAENGE`.
+ */
+export interface Mehrfach {
+  /** Überschrift der Liste, z. B. „Verbindungen“. */
+  titel: string;
+  /** Bezeichnung eines Elements, z. B. „Verbindung“. */
+  einzahl: string;
+  /** Die Felder eines Zugangs; `Quelle::Server` ist hier nicht erlaubt. */
+  felder: Feld[];
+}
+
 /** Ein MCP-Tool in der Bibliothek. */
 export interface Eintrag {
   id: EintragId;
@@ -113,6 +128,11 @@ export interface Eintrag {
    * Agenten. Fehlt das Feld, gibt es keine Einrichtung (Serde lässt `None` weg).
    */
   einrichtung?: Einrichtung | null;
+  /**
+   * Führt der Eintrag eine Liste von Zugängen, die der User am Gerät pflegt?
+   * Fehlt das Feld, gibt es keine Zugangsliste (Serde lässt `None` weg).
+   */
+  mehrfach?: Mehrfach | null;
 }
 
 /** Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt. */

@@ -136,6 +136,20 @@ Einrichtung*.
 
 ![Einrichten auf der Tools-Karte](docs/bilder/fenster-dark-einrichten.png)
 
+Manche Tools brauchen **mehrere gleichartige Zugänge**, die der User nach und
+nach anlegt — etwa SSH-Verbindungen mit Name, Host, Port und Benutzer. Solche
+Einträge tragen eine *Zugangsliste* (Verwaltung: *Mehrere Zugänge (optional)*
+mit Überschrift, Bezeichnung und Feldern, Quelle nur *Gerät*); die Tools-Karte
+zeigt dann „Verbindungen (2)“ mit **Verbindung hinzufügen** und der
+aufklappbaren Liste: bearbeiten, löschen (mit Rückfrage) und je gesetztem
+Geheimnis ein eigenes **Geheimnis löschen** — praktisch, wenn das
+Anmelde-Passwort weg soll, sobald der Schlüssel eingerichtet ist. Geheimes
+liegt im Schlüsselbund, die übrigen Werte in der Client-Konfiguration. Beim
+Start bekommt das Tool alle Zugänge als JSON in `QUIVER_ZUGAENGE`; ein Eintrag
+ohne Zugang läuft trotzdem und meldet selbst „kein Zugang“.
+
+![Zugänge auf der Tools-Karte](docs/bilder/fenster-dark-zugaenge.png)
+
 Manche Felder bringen einen **Hilfe-Link** neben der Eingabe mit (Verwaltung:
 *Link-Text* und *Link-Adresse*, Platzhalter `${feld}` erlaubt — zum Beispiel
 `${url}/settings/api-and-access`). Der Knopf ist nur klickbar, wenn sich jeder

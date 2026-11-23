@@ -17,11 +17,16 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf.
 - [ ] Tools pro Agent filtern (SPEC §7) – die Agent-Kennung liegt in der Sitzung schon vor.
 - [ ] stderr der MCP-Prozesse geht ungefiltert ins Log (`laufzeit::stderr_ins_log`); `anmeldung::maskieren` dort ebenfalls anwenden.
+- [ ] Mehrere Zugänge (Aufgabe 14): die Liste ist nach Namen sortiert (BTreeMap), der User kann sie nicht umsortieren.
+- [ ] Mehrere Zugänge: `QUIVER_ZUGAENGE` steht nur in der Laufzeit eines `Stdio`-Eintrags; Anmelde- und Einrichtungsbefehle bekommen die Variable nicht mit.
+- [ ] Mehrere Zugänge: ein Pflicht-Geheimnis lässt sich einzeln entfernen, ohne dass die Pflichtprüfung anschlägt (gewollt: Passwort weg, Schlüssel steht).
+- [ ] Mehrere Zugänge: das Entfernen der letzten Geheimnisse räumt nur die Felder der aktuellen Liste und die gesetzten Werte auf, keine verwaisten Schlüssel aus früheren Feldnamen.
 
 ## Oberfläche
 - [ ] Hilfe-Link: Platzhalter auf reine Server-Felder bleiben gesperrt (`EintragSicht` kennt keine Server-Werte).
 - [ ] Hilfe-Link: halb ausgefüllte Links (nur Text oder nur Adresse) werden gespeichert.
 - [ ] „1 Tools“ – Einzahl fehlt bei Anzahl 1.
+- [ ] Zugangsliste: die zwei „wichtigen Werte“ sind die ersten zwei nicht-geheimen Felder in Feldreihenfolge, mit `@` verbunden – keine feldbezogene Formatierung (`benutzer@host:port`).
 - [ ] Segmentauswahl: gewählter Text ist in egui fett, in Vue normal.
 - [ ] egui-Zeilen 1–2 px flacher als im Browser (kein line-height-Modell); Karten bis 4 px kürzer.
 - [ ] `image` als Dev-Abhängigkeit in `oberflaeche`, nur zum Zuschneiden der Musterbilder.

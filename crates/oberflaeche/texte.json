@@ -430,5 +430,73 @@
   "einrichtung.erneut": {
     "de": "Erneut versuchen",
     "en": "Try again"
+  },
+  "zugaenge.kopf": {
+    "de": "{} ({})",
+    "en": "{} ({})"
+  },
+  "zugaenge.hinzufuegen": {
+    "de": "{} hinzufügen",
+    "en": "Add {}"
+  },
+  "zugaenge.bearbeiten": {
+    "de": "Bearbeiten",
+    "en": "Edit"
+  },
+  "zugaenge.loeschen": {
+    "de": "Löschen",
+    "en": "Delete"
+  },
+  "zugaenge.entfernen_titel": {
+    "de": "{} löschen",
+    "en": "Delete {}"
+  },
+  "zugaenge.entfernen_text": {
+    "de": "„{}“ wird mit allen gespeicherten Geheimnissen entfernt. Das lässt sich nicht rückgängig machen.",
+    "en": "“{}” is removed together with all stored secrets. This cannot be undone."
+  },
+  "zugaenge.anlegen_titel": {
+    "de": "{} anlegen",
+    "en": "Add {}"
+  },
+  "zugaenge.bearbeiten_titel": {
+    "de": "{} bearbeiten",
+    "en": "Edit {}"
+  },
+  "zugaenge.sub": {
+    "de": "Name, Werte und Geheimnisse bleiben auf diesem Gerät. Ein Agent sieht sie nie.",
+    "en": "Name, values and secrets stay on this device. An agent never sees them."
+  },
+  "zugaenge.name": {
+    "de": "Name",
+    "en": "Name"
+  },
+  "zugaenge.name_hinweis": {
+    "de": "a–z, 0–9, - und _, 1–40 Zeichen. Beim Anlegen frei, danach fest.",
+    "en": "a–z, 0–9, - and _, 1–40 characters. Free when adding, fixed afterwards."
+  },
+  "zugaenge.name_fehlt": {
+    "de": "Name fehlt.",
+    "en": "Name is missing."
+  },
+  "zugaenge.name_ungueltig": {
+    "de": "Nur a–z, 0–9, - und _, höchstens 40 Zeichen.",
+    "en": "Only a–z, 0–9, - and _, at most 40 characters."
+  },
+  "zugaenge.name_doppelt": {
+    "de": "Diesen Namen gibt es schon.",
+    "en": "This name already exists."
+  },
+  "zugaenge.leer": {
+    "de": "Noch nichts angelegt.",
+    "en": "Nothing added yet."
+  },
+  "zugaenge.geheim_gesetzt": {
+    "de": "Gesetzt – leer lassen behält es.",
+    "en": "Set – leave empty to keep it."
+  },
+  "zugaenge.geheim_loeschen": {
+    "de": "Geheimnis löschen",
+    "en": "Remove secret"
   }
 }

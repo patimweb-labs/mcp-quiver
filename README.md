@@ -130,6 +130,19 @@ an agent. In the admin interface the command sits in the *Einrichtung
 
 ![Setup on the tools card](docs/bilder/fenster-dark-einrichten.png)
 
+Some tools need **several similar credentials** that the user adds one by one —
+SSH connections with a name, host, port and user, for instance. Such entries
+carry a *list of connections* (admin: *Mehrere Zugänge (optional)* with a
+heading, a singular label and fields, source only *device*); the tools card then
+shows “Verbindungen (2)” with **Verbindung hinzufügen** and the expandable list:
+edit, delete (with a confirmation) and, per stored secret, a separate **Geheimnis
+löschen** — handy when the login password should go once the key is set up.
+Secrets live in the keychain, the remaining values in the client configuration.
+On start the tool receives all connections as JSON in `QUIVER_ZUGAENGE`; an
+entry without any connection still runs and reports “no connection” itself.
+
+![Connections on the tools card](docs/bilder/fenster-dark-zugaenge.png)
+
 Some fields carry a **help link** next to the input (admin: *Link text* and
 *Link address*, `${feld}` placeholders allowed — for example
 `${url}/settings/api-and-access`). The button is only clickable once every

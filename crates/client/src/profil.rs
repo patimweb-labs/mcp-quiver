@@ -35,6 +35,11 @@ pub struct Profil {
     /// Werte von Feldern mit `Quelle::Client`, je Eintrag.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub lokale_werte: BTreeMap<String, Werte>,
+    /// Zugänge je Eintrag (`mehrfach`, Aufgabe 14): Eintrag → Name →
+    /// nicht-geheime Werte. Die Geheimnisse liegen im
+    /// [`Tresor`](crate::Tresor).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zugaenge: BTreeMap<String, BTreeMap<String, Werte>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agenten: Vec<Agent>,
     /// Letzter Soll-Zustand – läuft offline weiter.
@@ -106,6 +111,13 @@ mod tests {
             "echo".into(),
             Werte::from([("PFAD".to_string(), "/tmp".to_string())]),
         );
+        profil.zugaenge.insert(
+            "ssh".into(),
+            BTreeMap::from([(
+                "web-01".to_string(),
+                Werte::from([("host".to_string(), "web-01.example".to_string())]),
+            )]),
+        );
         profil.agenten.push(Agent {
             id: "a1".into(),
             name: "pi".into(),
@@ -116,6 +128,7 @@ mod tests {
         let zurueck = Profil::laden(&ordner).expect("lesbar");
         assert_eq!(zurueck.server_url, profil.server_url);
         assert_eq!(zurueck.lokale_werte, profil.lokale_werte);
+        assert_eq!(zurueck.zugaenge, profil.zugaenge);
         assert_eq!(zurueck.agenten, profil.agenten);
         std::fs::remove_dir_all(&ordner).ok();
     }

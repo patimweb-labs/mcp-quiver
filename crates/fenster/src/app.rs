@@ -69,6 +69,23 @@ pub enum Aktion {
     /// Einen Hilfe-Link neben einem Feld im Standardbrowser öffnen
     /// (Aufgabe 13). Sonst passiert nichts: keine Anmeldung, kein Lauscher.
     LinkOeffnen(String),
+    /// Einen Zugang anlegen oder ändern (Aufgabe 14). Ein leeres Geheimfeld
+    /// bleibt unverändert; danach startet der Eintrag neu.
+    ZugangSpeichern {
+        eintrag: EintragId,
+        name: String,
+        lokal: Werte,
+        geheim: Werte,
+    },
+    /// Einen Zugang samt seiner Geheimnisse entfernen.
+    ZugangLoeschen { eintrag: EintragId, name: String },
+    /// Ein einzelnes Geheimnis eines Zugangs entfernen – etwa das
+    /// Anmelde-Passwort, nachdem der Schlüssel eingerichtet ist.
+    ZugangGeheimLoeschen {
+        eintrag: EintragId,
+        name: String,
+        feld: String,
+    },
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -301,6 +318,18 @@ mod tests {
             Aktion::LinkOeffnen("https://wiki.example".into()),
             Aktion::LinkOeffnen("https://wiki.example/zwei".into()),
             "die Adresse gehört zur Aktion"
+        );
+        assert_ne!(
+            Aktion::ZugangLoeschen {
+                eintrag: EintragId::neu("ssh"),
+                name: "web-01".into(),
+            },
+            Aktion::ZugangGeheimLoeschen {
+                eintrag: EintragId::neu("ssh"),
+                name: "web-01".into(),
+                feld: "anmelde_passwort".into(),
+            },
+            "ein Geheimnis löschen ist nicht den Zugang löschen"
         );
     }
 

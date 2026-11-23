@@ -3,14 +3,11 @@
 // Speichern geht er zum Server. Die Laufzeit ist ein Summentyp – Stdio und
 // Remote schließen einander aus, auch in der Oberfläche.
 import { computed, ref, useId, watch } from "vue";
-import { Plus, Trash2 } from "lucide-vue-next";
+import { Plus } from "lucide-vue-next";
 import {
   WpButton,
-  WpCheckbox,
   WpDialog,
-  WpIconButton,
   WpInput,
-  WpSelect,
   WpSwitch,
   WpTextarea,
   WpToggleGroup,
@@ -20,6 +17,7 @@ import { tief_kopie } from "../logik/kopie";
 import { fehlertext, type Client } from "../api/client";
 import type { Eintrag, Quelle } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import Feldkarte from "../bausteine/Feldkarte.vue";
 import {
   ANMELDEBEFEHLE,
   anmeldung_als_text,
@@ -33,11 +31,15 @@ import {
   eintrag_pruefen,
   eintrag_saeubern,
   kennung_aus_titel,
+  mehrfach_ist_leer,
+  mehrfach_von,
   neuer_eintrag,
   neues_feld,
+  neues_zugang_feld,
   quelle_text,
   umgebung_als_text,
   umgebung_aus_text,
+  ZUGANG_QUELLEN,
   type Anmeldebefehl,
 } from "../logik/eintrag";
 import Klappknopf from "../bausteine/Klappknopf.vue";
@@ -63,10 +65,13 @@ const adressId = useId();
 const kopfzeilenId = useId();
 const anmeldungId = useId();
 const einrichtungId = useId();
+const mehrfachId = useId();
 // Der Abschnitt „Anmeldung“ ist zugeklappt, solange niemand ihn braucht.
 const anmeldungOffen = ref(false);
 // Dasselbe für die Einrichtung (Aufgabe 11).
 const einrichtungOffen = ref(false);
+// Und für die Zugangsliste (Aufgabe 14).
+const mehrfachOffen = ref(false);
 
 watch(
   () => props.offen,
@@ -80,6 +85,7 @@ watch(
     idSelbstGesetzt.value = !props.neu;
     anmeldungOffen.value = !anmeldung_ist_leer_entwurf();
     einrichtungOffen.value = !einrichtung_ist_leer_entwurf();
+    mehrfachOffen.value = !mehrfach_ist_leer_entwurf();
   },
   { immediate: true },
 );
@@ -108,16 +114,23 @@ const quelleOptionen = (["server", "client", "geheim"] as Quelle[]).map(
   (quelle) => ({ value: quelle, label: quelle_text(quelle) }),
 );
 
+// Eine Zugangsliste gehört dem Gerät: der Server füllt sie nie (Aufgabe 14).
+const zugangQuelleOptionen = ZUGANG_QUELLEN.map((quelle) => ({
+  value: quelle,
+  label: quelle_text(quelle),
+}));
+
 function artSetzen(wert: string): void {
   if (wert === entwurf.value.laufzeit.art) return;
   entwurf.value.laufzeit =
     wert === "remote"
       ? { art: "remote", url: "", kopfzeilen: {} }
       : { art: "stdio", befehl: "", argumente: [], umgebung: {} };
-  // Eine Anmeldung gibt es nur für Stdio-Einträge.
+  // Anmeldung, Einrichtung und Zugangsliste gibt es nur für Stdio-Einträge.
   if (entwurf.value.laufzeit.art === "remote") {
     entwurf.value.anmeldung = null;
     entwurf.value.einrichtung = null;
+    entwurf.value.mehrfach = null;
   }
 }
 
@@ -231,21 +244,43 @@ function feldEntfernen(index: number): void {
   entwurf.value.felder.splice(index, 1);
 }
 
-function quelleSetzen(index: number, wert: string | null): void {
-  if (wert === "server" || wert === "client" || wert === "geheim") {
-    entwurf.value.felder[index].quelle = wert;
-  }
+/** Ist im Entwurf schon eine Zugangsliste angelegt? */
+function mehrfach_ist_leer_entwurf(): boolean {
+  return mehrfach_ist_leer(entwurf.value.mehrfach);
 }
 
-/**
- * Link-Text und Link-Adresse eines Felds setzen (Aufgabe 13). Solange der
- * Link leer ist, steht dort ein leerer Text; `eintrag_saeubern` macht daraus
- * `null`.
- */
-function linkSetzen(index: number, teil: "text" | "url", wert: string): void {
-  const feld = entwurf.value.felder[index];
-  const link = feld.link ?? { text: "", url: "" };
-  feld.link = teil === "text" ? { ...link, text: wert } : { ...link, url: wert };
+/** Die Zugangsliste als Daten; ohne Anlage ist sie leer. */
+const mehrfach = computed(() => mehrfach_von(entwurf.value));
+
+/** Eine Zugangsliste anlegen – mit einer sinnvollen leeren Vorlage. */
+function mehrfachAnlegen(): void {
+  entwurf.value.mehrfach = {
+    titel: "Verbindungen",
+    einzahl: "Verbindung",
+    felder: [neues_zugang_feld()],
+  };
+  mehrfachOffen.value = true;
+}
+
+function mehrfachEntfernen(): void {
+  entwurf.value.mehrfach = null;
+  mehrfachOffen.value = false;
+}
+
+function zugangFeldHinzufuegen(): void {
+  const liste = mehrfach_von(entwurf.value);
+  entwurf.value.mehrfach = {
+    ...liste,
+    felder: [...liste.felder, neues_zugang_feld()],
+  };
+}
+
+function zugangFeldEntfernen(index: number): void {
+  const liste = mehrfach_von(entwurf.value);
+  entwurf.value.mehrfach = {
+    ...liste,
+    felder: liste.felder.filter((_, i) => i !== index),
+  };
 }
 
 async function speichern(): Promise<void> {
@@ -544,99 +579,118 @@ async function speichern(): Promise<void> {
           Noch keine Felder. Ohne Feld braucht der Eintrag keine Angaben.
         </p>
 
-        <fieldset
+        <Feldkarte
           v-for="(feld, i) in entwurf.felder"
           :key="i"
-          class="feldkarte"
+          :feld="feld"
+          :nummer="i + 1"
+          praefix="feld"
+          :fehler="fehler"
+          :quellen="quelleOptionen"
+          :untertitel="quelle_text(feld.quelle)"
+          @entfernen="feldEntfernen(i)"
+        />
+      </div>
+
+      <section v-if="entwurf.laufzeit.art === 'stdio'" class="mehrfach">
+        <Klappknopf
+          :offen="mehrfachOffen"
+          :steuert="mehrfachId"
+          @umschalten="mehrfachOffen = !mehrfachOffen"
         >
-          <legend class="feldkarte__titel">Feld {{ i + 1 }}</legend>
-          <div class="feldkarte__kopf">
-            <span class="blass">{{ quelle_text(feld.quelle) }}</span>
-            <WpIconButton
-              :icon="Trash2"
-              label="Feld entfernen"
-              size="sm"
-              variant="ghost"
-              @press="feldEntfernen(i)"
-            />
-          </div>
+          Mehrere Zugänge (optional)
+        </Klappknopf>
+        <p class="blass">
+          Gleichartige Zugänge, die der User am Gerät anlegt – etwa
+          SSH-Verbindungen. Der Client übergibt sie dem Tool beim Start als
+          JSON in <code>QUIVER_ZUGAENGE</code>; Geheimes liegt im
+          Schlüsselbund. Die Liste gehört dem Gerät, deshalb füllt sie nie der
+          Server.
+        </p>
 
-          <Feld beschriftung="Name" :fehler="fehler[`feld.${i}.name`]">
-            <template #default="{ id }">
-              <WpInput
-                :id="id"
-                :model-value="feld.name"
-                :state="fehler[`feld.${i}.name`] ? 'invalid' : 'default'"
-                placeholder="konto"
-                @update:model-value="(wert) => (feld.name = wert)"
-              />
-            </template>
-          </Feld>
+        <div v-if="mehrfachOffen" :id="mehrfachId" class="mehrfach__inhalt">
+          <p v-if="fehler.mehrfach" class="fehler" role="alert">
+            {{ fehler.mehrfach }}
+          </p>
 
-          <Feld beschriftung="Beschreibung">
-            <template #default="{ id }">
-              <WpInput
-                :id="id"
-                :model-value="feld.beschreibung"
-                @update:model-value="(wert) => (feld.beschreibung = wert)"
-              />
-            </template>
-          </Feld>
-
-          <div class="feldkarte__zeile">
-            <WpSelect
-              :model-value="feld.quelle"
-              :options="quelleOptionen"
-              label="Quelle"
-              @update:model-value="(wert) => quelleSetzen(i, wert)"
-            />
-            <WpCheckbox
-              :model-value="feld.pflicht"
-              label="Pflicht"
-              @update:model-value="(wert) => (feld.pflicht = wert)"
-            />
-          </div>
-
-          <Feld beschriftung="Standard" hinweis="Leer heißt: kein Standardwert.">
-            <template #default="{ id }">
-              <WpInput
-                :id="id"
-                :model-value="feld.standard ?? ''"
-                @update:model-value="
-                  (wert) => (feld.standard = wert.length > 0 ? wert : null)
-                "
-              />
-            </template>
-          </Feld>
-
-          <div class="feldkarte__zeile">
-            <Feld beschriftung="Link-Text" hinweis="Leer heißt: kein Hilfe-Link.">
+          <template v-if="entwurf.mehrfach">
+            <Feld
+              beschriftung="Überschrift"
+              :fehler="fehler['mehrfach.titel']"
+              hinweis="Steht über der Liste im Client, z. B. „Verbindungen“."
+            >
               <template #default="{ id }">
                 <WpInput
                   :id="id"
-                  :model-value="feld.link?.text ?? ''"
-                  placeholder="Token in Outline erstellen"
-                  @update:model-value="(wert) => linkSetzen(i, 'text', wert)"
+                  :model-value="mehrfach.titel"
+                  :state="fehler['mehrfach.titel'] ? 'invalid' : 'default'"
+                  placeholder="Verbindungen"
+                  @update:model-value="
+                    (wert) => (entwurf.mehrfach = { ...mehrfach, titel: wert })
+                  "
                 />
               </template>
             </Feld>
 
             <Feld
-              beschriftung="Link-Adresse"
-              hinweis="Platzhalter ${feld} sind erlaubt."
+              beschriftung="Bezeichnung"
+              :fehler="fehler['mehrfach.einzahl']"
+              hinweis="Ein Element der Liste, z. B. „Verbindung“."
             >
               <template #default="{ id }">
                 <WpInput
                   :id="id"
-                  :model-value="feld.link?.url ?? ''"
-                  placeholder="${url}/settings/api-and-access"
-                  @update:model-value="(wert) => linkSetzen(i, 'url', wert)"
+                  :model-value="mehrfach.einzahl"
+                  :state="fehler['mehrfach.einzahl'] ? 'invalid' : 'default'"
+                  placeholder="Verbindung"
+                  @update:model-value="
+                    (wert) => (entwurf.mehrfach = { ...mehrfach, einzahl: wert })
+                  "
                 />
               </template>
             </Feld>
+
+            <div class="mehrfach__kopf">
+              <span class="mehrfach__titel">Felder eines Zugangs</span>
+              <WpButton
+                label="Feld hinzufügen"
+                :icon="Plus"
+                size="sm"
+                @press="zugangFeldHinzufuegen"
+              />
+            </div>
+            <p v-if="mehrfach.felder.length === 0" class="blass">
+              Noch keine Felder. Ohne Feld weiß der Client nicht, was ein
+              Zugang braucht.
+            </p>
+
+            <Feldkarte
+              v-for="(feld, i) in mehrfach.felder"
+              :key="i"
+              :feld="feld"
+              :nummer="i + 1"
+              praefix="mehrfach.feld"
+              :fehler="fehler"
+              :quellen="zugangQuelleOptionen"
+              :untertitel="quelle_text(feld.quelle)"
+              @entfernen="zugangFeldEntfernen(i)"
+            />
+
+            <div>
+              <WpButton label="Zugangsliste entfernen" @press="mehrfachEntfernen" />
+            </div>
+          </template>
+
+          <div v-else>
+            <WpButton
+              label="Zugangsliste anlegen"
+              :icon="Plus"
+              size="sm"
+              @press="mehrfachAnlegen"
+            />
           </div>
-        </fieldset>
-      </div>
+        </div>
+      </section>
 
       <p v-if="speicherfehler" class="fehler" role="alert">{{ speicherfehler }}</p>
     </div>
@@ -708,44 +762,30 @@ async function speichern(): Promise<void> {
   font-weight: var(--wp-font-weight-semibold);
 }
 
-.feldkarte {
+.mehrfach {
   display: flex;
   flex-direction: column;
   gap: var(--wp-space-1);
-  margin: 0;
-  padding: var(--wp-space-3);
-  border: var(--wp-size-border) solid var(--wp-color-border-subtle);
-  background: var(--wp-color-bg-raised);
+  padding-top: var(--wp-space-3);
 }
 
-.feldkarte__titel {
-  padding-inline: var(--wp-space-1);
-  color: var(--wp-color-text-muted);
-  font-size: var(--wp-font-size-sm);
-  font-weight: var(--wp-font-weight-medium);
+.mehrfach__inhalt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-1);
 }
 
-.feldkarte__kopf {
+.mehrfach__kopf {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--wp-space-2);
-}
-
-.feldkarte__zeile {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--wp-space-3);
   flex-wrap: wrap;
 }
 
-.feldkarte__zeile > :first-child {
-  flex: 1 1 calc(var(--wp-space-8) * 3);
-  min-width: 0;
+.mehrfach__titel {
+  font-size: var(--wp-font-size-lg);
+  font-weight: var(--wp-font-weight-semibold);
 }
 
-.fehler {
-  color: var(--wp-color-status-error);
-  font-size: var(--wp-font-size-sm);
-}
 </style>

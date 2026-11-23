@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quiver_domain::{
-    Aktion, Eintrag, EintragId, Feld, Herkunft, Laufzeit, Quelle, Soll, SollEintrag, Werte,
+    Aktion, Eintrag, EintragId, Feld, Herkunft, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag,
+    Werte, Zugang,
 };
 use quiver_protocol::EintragZustand;
 use rmcp::model::{JsonObject, Tool};
@@ -46,6 +47,22 @@ fn eintrag(id: &str) -> Eintrag {
             feld("PFAD", Quelle::Client, true),
             feld("TOKEN", Quelle::Geheim, true),
         ],
+    }
+}
+
+/// Was der Client lokal speichert, in einem Bündel – die Tests brauchen meist
+/// nur wenige davon.
+fn lokales<'a>(
+    werte: &'a BTreeMap<EintragId, Werte>,
+    geheim_gesetzt: &'a BTreeMap<EintragId, BTreeSet<String>>,
+    zugaenge: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
+    zugang_geheim: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
+) -> Lokales<'a> {
+    Lokales {
+        werte,
+        geheim_gesetzt,
+        zugaenge,
+        zugang_geheim,
     }
 }
 
@@ -91,8 +108,7 @@ fn sicht_zeigt_nur_client_und_geheim_felder() {
 
     let sicht = eintraege_sicht(
         &soll,
-        &lokal,
-        &geheim,
+        &lokales(&lokal, &geheim, &BTreeMap::new(), &BTreeMap::new()),
         &laeufer,
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -127,6 +143,157 @@ fn sicht_zeigt_nur_client_und_geheim_felder() {
     assert_eq!(eintrag.zustand, EintragZustand::Laeuft { tools: 2 });
 }
 
+/// Ein Eintrag mit Zugangsliste (Aufgabe 14).
+fn eintrag_mit_zugaengen(id: &str) -> Eintrag {
+    let mut eintrag = eintrag(id);
+    eintrag.mehrfach = Some(Mehrfach {
+        titel: "Verbindungen".into(),
+        einzahl: "Verbindung".into(),
+        felder: vec![
+            feld("benutzer", Quelle::Client, true),
+            feld("host", Quelle::Client, true),
+            feld("passwort", Quelle::Geheim, false),
+        ],
+    });
+    eintrag
+}
+
+#[test]
+fn zugaenge_stehen_in_der_sicht_ohne_geheimes() {
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag: eintrag_mit_zugaengen("ssh"),
+        werte: Werte::new(),
+    }]);
+    let id = EintragId::neu("ssh");
+    let zugaenge = BTreeMap::from([(
+        id.clone(),
+        BTreeMap::from([
+            (
+                "web-01".to_string(),
+                Werte::from([
+                    ("benutzer".to_string(), "root".to_string()),
+                    ("host".to_string(), "web-01.example".to_string()),
+                ]),
+            ),
+            ("db-01".to_string(), Werte::new()),
+        ]),
+    )]);
+    let zugang_geheim = BTreeMap::from([(
+        id.clone(),
+        BTreeMap::from([(
+            "web-01".to_string(),
+            Werte::from([("passwort".to_string(), "geheim".to_string())]),
+        )]),
+    )]);
+
+    let sicht = eintraege_sicht(
+        &soll,
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &zugaenge,
+            &zugang_geheim,
+        ),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let zugaenge = sicht[0].zugaenge.as_ref().expect("Zugangsliste");
+    assert_eq!(zugaenge.titel, "Verbindungen");
+    assert_eq!(zugaenge.einzahl, "Verbindung");
+    assert_eq!(zugaenge.felder.len(), 3, "alle Felder der Liste");
+    assert_eq!(
+        zugaenge
+            .liste
+            .iter()
+            .map(|zugang| zugang.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["db-01", "web-01"],
+        "nach Namen sortiert"
+    );
+    let web = &zugaenge.liste[1];
+    assert_eq!(
+        web.werte.get("host").map(String::as_str),
+        Some("web-01.example")
+    );
+    assert!(
+        !web.werte.contains_key("passwort"),
+        "Geheimes steht nie im Modell"
+    );
+    assert_eq!(web.geheim_gesetzt, vec!["passwort".to_string()]);
+    assert!(zugaenge.liste[0].geheim_gesetzt.is_empty());
+    // Ein Eintrag ohne `mehrfach` hat keine Zugangsliste.
+    let ohne = Soll::neu(vec![SollEintrag {
+        eintrag: eintrag("echo"),
+        werte: Werte::new(),
+    }]);
+    assert!(eintraege_sicht(
+        &ohne,
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new()
+        ),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )[0]
+    .zugaenge
+    .is_none());
+}
+
+#[test]
+fn zugaenge_gehen_als_json_in_die_umgebung() {
+    let mehrfach = Mehrfach {
+        titel: "Verbindungen".into(),
+        einzahl: "Verbindung".into(),
+        felder: vec![
+            feld("benutzer", Quelle::Client, true),
+            feld("host", Quelle::Client, true),
+            feld("passwort", Quelle::Geheim, false),
+        ],
+    };
+    let zugaenge = BTreeMap::from([
+        (
+            "web-01".to_string(),
+            Werte::from([
+                ("benutzer".to_string(), "root".to_string()),
+                ("host".to_string(), "web-01.example".to_string()),
+                // Ein Wert zu einem Feld, das die Liste nicht kennt, zählt nicht.
+                ("fremd".to_string(), "weg".to_string()),
+            ]),
+        ),
+        ("db-01".to_string(), Werte::new()),
+    ]);
+    let geheim = BTreeMap::from([(
+        "web-01".to_string(),
+        Werte::from([("passwort".to_string(), "geheim".to_string())]),
+    )]);
+    let json = zugaenge_json(&mehrfach, &zugaenge, &geheim);
+    let liste: Vec<Zugang> = serde_json::from_str(&json).expect("JSON");
+    assert_eq!(liste.len(), 2);
+    assert_eq!(liste[0].name, "db-01");
+    assert!(
+        liste[0].werte.is_empty(),
+        "ein Zugang ohne Werte bleibt leer"
+    );
+    assert_eq!(
+        liste[1].werte,
+        Werte::from([
+            ("benutzer".to_string(), "root".to_string()),
+            ("host".to_string(), "web-01.example".to_string()),
+            ("passwort".to_string(), "geheim".to_string()),
+        ]),
+        "Geheimes ist beim Start eingesetzt, fremde Felder fallen weg"
+    );
+    // Ohne Zugang eine leere Liste – der Eintrag läuft trotzdem.
+    assert_eq!(
+        zugaenge_json(&mehrfach, &BTreeMap::new(), &BTreeMap::new()),
+        "[]"
+    );
+}
+
 #[test]
 fn sicht_ohne_laeufer_wartet() {
     let soll = Soll::neu(vec![SollEintrag {
@@ -135,8 +302,12 @@ fn sicht_ohne_laeufer_wartet() {
     }]);
     let sicht = eintraege_sicht(
         &soll,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
         &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -177,8 +348,12 @@ fn fehlende_werte_stehen_in_der_sicht() {
     )]);
     let sicht = eintraege_sicht(
         &soll,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
         &laeufer,
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -265,8 +440,12 @@ fn anmeldung_steht_nur_bei_eintraegen_die_eine_brauchen() {
     )]);
     let sicht = eintraege_sicht(
         &soll,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
         &BTreeMap::new(),
         &anmeldung,
         &BTreeMap::new(),
@@ -290,8 +469,12 @@ fn anmeldung_steht_nur_bei_eintraegen_die_eine_brauchen() {
     // Noch nicht geprüft heißt „unbekannt" – nicht „abgemeldet".
     let sicht = eintraege_sicht(
         &soll,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
         &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -321,8 +504,12 @@ fn einrichtung_steht_nur_bei_eintraegen_die_eine_anbieten() {
     // Ohne eigenen Zustand ist die Einrichtung bereit – nicht „läuft“.
     let sicht = eintraege_sicht(
         &soll,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
         &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -347,8 +534,12 @@ fn einrichtung_steht_nur_bei_eintraegen_die_eine_anbieten() {
     )]);
     let sicht = eintraege_sicht(
         &soll,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
         &BTreeMap::new(),
         &BTreeMap::new(),
         &zustaende,

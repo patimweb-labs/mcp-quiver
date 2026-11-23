@@ -18,18 +18,24 @@ import {
   gueltige_kennung,
   hat_anmeldung,
   hat_einrichtung,
+  hat_mehrfach,
   kennung_aus_titel,
   laufzeit_text,
   leere_anmeldung,
   leere_einrichtung,
+  leeres_mehrfach,
   link_saeubern,
+  mehrfach_ist_leer,
+  mehrfach_von,
   neuer_eintrag,
   neues_feld,
+  neues_zugang_feld,
   server_felder,
   server_werte,
   sortiert_nach_titel,
   umgebung_als_text,
   umgebung_aus_text,
+  ZUGANG_QUELLEN,
 } from "./eintrag";
 
 function beispiel(): Eintrag {
@@ -437,5 +443,107 @@ describe("Einrichtung", () => {
     expect(leer.einrichtung).toBeNull();
     // Das ist gültiges JSON für `Option<Einrichtung>`.
     expect(JSON.parse(JSON.stringify(leer)).einrichtung).toBeNull();
+  });
+});
+
+describe("Mehrere Zugänge", () => {
+  /** Ein Eintrag mit Zugangsliste wie bei quiver-ssh. */
+  function mit_zugaengen() {
+    const eintrag = beispiel();
+    eintrag.mehrfach = {
+      titel: "Verbindungen",
+      einzahl: "Verbindung",
+      felder: [
+        { ...neues_zugang_feld(), name: "benutzer", beschreibung: "Benutzer" },
+        { ...neues_zugang_feld(), name: "host", pflicht: true },
+        { ...neues_zugang_feld(), name: "passwort", quelle: "geheim" },
+      ],
+    };
+    return eintrag;
+  }
+
+  it("beginnt mit Gerät-Feldern und ohne Server-Quelle", () => {
+    const feld = neues_zugang_feld();
+    expect(feld.quelle).toBe("client");
+    expect(ZUGANG_QUELLEN).toEqual(["client", "geheim"]);
+    // Das ist der Vertrag: der Client füllt die Liste, nicht der Admin.
+    expect(ZUGANG_QUELLEN).not.toContain("server");
+  });
+
+  it("erkennt eine leere Zugangsliste", () => {
+    expect(mehrfach_ist_leer(leeres_mehrfach())).toBe(true);
+    expect(mehrfach_ist_leer(null)).toBe(true);
+    expect(mehrfach_ist_leer(undefined)).toBe(true);
+    expect(mehrfach_ist_leer(mit_zugaengen().mehrfach)).toBe(false);
+    // Titel ohne Feld ist noch keine Liste.
+    expect(
+      mehrfach_ist_leer({ titel: "Verbindungen", einzahl: "Verbindung", felder: [] }),
+    ).toBe(false);
+    // Ältere Einträge kennen das Feld gar nicht.
+    const alt = beispiel();
+    delete alt.mehrfach;
+    expect(mehrfach_ist_leer(alt.mehrfach)).toBe(true);
+    expect(mehrfach_von(alt)).toEqual(leeres_mehrfach());
+  });
+
+  it("zeigt das Abzeichen nur mit Zugangsliste", () => {
+    expect(hat_mehrfach(beispiel())).toBe(false);
+    expect(hat_mehrfach(neuer_eintrag("neu"))).toBe(false);
+    expect(hat_mehrfach(mit_zugaengen())).toBe(true);
+  });
+
+  it("verlangt Überschrift, Bezeichnung und ein Feld", () => {
+    const eintrag = mit_zugaengen();
+    expect(eintrag_pruefen(eintrag)).toEqual({});
+
+    eintrag.mehrfach = { ...eintrag.mehrfach!, titel: "  " };
+    expect(eintrag_pruefen(eintrag)["mehrfach.titel"]).toBeTruthy();
+
+    eintrag.mehrfach = { ...mit_zugaengen().mehrfach!, einzahl: "" };
+    expect(eintrag_pruefen(eintrag)["mehrfach.einzahl"]).toBeTruthy();
+
+    eintrag.mehrfach = { ...mit_zugaengen().mehrfach!, felder: [] };
+    expect(eintrag_pruefen(eintrag).mehrfach).toContain("mindestens ein Feld");
+  });
+
+  it("prüft die Felder der Zugangsliste", () => {
+    const eintrag = mit_zugaengen();
+    eintrag.mehrfach!.felder.push({ ...neues_zugang_feld(), name: "host" });
+    eintrag.mehrfach!.felder.push({ ...neues_zugang_feld(), name: "mit leer" });
+    const fehler = eintrag_pruefen(eintrag);
+    expect(fehler["mehrfach.feld.3.name"]).toContain("schon");
+    expect(fehler["mehrfach.feld.4.name"]).toContain("Buchstaben");
+  });
+
+  it("weist Server-Felder in der Zugangsliste ab", () => {
+    const eintrag = mit_zugaengen();
+    eintrag.mehrfach!.felder[0].quelle = "server";
+    expect(eintrag_pruefen(eintrag)["mehrfach.feld.0.quelle"]).toContain("Gerät");
+  });
+
+  it("gibt eine Zugangsliste nur bei Stdio", () => {
+    const eintrag = mit_zugaengen();
+    eintrag.laufzeit = { art: "remote", url: "https://example.org", kopfzeilen: {} };
+    expect(eintrag_pruefen(eintrag).mehrfach).toContain("Stdio");
+  });
+
+  it("säubert die Liste und leert den Abschnitt", () => {
+    const eintrag = mit_zugaengen();
+    eintrag.mehrfach!.titel = "  Verbindungen  ";
+    eintrag.mehrfach!.einzahl = " Verbindung ";
+    eintrag.mehrfach!.felder[1].name = " host ";
+    eintrag.mehrfach!.felder[1].standard = "   ";
+    const sauber = eintrag_saeubern(eintrag);
+    expect(sauber.mehrfach?.titel).toBe("Verbindungen");
+    expect(sauber.mehrfach?.einzahl).toBe("Verbindung");
+    expect(sauber.mehrfach?.felder[1].name).toBe("host");
+    expect(sauber.mehrfach?.felder[1].standard).toBeNull();
+
+    // Ohne Titel, Bezeichnung und Felder steht nichts im Vertrag.
+    eintrag.mehrfach = leeres_mehrfach();
+    const leer = eintrag_saeubern(eintrag);
+    expect(leer.mehrfach).toBeNull();
+    // Das ist gültiges JSON für `Option<Mehrfach>`.
+    expect(JSON.parse(JSON.stringify(leer)).mehrfach).toBeNull();
   });
 });

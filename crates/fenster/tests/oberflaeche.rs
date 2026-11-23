@@ -106,6 +106,7 @@ fn eintrag(
         tools: Vec::new(),
         anmeldung: None,
         einrichtung: None,
+        zugaenge: None,
     }
 }
 
@@ -1342,4 +1343,383 @@ fn autostart_ist_ein_haken_auf_der_verbindungsseite() {
         .click();
     h.run();
     assert!(!h.state().0.sicht.autostart);
+}
+
+// ------------------------------------------------------- Mehrere Zugänge (14)
+
+/// Die Felder einer Zugangsliste wie bei quiver-ssh (Aufgabe 14).
+fn zugang_felder() -> Vec<Feld> {
+    let mut port = feld("port", Quelle::Client, "Port, Standard 22");
+    port.pflicht = false;
+    let mut anmelde = feld("anmelde_passwort", Quelle::Geheim, "Passwort der Anmeldung");
+    anmelde.pflicht = false;
+    let mut sudo = feld("sudo_passwort", Quelle::Geheim, "Passwort für sudo");
+    sudo.pflicht = false;
+    vec![
+        feld("benutzer", Quelle::Client, "Benutzer für die Anmeldung"),
+        feld("host", Quelle::Client, "Hostname oder Adresse"),
+        port,
+        anmelde,
+        sudo,
+    ]
+}
+
+/// Ein Eintrag mit Zugangsliste: `zugaenge` sind (Name, Werte, gesetzte
+/// Geheimfelder).
+fn zugang_eintrag(zugaenge: Vec<(&str, Werte, Vec<&str>)>) -> EintragSicht {
+    let mut eintrag = eintrag(
+        "ssh",
+        "SSH",
+        "Verbindungen zu Servern.",
+        EintragZustand::Laeuft { tools: 1 },
+        Vec::new(),
+    );
+    eintrag.tools = vec!["verbinden".into()];
+    eintrag.zugaenge = Some(quiver_client::ZugaengeSicht {
+        titel: "Verbindungen".into(),
+        einzahl: "Verbindung".into(),
+        felder: zugang_felder(),
+        liste: zugaenge
+            .into_iter()
+            .map(|(name, werte, geheim)| quiver_client::ZugangSicht {
+                name: name.into(),
+                werte,
+                geheim_gesetzt: geheim.into_iter().map(str::to_string).collect(),
+            })
+            .collect(),
+    });
+    eintrag
+}
+
+fn zwei_zugaenge() -> EintragSicht {
+    zugang_eintrag(vec![
+        (
+            "db-01",
+            Werte::from([
+                ("benutzer".to_string(), "admin".to_string()),
+                ("host".to_string(), "db-01.example".to_string()),
+            ]),
+            vec!["anmelde_passwort"],
+        ),
+        (
+            "web-01",
+            Werte::from([
+                ("benutzer".to_string(), "root".to_string()),
+                ("host".to_string(), "web-01.example".to_string()),
+                ("port".to_string(), "22".to_string()),
+            ]),
+            vec!["anmelde_passwort", "sudo_passwort"],
+        ),
+    ])
+}
+
+#[test]
+fn zugaenge_zeigen_titel_anzahl_und_liste() {
+    let mut h = fenster(
+        modell(verbunden(), vec![zwei_zugaenge()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    // Die Zeile trägt Überschrift und Anzahl, daneben der Knopf zum Anlegen.
+    assert!(h.query_by_label("Verbindungen (2)").is_some());
+    assert!(h.query_by_label("Verbindung hinzufügen").is_some());
+    // Zugeklappt steht kein Zugang da.
+    assert!(h.query_by_label("web-01").is_none());
+
+    h.get_by_role_and_label(Role::Button, "Verbindungen (2)")
+        .click();
+    h.run();
+    assert!(h.query_by_label("web-01").is_some(), "Zugang fehlt");
+    assert!(h.query_by_label("db-01").is_some(), "Zugang fehlt");
+    // Name und ein bis zwei wichtige Werte, ohne Geheimes.
+    assert!(h.query_by_label("root@web-01.example").is_some());
+    assert!(h.query_by_label("admin@db-01.example").is_some());
+    assert!(
+        h.query_by_label("••••").is_none(),
+        "Geheimes steht nie auf der Karte"
+    );
+
+    // Jeder Zugang hat „Bearbeiten“ und „Löschen“; dazu kommt der Stift der
+    // Karte, deshalb zählt der Test die Knöpfe.
+    assert_eq!(
+        h.query_all_by_label("Bearbeiten").count(),
+        2,
+        "je Zeile ein „Bearbeiten“ (der Stift der Karte heißt anders)"
+    );
+    assert_eq!(
+        h.query_all_by_label("Löschen").count(),
+        2,
+        "je Zeile ein „Löschen“"
+    );
+    // Hand-Cursor auf dem Knopf, der die Liste aufklappt (AGENTS.md §2.12).
+    let knopf = h.get_by_role_and_label(Role::Button, "Verbindungen (2)");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf der Zugangsliste"
+    );
+}
+
+#[test]
+fn leere_zugangsliste_sagt_das_und_der_eintrag_laeuft() {
+    let mut h = fenster(
+        modell(verbunden(), vec![zugang_eintrag(Vec::new())]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    // Ein Eintrag mit `mehrfach`, aber ohne Zugang, läuft trotzdem.
+    assert!(h.query_by_label("Läuft · 1 Tools").is_some());
+    assert!(h.query_by_label("Verbindungen (0)").is_some());
+    h.get_by_role_and_label(Role::Button, "Verbindungen (0)")
+        .click();
+    h.run();
+    assert!(h.query_by_label("Noch nichts angelegt.").is_some());
+    assert!(h.query_by_label("Verbindung hinzufügen").is_some());
+}
+
+#[test]
+fn zugang_anlegen_schickt_namen_und_werte() {
+    let mut h = fenster(
+        modell(verbunden(), vec![zwei_zugaenge()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Verbindung hinzufügen")
+        .click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Zugang {
+            name,
+            neu,
+            eingaben,
+            ..
+        } => {
+            assert!(*neu, "hinzufügen legt an");
+            assert!(name.is_empty());
+            assert_eq!(eingaben.len(), 5, "ein Feld je Feld der Liste");
+            assert!(eingaben[3].geheim, "anmelde_passwort ist geheim");
+            assert!(!eingaben[3].gesetzt, "noch nicht gesetzt");
+        }
+        anderer => panic!("kein Zugangs-Dialog: {anderer:?}"),
+    }
+    // Ein ungültiger Name wird vor dem Absenden gezeigt.
+    if let Dialog::Zugang { name, .. } = &mut h.state_mut().0.sicht.dialog {
+        *name = "web 02".into();
+    }
+    h.run();
+    assert!(
+        h.query_by_label("Nur a–z, 0–9, - und _, höchstens 40 Zeichen.")
+            .is_some(),
+        "ungültiger Name muss sichtbar sein"
+    );
+    // Ausfüllen wie im Fenster und speichern.
+    if let Dialog::Zugang { name, eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        *name = "web-02".into();
+        eingaben[0].wert = "root".into();
+        eingaben[1].wert = "web-02.example".into();
+        eingaben[2].wert = "22".into();
+        eingaben[3].wert = "geheim".into();
+    }
+    h.run();
+    assert!(
+        h.query_by_label("Nur a–z, 0–9, - und _, höchstens 40 Zeichen.")
+            .is_none(),
+        "mit gültigem Namen ist der Hinweis weg"
+    );
+    h.get_by_role_and_label(Role::Button, "Speichern").click();
+    h.run();
+    let aktionen = h.state().1.aktionen.borrow();
+    let Some(Aktion::ZugangSpeichern {
+        eintrag,
+        name,
+        lokal,
+        geheim,
+    }) = aktionen.last()
+    else {
+        panic!("kein ZugangSpeichern: {aktionen:?}");
+    };
+    assert_eq!(eintrag.als_str(), "ssh");
+    assert_eq!(name, "web-02");
+    assert_eq!(
+        lokal.get("host").map(String::as_str),
+        Some("web-02.example")
+    );
+    assert_eq!(
+        geheim.get("anmelde_passwort").map(String::as_str),
+        Some("geheim"),
+        "das Geheimnis geht in den Tresor, nicht ins Profil"
+    );
+    assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+#[test]
+fn zugang_bearbeiten_hat_festen_namen_und_loescht_ein_geheimnis() {
+    let mut h = fenster(
+        modell(verbunden(), vec![zwei_zugaenge()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Verbindungen (2)")
+        .click();
+    h.run();
+    // „Bearbeiten“ gibt es nur in den Zeilen; die erste ist db-01.
+    h.get_all_by_role_and_label(Role::Button, "Bearbeiten")
+        .next()
+        .expect("Knopf der ersten Zeile")
+        .click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Zugang {
+            name,
+            neu,
+            eingaben,
+            ..
+        } => {
+            assert!(!*neu, "bearbeiten legt nichts an");
+            assert_eq!(name, "db-01", "der Name steht fest");
+            assert_eq!(eingaben[0].wert, "admin", "Werte sind vorbelegt");
+            assert!(eingaben[3].gesetzt, "das Geheimnis ist gesetzt");
+            assert_eq!(eingaben[3].wert, "", "Geheimes wird nie angezeigt");
+        }
+        anderer => panic!("kein Zugangs-Dialog: {anderer:?}"),
+    }
+    assert!(
+        h.query_by_label("Passwort der Anmeldung · Gesetzt – leer lassen behält es.")
+            .is_some(),
+        "der Hinweis am Geheimfeld fehlt"
+    );
+    // „Löschen“ am Geheimfeld entfernt genau dieses Geheimnis.
+    let knopf = h
+        .get_all_by_role_and_label(Role::Button, "Geheimnis löschen")
+        .next()
+        .expect("Knopf am Geheimfeld");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Geheimnis löschen“"
+    );
+    h.get_all_by_role_and_label(Role::Button, "Geheimnis löschen")
+        .next()
+        .expect("Knopf am Geheimfeld")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ZugangGeheimLoeschen {
+                eintrag: EintragId::neu("ssh"),
+                name: "db-01".into(),
+                feld: "anmelde_passwort".into(),
+            }),
+        "der Klick muss das Geheimnis löschen: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+    // Der Dialog bleibt offen, das Feld gilt als nicht mehr gesetzt.
+    match &h.state().0.sicht.dialog {
+        Dialog::Zugang { eingaben, .. } => {
+            assert!(!eingaben[3].gesetzt);
+            assert!(!eingaben[4].gesetzt);
+        }
+        anderer => panic!("der Dialog ist zugegangen: {anderer:?}"),
+    }
+}
+
+#[test]
+fn zugang_loeschen_fragt_nach() {
+    let mut h = fenster(
+        modell(verbunden(), vec![zwei_zugaenge()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Verbindungen (2)")
+        .click();
+    h.run();
+    h.get_all_by_role_and_label(Role::Button, "Löschen")
+        .next()
+        .expect("Knopf der ersten Zeile")
+        .click();
+    h.run();
+    assert!(
+        matches!(
+            &h.state().0.sicht.dialog,
+            Dialog::ZugangEntfernen { name, .. } if name == "db-01"
+        ),
+        "vor dem Löschen kommt eine Rückfrage: {:?}",
+        h.state().0.sicht.dialog
+    );
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .iter()
+            .any(|a| matches!(a, Aktion::ZugangLoeschen { .. })),
+        "ohne Bestätigung wird nichts gelöscht"
+    );
+    h.get_all_by_role_and_label(Role::Button, "Löschen")
+        .last()
+        .expect("Knopf im Dialog")
+        .click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::ZugangLoeschen {
+            eintrag: EintragId::neu("ssh"),
+            name: "db-01".into(),
+        }));
+    assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+/// Die Zugangsliste und der Dialog (`fenster-{dark,light}-zugaenge.png`).
+#[test]
+fn bildschirmfoto_der_zugaenge() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in [Thema::Dunkel, Thema::Hell] {
+        let mut h = fenster(
+            modell(verbunden(), vec![zwei_zugaenge()]),
+            Some(Seite::Tools),
+            thema,
+            (1200.0, 820.0),
+        );
+        h.run();
+        h.get_by_role_and_label(Role::Button, "Verbindungen (2)")
+            .click();
+        h.run();
+        h.get_all_by_role_and_label(Role::Button, "Bearbeiten")
+            .next()
+            .expect("Knopf der ersten Zeile")
+            .click();
+        h.run();
+        assert!(
+            h.query_by_label("Passwort der Anmeldung · Gesetzt – leer lassen behält es.")
+                .is_some(),
+            "{}: der Dialog zeigt den Geheimnis-Hinweis nicht",
+            thema.name()
+        );
+        let bild = h.render().expect("zeichnen (wgpu)");
+        bild.save(ziel.join(format!("fenster-{}-zugaenge.png", thema.name())))
+            .expect("Bild schreibbar");
+    }
 }
