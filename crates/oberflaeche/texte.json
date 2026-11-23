@@ -304,8 +304,12 @@
     "en": "Add to .vscode/mcp.json or the user mcp.json:"
   },
   "agenten.ort.hermes": {
-    "de": "In ~/.hermes/config.yaml unter mcp_servers: eintragen:",
-    "en": "Add to ~/.hermes/config.yaml under mcp_servers:"
+    "de": "Im Terminal ausführen – die Rückfrage nach Anmeldung mit y beantworten:",
+    "en": "Run in a terminal – answer y when asked about authentication:"
+  },
+  "agenten.ort.hermes_token": {
+    "de": "Bei „API key / Bearer token“ einfügen (Hermes legt es in ~/.hermes/.env ab):",
+    "en": "Paste at “API key / Bearer token” (Hermes stores it in ~/.hermes/.env):"
   },
   "agenten.ort.hermes_test": {
     "de": "Danach prüfen:",

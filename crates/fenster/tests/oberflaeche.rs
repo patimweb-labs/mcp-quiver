@@ -388,7 +388,7 @@ fn agent_koppeln_zeigt_token_und_endpunkt() {
     assert!(h
         .query_by_label("Das Token wird nur einmal angezeigt.")
         .is_some());
-    let hermes = quiver_fenster::logik::schnipsel_hermes(ENDPUNKT, TOKEN);
+    let hermes = quiver_fenster::logik::schnipsel_hermes(ENDPUNKT);
     assert!(
         h.query_by_label(&hermes).is_some(),
         "Hermes-Schnipsel fehlt"

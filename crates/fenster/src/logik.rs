@@ -261,11 +261,11 @@ pub fn schnipsel_copilot(endpunkt: &str, token: &str) -> String {
     )
 }
 
-/// Der Eintrag für Hermes (`~/.hermes/config.yaml`, unter `mcp_servers:`).
-pub fn schnipsel_hermes(endpunkt: &str, token: &str) -> String {
-    format!(
-        "  quiver:\n    url: {endpunkt}\n    headers:\n      Authorization: Bearer {token}\n    enabled: true"
-    )
+/// Der Befehl für Hermes. `--auth header` fragt das Token verdeckt ab und legt
+/// es in `~/.hermes/.env` (`MCP_QUIVER_API_KEY`) ab; in `config.yaml` steht nur
+/// der Verweis darauf (geprüft im Quelltext von Hermes 0.21, `mcp_config.py`).
+pub fn schnipsel_hermes(endpunkt: &str) -> String {
+    format!("hermes mcp add quiver --url {endpunkt} --auth header")
 }
 
 /// Dasselbe als JSON für andere MCP-Clients.
@@ -284,8 +284,8 @@ pub struct Schnipsel {
     pub text: String,
 }
 
-/// Die Schnipsel für eine Agent-Art. Hermes bekommt zwei: den Eintrag und den
-/// Prüfbefehl danach. „Andere" bekommt das allgemeine JSON.
+/// Die Schnipsel für eine Agent-Art. Hermes bekommt drei: den Befehl, das
+/// Token für seine Rückfrage und den Prüfbefehl danach. „Andere" bekommt das allgemeine JSON.
 pub fn schnipsel(sprache: Sprache, art: &AgentArt, endpunkt: &str, token: &str) -> Vec<Schnipsel> {
     let ort = |schluessel: &str| t(sprache, schluessel);
     match art {
@@ -308,7 +308,11 @@ pub fn schnipsel(sprache: Sprache, art: &AgentArt, endpunkt: &str, token: &str) 
         AgentArt::Hermes => vec![
             Schnipsel {
                 ort: ort("agenten.ort.hermes"),
-                text: schnipsel_hermes(endpunkt, token),
+                text: schnipsel_hermes(endpunkt),
+            },
+            Schnipsel {
+                ort: ort("agenten.ort.hermes_token"),
+                text: token.to_string(),
             },
             Schnipsel {
                 ort: ort("agenten.ort.hermes_test"),
@@ -764,8 +768,8 @@ mod tests {
             assert!(!liste.is_empty(), "{art:?} ohne Schnipsel");
             for s in &liste {
                 assert!(!s.ort.is_empty(), "{art:?} ohne Ort");
-                // Der Prüfbefehl für Hermes trägt weder Endpunkt noch Token.
-                if s.text != "hermes mcp test quiver" {
+                // Bei Hermes verteilen sich Endpunkt und Token auf drei Schnipsel.
+                if !matches!(art, AgentArt::Hermes) {
                     assert!(s.text.contains("abc123"), "{art:?} ohne Token: {}", s.text);
                     assert!(s.text.contains(e), "{art:?} ohne Endpunkt: {}", s.text);
                 }
@@ -786,8 +790,13 @@ mod tests {
             schnipsel_copilot(e, t)
         );
         let hermes = schnipsel(AgentArt::Hermes);
-        assert_eq!(hermes.len(), 2, "Eintrag und Prüfbefehl");
-        assert_eq!(hermes[1].text, "hermes mcp test quiver");
+        assert_eq!(hermes.len(), 3, "Befehl, Token und Prüfbefehl");
+        assert_eq!(
+            hermes[0].text,
+            "hermes mcp add quiver --url http://127.0.0.1:8741/mcp --auth header"
+        );
+        assert_eq!(hermes[1].text, "abc123");
+        assert_eq!(hermes[2].text, "hermes mcp test quiver");
         assert_eq!(
             schnipsel(AgentArt::Andere(String::new()))[0].text,
             schnipsel_json(e, t)
