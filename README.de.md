@@ -1,0 +1,55 @@
+# mcp-quiver
+
+**English:** [README.md](README.md)
+
+> **Stand: Konzept.** Noch nichts zu installieren – das Repo enthält bisher die
+> Spezifikation ([SPEC.md](SPEC.md)).
+
+**Ein Köcher voller Tools für alle deine Agenten.** mcp-quiver ist eine zentrale
+Bibliothek von [MCP](https://modelcontextprotocol.io/)-Tools und ein kleiner
+Client auf jedem Gerät. Admins legen in einer Weboberfläche fest, welche Tools
+eine Gruppe bekommt. Der Client installiert und konfiguriert sie, und jeder
+Agent auf dem Gerät – pi, Hermes und weitere – spricht mit genau einem
+Endpunkt. Anmeldungen passieren einmal, im Client. Agenten sehen nie ein
+Passwort oder ein Token.
+
+Reines Rust: Server, Client und das Client-Fenster. Die Admin-Oberfläche ist
+Vue und sieht genauso aus wie der Client.
+
+## Die Idee
+
+```
+ pi-agent ──┐                        ┌──────────── quiver-server ────────────┐
+ Hermes   ──┼──► quiver (Client) ◄──►│ Bibliothek: MCP-Tools (eigene+fremde)│
+ …        ──┘    ein Endpunkt        │ Zuweisung über Entra-ID-Gruppen       │
+                 führt Tools aus     │ Admin-Oberfläche (Vue)                │
+                 hält die Logins     └───────────────────────────────────────┘
+```
+
+- **Bibliothek auf dem Server.** Eigene Tools (in Rust geschrieben) und fremde
+  MCP-Server in einem Katalog, versioniert, auf Basis des offiziellen
+  `server.json`-Formats der MCP Registry.
+- **Zuweisung über Gruppen.** Ein Admin weist Tool-Sätze Gruppen in Microsoft
+  Entra ID zu. Jedes Gerät bekommt, was die Gruppen seines Users erlauben –
+  automatisch installiert, aktualisiert und entfernt.
+- **Konfiguration in Schichten.** Der Server pusht, was er weiß (Endpunkte,
+  Tenant, Vorgaben). Der Client ergänzt, was nur das Gerät weiß (lokale Pfade,
+  persönliche Geheimnisse im Schlüsselbund des Betriebssystems).
+- **Authentifizierung an einer Stelle.** Agent → Client und Client → Server,
+  sonst nichts. Der Client fügt Zugangsdaten bei jedem Tool-Aufruf ein. Der
+  Agent sieht immer nur Tools.
+- **Microsoft zuerst.** Der erste Tool-Satz deckt Microsoft 365 über Microsoft
+  Graph ab und handelt mit den Rechten des angemeldeten Users. So gilt das
+  Rollen- und Rechtemodell von Microsoft unverändert.
+- **Jeder Agent.** Agenten, die MCP sprechen, verbinden sich direkt. Für alle
+  anderen gibt es Plugins, geschrieben in Rust (pi über ein Node-Binding,
+  Hermes über ein Python-Binding).
+
+## Plattformen
+
+- **Server:** ein Container-Image (Docker, Azure Container Apps, überall).
+- **Client:** macOS, Windows und Linux.
+
+## Lizenz
+
+[MIT](LICENSE)
