@@ -55,3 +55,10 @@ Fenster schließen beendet den Kern sauber (`kern.beenden()`).
 - Bildschirmfotos: mit `QUIVER_BILDER=docs/bilder` erzeugt der Test
   `docs/bilder/fenster-{dark,light}-{tools,agenten,verbindung}.png`.
 - Prüfbefehl grün. `cargo run -p quiver-fenster` öffnet das Fenster.
+
+## Nachtrag nach Aufgabe 02 und 04
+
+- `bausteine::marke(ui, f)` hat zwei Parameter (kein Thema mehr).
+- Für Checkboxen den Baustein `bausteine::haken` nehmen (egui setzt dort sonst keinen Hand-Cursor).
+- Die echte Fassade steht in `crates/client/src/lib.rs` – deren Signaturen gelten.
+- Beim Start ohne Server läuft der zuletzt gespeicherte Soll-Zustand sofort an.
