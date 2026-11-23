@@ -50,6 +50,22 @@ Vue und sieht genauso aus wie der Client.
 - **Server:** ein Container-Image (Docker, Azure Container Apps, überall).
 - **Client:** macOS, Windows und Linux.
 
+## Entwicklung
+
+```bash
+# alles prüfen (vor jedem Commit)
+cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace
+```
+
+Die Token-Dateien in `tokens/` sind die einzige Quelle für Farben, Maße und
+Schriften — für das Client-Fenster (egui) und für die Admin-Oberfläche (Vue).
+Das CSS der Admin-Oberfläche wird daraus erzeugt und eingecheckt, nie von Hand
+geändert:
+
+```bash
+cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
+```
+
 ## Lizenz
 
 [MIT](LICENSE)
