@@ -1,0 +1,16 @@
+[package]
+name = "quiver-fenster"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "mcp-quiver: Client-Fenster (egui)"
+
+[[bin]]
+name = "quiver"
+path = "src/main.rs"
+
+[dependencies]
+quiver-client.workspace = true
+quiver-oberflaeche.workspace = true

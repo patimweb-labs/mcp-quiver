@@ -1,0 +1,5 @@
+target/
+admin/node_modules/
+admin/dist/
+*.db
+.env

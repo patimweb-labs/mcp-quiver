@@ -1,0 +1,15 @@
+[package]
+name = "quiver-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "mcp-quiver: Datenmodell und Regeln (Bibliothek, Sätze, Gruppen, Soll/Ist) — keine I/O"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true

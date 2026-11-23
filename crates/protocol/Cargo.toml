@@ -1,0 +1,15 @@
+[package]
+name = "quiver-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "mcp-quiver: Vertrag zwischen Server, Client und Admin-Oberfläche"
+
+[dependencies]
+quiver-domain.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,8 @@
+[package]
+name = "quiver-oberflaeche"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "mcp-quiver: Bausatz für das Client-Fenster — Themes aus Tokens, Texte, Schriften, Bausteine"

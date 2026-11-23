@@ -1,0 +1,14 @@
+[package]
+name = "quiver-bibliothek"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "mcp-quiver: server.json (MCP Registry) lesen und schreiben, quiver-Felder unter _meta"
+
+[dependencies]
+quiver-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
