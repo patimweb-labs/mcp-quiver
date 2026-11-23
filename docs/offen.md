@@ -7,6 +7,8 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Abgelaufene Codes werden nur beim Einlösen entfernt, kein Aufräumen im Hintergrund.
 
 ## Client
+- [ ] Im Fenster-Modus reagiert der Client nicht auf SIGINT (Strg+C); nur SIGTERM beendet ihn.
+- [ ] Schnipsel für OpenCode, GitHub Copilot und die Header-Form von Hermes sind nicht gegen die CLI geprüft (nur Doku bzw. Quelltext).
 - [ ] Ein-Instanz-Port liest die Zeile ohne Längengrenze (nur lokal erreichbar).
 - [ ] Ungetestet: Prozess stirbt → `Fehler` + Neustart mit Backoff; `Remote`-Einträge; Start ohne Server nach Neustart.
 - [ ] `tools/list_changed` wird auch ohne echte Änderung der Tool-Liste geschickt.
