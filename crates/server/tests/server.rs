@@ -256,6 +256,7 @@ fn eintrag(id: &str) -> Eintrag {
             quelle: Quelle::Server,
             pflicht: true,
             standard: None,
+            link: None,
         }],
     }
 }

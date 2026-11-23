@@ -103,6 +103,34 @@ pub struct Feld {
     pub pflicht: bool,
     #[serde(default)]
     pub standard: Option<String>,
+    /// Optionaler Hilfe-Link neben dem Feld, z. B. „Token in Outline erstellen“.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<FeldLink>,
+}
+
+/// Ein Link, den das Fenster neben einem Feld als Knopf zeigt und im Browser öffnet.
+/// `url` darf Platzhalter `${feld}` anderer Felder enthalten; der Knopf erscheint
+/// erst, wenn alle verwendeten Felder einen Wert haben ([`link_aufloesen`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeldLink {
+    pub text: String,
+    pub url: String,
+}
+
+/// Setzt die Werte in die Link-Adresse ein. `None`, solange ein verwendetes Feld
+/// fehlt oder das Ergebnis nicht mit `http://` oder `https://` beginnt.
+/// Ein Schrägstrich am Ende eines Werts wird vor dem Einsetzen entfernt,
+/// damit `${url}/settings` auch bei `https://wiki.example/` passt.
+pub fn link_aufloesen(link: &FeldLink, werte: &Werte) -> Option<String> {
+    let bereinigt: Werte = werte
+        .iter()
+        .map(|(k, v)| (k.clone(), v.trim().trim_end_matches('/').to_string()))
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    let url = ersetzen(&link.url, &bereinigt);
+    let fertig = !url.contains("${");
+    let sicher = url.starts_with("https://") || url.starts_with("http://");
+    (fertig && sicher).then_some(url)
 }
 
 fn wahr() -> bool {

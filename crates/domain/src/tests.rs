@@ -7,6 +7,7 @@ fn feld(name: &str, quelle: Quelle) -> Feld {
         quelle,
         pflicht: true,
         standard: None,
+        link: None,
     }
 }
 
@@ -223,4 +224,21 @@ fn aktiv_fehlt_in_alten_daten_gilt_als_an() {
     let json = r#"{"id":"x","version":"1","titel":"X","herkunft":"eigen","laufzeit":{"art":"remote","url":"u"}}"#;
     let e: Eintrag = serde_json::from_str(json).unwrap();
     assert!(e.aktiv);
+}
+
+#[test]
+fn link_wird_aus_feldern_gebaut() {
+    let link = FeldLink {
+        text: "Token in Outline erstellen".into(),
+        url: "${url}/settings/api-and-access".into(),
+    };
+    let leer = Werte::new();
+    assert_eq!(link_aufloesen(&link, &leer), None, "ohne URL kein Knopf");
+    let w: Werte = [("url".to_string(), " https://wiki.example.de/ ".to_string())].into();
+    assert_eq!(
+        link_aufloesen(&link, &w).as_deref(),
+        Some("https://wiki.example.de/settings/api-and-access")
+    );
+    let boese: Werte = [("url".to_string(), "javascript:alert(1)".to_string())].into();
+    assert_eq!(link_aufloesen(&link, &boese), None, "nur http(s)");
 }

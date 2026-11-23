@@ -260,6 +260,7 @@ fn feld(name: &str, quelle: Quelle) -> Feld {
         quelle,
         pflicht: true,
         standard: None,
+        link: None,
     }
 }
 

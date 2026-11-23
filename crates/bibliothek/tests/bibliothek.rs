@@ -71,6 +71,7 @@ fn npm_mit_geheimer_variable_und_argumenten() {
             quelle: Quelle::Geheim,
             pflicht: true,
             standard: None,
+            link: None,
         }]
     );
 }
@@ -141,6 +142,7 @@ fn nur_remote_mit_header() {
             quelle: Quelle::Geheim,
             pflicht: true,
             standard: None,
+            link: None,
         }]
     );
 }
@@ -186,6 +188,7 @@ fn rundlauf_importieren_exportieren() {
                 quelle: Quelle::Geheim,
                 pflicht: true,
                 standard: None,
+                link: None,
             },
             Feld {
                 name: "STADT".into(),
@@ -193,6 +196,7 @@ fn rundlauf_importieren_exportieren() {
                 quelle: Quelle::Client,
                 pflicht: false,
                 standard: Some("Berlin".into()),
+                link: None,
             },
         ],
     };

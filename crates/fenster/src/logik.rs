@@ -604,6 +604,7 @@ mod tests {
                     quelle: Quelle::Client,
                     pflicht: true,
                     standard: None,
+                    link: None,
                 },
                 Feld {
                     name: "SCHLUESSEL".into(),
@@ -611,6 +612,7 @@ mod tests {
                     quelle: Quelle::Geheim,
                     pflicht: false,
                     standard: None,
+                    link: None,
                 },
             ],
             lokale_werte: Werte::from([("PFAD".to_string(), "/tmp".to_string())]),

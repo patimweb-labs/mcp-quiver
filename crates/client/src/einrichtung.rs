@@ -110,6 +110,7 @@ mod tests {
             quelle,
             pflicht: true,
             standard: None,
+            link: None,
         }
     }
 
