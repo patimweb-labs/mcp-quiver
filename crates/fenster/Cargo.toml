@@ -19,11 +19,14 @@ quiver-oberflaeche.workspace = true
 # `clipboard` ist zusätzlich zu den in der Aufgabe genannten Merkmalen dabei:
 # ohne es landet „Kopieren" (Endpunkt, Token, Schnipsel) nicht in der
 # Zwischenablage des Systems.
+# „links": ohne es führt egui-winit `ctx.open_url` nicht aus – der Hilfe-Link
+# neben Feldern („Token in Outline erstellen") öffnete dann keinen Browser.
 eframe = { version = "0.37", default-features = false, features = [
     "default_fonts",
     "glow",
     "accesskit",
     "clipboard",
+    "links",
     "wayland",
     "x11",
 ] }
