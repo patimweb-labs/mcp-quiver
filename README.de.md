@@ -110,6 +110,19 @@ auf der Seite *Verbindung*; ob er an ist, wird aus dem System gelesen
 (LaunchAgent, Registry-Wert oder `.desktop`-Datei), nicht im Fenster gemerkt.
 Der Autostart startet immer mit `--hintergrund`.
 
+Agenten verbinden sich über den lokalen Endpunkt und werden **einmal** im
+Fenster gekoppelt (*Agenten* → *Agent koppeln*). Die Art bestimmt den Schnipsel:
+pi, Claude Code, OpenCode, GitHub Copilot und Hermes bringen jeweils ihren
+fertigen Text mit; das Token lässt sich jederzeit erneuern — das alte gilt sofort
+nicht mehr.
+
+![Koppeln-Dialog](docs/bilder/fenster-dark-koppeln.png)
+
+Auf der Admin-Seite lässt sich ein Eintrag abschalten, ohne ihn zu löschen
+(*Aktiv* im Bearbeiten-Dialog oder der Schalter in der Zeile). Er bleibt in
+Bibliothek und Sätzen, läuft aber auf keinem Gerät; der Client beendet ihn beim
+nächsten Abgleich.
+
 Umgebung (alles optional):
 
 | Variable | Bedeutung |
@@ -137,6 +150,7 @@ deshalb unterscheiden sich die Bilder nur in der Schriftglättung:
 
 ![Client-Fenster, dunkel](docs/bilder/fenster-dark-tools.png)
 ![Client-Fenster, hell](docs/bilder/fenster-light-tools.png)
+![Bibliothek der Verwaltung, dunkel](docs/bilder/admin-dark-bibliothek.png)
 
 ## Lizenz
 

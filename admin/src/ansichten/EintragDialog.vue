@@ -11,6 +11,7 @@ import {
   WpIconButton,
   WpInput,
   WpSelect,
+  WpSwitch,
   WpTextarea,
   WpToggleGroup,
 } from "@weppelmann/components";
@@ -252,6 +253,18 @@ async function speichern(): Promise<void> {
             @update:model-value="(wert) => (entwurf.version = wert)"
           />
         </template>
+      </Feld>
+
+      <Feld
+        beschriftung="Aktiv"
+        hinweis="Abgeschaltete Einträge bleiben in Bibliothek und Sätzen, laufen aber auf keinem Gerät. Der Client beendet sie beim nächsten Abgleich."
+        :benennt="false"
+      >
+        <WpSwitch
+          :model-value="entwurf.aktiv"
+          label="Auf Geräten ausführen"
+          @update:model-value="(wert) => (entwurf.aktiv = wert)"
+        />
       </Feld>
 
       <Feld

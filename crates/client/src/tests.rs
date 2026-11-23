@@ -185,3 +185,28 @@ fn agent_wird_ueber_den_token_hash_gefunden() {
     assert_eq!(agent_fuer(&agenten, "falsch"), None);
     assert_eq!(agent_fuer(&[], &token), None);
 }
+
+#[test]
+fn jeder_agent_nur_einmal() {
+    let agenten = vec![
+        Agent {
+            id: "a1".into(),
+            name: "pi".into(),
+            token_hash: "00".into(),
+        },
+        Agent {
+            id: "a2".into(),
+            name: "Claude Code".into(),
+            token_hash: "01".into(),
+        },
+    ];
+    assert!(name_vergeben(&agenten, "pi"), "gleicher Name");
+    assert!(name_vergeben(&agenten, "  PI  "), "Groß und Leerzeichen");
+    assert!(name_vergeben(&agenten, "claude code"), "ohne Groß/Klein");
+    assert!(!name_vergeben(&agenten, "hermes"), "neuer Name");
+    assert!(
+        !name_vergeben(&agenten, "   "),
+        "der leere Name wird vorher abgefangen"
+    );
+    assert!(!name_vergeben(&[], "pi"), "noch keiner gekoppelt");
+}

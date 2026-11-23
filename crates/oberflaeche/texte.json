@@ -240,20 +240,12 @@
     "en": "An agent connects with the endpoint and the token from “Pair agent”."
   },
   "agenten.koppeln_text": {
-    "de": "Ein Name für dich. Danach zeigt das Fenster Endpunkt, Token und zwei fertige Schnipsel.",
-    "en": "A name for you. Afterwards the window shows endpoint, token and two ready-made snippets."
+    "de": "Die Art bestimmt den Namen und den fertigen Schnipsel. Jeden Agenten gibt es nur einmal.",
+    "en": "The kind decides the name and the ready-made snippet. Every agent exists only once."
   },
   "agenten.token_titel": {
     "de": "Agent {} gekoppelt",
     "en": "Agent {} paired"
-  },
-  "agenten.schnipsel_pi": {
-    "de": "Für pi",
-    "en": "For pi"
-  },
-  "agenten.schnipsel_json": {
-    "de": "Für andere MCP-Clients (JSON)",
-    "en": "For other MCP clients (JSON)"
   },
   "agenten.entfernen_titel": {
     "de": "Agent entfernen",
@@ -270,6 +262,58 @@
   "agenten.koppeln_jetzt": {
     "de": "Koppeln",
     "en": "Pair"
+  },
+  "agenten.art_titel": {
+    "de": "Art",
+    "en": "Kind"
+  },
+  "agenten.art_andere": {
+    "de": "Andere",
+    "en": "Other"
+  },
+  "agenten.schon_gekoppelt": {
+    "de": "schon gekoppelt",
+    "en": "already paired"
+  },
+  "agenten.name_doppelt": {
+    "de": "Agent {} ist schon gekoppelt.",
+    "en": "Agent {} is already paired."
+  },
+  "agenten.token_erneuern": {
+    "de": "Token erneuern",
+    "en": "Renew token"
+  },
+  "agenten.token_erneuern_titel": {
+    "de": "Token erneuern",
+    "en": "Renew token"
+  },
+  "agenten.token_erneuern_text": {
+    "de": "{} bekommt ein neues Token. Sitzungen mit dem alten werden sofort abgewiesen.",
+    "en": "{} gets a new token. Sessions using the old one are rejected immediately."
+  },
+  "agenten.ort.shell": {
+    "de": "In der Shell ausführen:",
+    "en": "Run in the shell:"
+  },
+  "agenten.ort.opencode": {
+    "de": "In opencode.json eintragen:",
+    "en": "Add to opencode.json:"
+  },
+  "agenten.ort.copilot": {
+    "de": "In .vscode/mcp.json oder der Benutzer-mcp.json eintragen:",
+    "en": "Add to .vscode/mcp.json or the user mcp.json:"
+  },
+  "agenten.ort.hermes": {
+    "de": "In ~/.hermes/config.yaml unter mcp_servers: eintragen:",
+    "en": "Add to ~/.hermes/config.yaml under mcp_servers:"
+  },
+  "agenten.ort.hermes_test": {
+    "de": "Danach prüfen:",
+    "en": "Then verify:"
+  },
+  "agenten.ort.andere": {
+    "de": "In der Konfiguration des Agenten eintragen (JSON):",
+    "en": "Add to the agent's configuration (JSON):"
   },
   "tray.verbunden": {
     "de": "Verbunden",

@@ -680,6 +680,98 @@ pub fn haken(ui: &mut egui::Ui, an: &mut bool, beschriftung: &str) -> egui::Resp
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Eine Zeile einer Auswahl (Radio): Punkt, Name und optional ein Hinweis
+/// rechts. `waehlbar == false` graut die Zeile aus — sie ist dann nicht zu
+/// klicken und trägt den Hinweis als Text. Hand-Cursor und Name für den
+/// Screenreader kommen von hier (AGENTS.md §2.12).
+pub fn auswahlzeile(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    name: &str,
+    hinweis: Option<&str>,
+    gewaehlt: bool,
+    waehlbar: bool,
+) -> egui::Response {
+    let hoehe = thema::SIZE_CONTROL_MD;
+    let breite = ui.available_width();
+    let (rect, antwort) = ui.allocate_exact_size(
+        egui::vec2(breite, hoehe),
+        if waehlbar {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let (schriftfarbe, punktfarbe) = if !waehlbar {
+        (f.text_muted, f.border_strong)
+    } else if gewaehlt {
+        (f.text_default, f.accent_default)
+    } else {
+        (f.text_default, f.border_strong)
+    };
+    if ui.is_rect_visible(rect) {
+        if waehlbar && antwort.hovered() {
+            ui.painter().rect_filled(rect, 0.0, f.bg_hover);
+        }
+        let punkt = thema::FONT_SIZE_MD;
+        let punkt_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + thema::SPACE_2 + punkt / 2.0, rect.center().y),
+            egui::vec2(punkt, punkt),
+        );
+        ui.painter().circle_stroke(
+            punkt_rect.center(),
+            punkt / 2.0 - thema::SIZE_BORDER,
+            egui::Stroke::new(thema::SIZE_BORDER, punktfarbe),
+        );
+        if gewaehlt {
+            ui.painter().circle_filled(
+                punkt_rect.center(),
+                punkt / 2.0 - thema::SPACE_1,
+                punktfarbe,
+            );
+        }
+        // Name und Hinweis sind echte Beschriftungen — der Screenreader liest
+        // sie, auch wenn die Zeile ausgegraut ist.
+        let text_rect = egui::Rect::from_min_max(
+            egui::pos2(punkt_rect.right() + thema::SPACE_2, rect.top()),
+            egui::pos2(rect.right() - thema::SPACE_2, rect.bottom()),
+        );
+        let mut inhalt = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(text_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        inhalt.add(
+            egui::Label::new(
+                RichText::new(name)
+                    .font(egui::FontId::proportional(thema::FONT_SIZE_MD))
+                    .color(schriftfarbe),
+            )
+            .selectable(false),
+        );
+        if let Some(hinweis) = hinweis {
+            inhalt.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(hinweis)
+                            .font(egui::FontId::proportional(thema::FONT_SIZE_SM))
+                            .color(f.text_muted),
+                    )
+                    .selectable(false),
+                );
+            });
+        }
+    }
+    antwort.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::RadioButton, waehlbar, gewaehlt, name)
+    });
+    if waehlbar {
+        antwort.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        antwort
+    }
+}
+
 /// Zustand als kleines Schild: Quadrat in der Statusfarbe, Text daneben.
 pub fn status(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str) -> egui::Response {
     // Eine Zeile ist so hoch wie eine Textzeile — nicht wie ein Bedienelement

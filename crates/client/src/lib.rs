@@ -527,6 +527,16 @@ impl Innen {
     }
 }
 
+/// Ist dieser Name schon vergeben? Vergleich ohne Groß-/Kleinschreibung und
+/// ohne Leerzeichen am Rand – „PI“ und „ pi “ sind derselbe Agent.
+fn name_vergeben(agenten: &[profil::Agent], name: &str) -> bool {
+    let gesucht = name.trim().to_lowercase();
+    !gesucht.is_empty()
+        && agenten
+            .iter()
+            .any(|agent| agent.name.trim().to_lowercase() == gesucht)
+}
+
 /// Der Agent zu einem Token, gesucht über den Hash (konstanter Vergleich).
 fn agent_fuer(agenten: &[profil::Agent], token: &str) -> Option<String> {
     let hash = hilfen::hash(token);
@@ -942,10 +952,19 @@ impl Kern {
 
     /// Einen Agenten koppeln. Das Token kommt **einmal** zurück; gespeichert
     /// wird nur sein Hash.
+    ///
+    /// Jeder Agent nur einmal: ein Name, den es schon gibt (ohne Groß-/
+    /// Kleinschreibung und ohne Leerzeichen am Rand), wird abgelehnt. Mehrere
+    /// *Sitzungen* desselben Agenten sind davon nicht betroffen – sie teilen
+    /// sich das eine Token.
     pub async fn agent_koppeln(&self, name: &str) -> anyhow::Result<String> {
         let name = name.trim();
         if name.is_empty() {
             anyhow::bail!("Name fehlt");
+        }
+        let vergeben = name_vergeben(&self.innen.stand().agenten, name);
+        if vergeben {
+            anyhow::bail!("Agent {name} ist schon gekoppelt");
         }
         let token = hilfen::token_erzeugen();
         let id = hilfen::kennung_erzeugen();
@@ -956,6 +975,25 @@ impl Kern {
                 name: name.to_string(),
                 token_hash: hilfen::hash(&token),
             });
+        }
+        self.innen.speichern();
+        self.innen.modell_schicken();
+        Ok(token)
+    }
+
+    /// Neues Token für einen gekoppelten Agenten. Das alte gilt sofort nicht
+    /// mehr: offene Sitzungen werden beim nächsten Aufruf mit 401 abgewiesen.
+    pub async fn agent_token_erneuern(&self, id: &str) -> anyhow::Result<String> {
+        let token = hilfen::token_erzeugen();
+        let hash = hilfen::hash(&token);
+        {
+            let mut stand = self.innen.stand();
+            let agent = stand
+                .agenten
+                .iter_mut()
+                .find(|agent| agent.id == id)
+                .ok_or_else(|| anyhow::anyhow!("Agent {id} ist nicht gekoppelt"))?;
+            agent.token_hash = hash;
         }
         self.innen.speichern();
         self.innen.modell_schicken();

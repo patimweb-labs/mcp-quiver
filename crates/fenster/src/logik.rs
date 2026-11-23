@@ -233,9 +233,39 @@ pub fn werte_splitten(eingaben: &[Feldeingabe]) -> (Werte, Werte) {
     (lokal, geheim)
 }
 
-/// Der Befehl für pi 1.5 (`pi mcp add --help`: `--header <KEY=VALUE>`).
+/// Der Befehl für pi 1.5 (`pi mcp add --help`: `--url <url>`, `--header <KEY=VALUE>`).
 pub fn schnipsel_pi(endpunkt: &str, token: &str) -> String {
     format!("pi mcp add quiver --url {endpunkt} --header \"Authorization=Bearer {token}\"")
+}
+
+/// Der Befehl für Claude Code (`claude mcp add --help`: `--transport http`,
+/// `--header <header>`).
+pub fn schnipsel_claude(endpunkt: &str, token: &str) -> String {
+    format!(
+        "claude mcp add --transport http quiver {endpunkt} --header \"Authorization: Bearer {token}\""
+    )
+}
+
+/// Die Einstellung für OpenCode (`opencode.json`, Schlüssel `mcp`).
+pub fn schnipsel_opencode(endpunkt: &str, token: &str) -> String {
+    format!(
+        "{{\"mcp\":{{\"quiver\":{{\"type\":\"remote\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer {token}\"}}}}}}}}"
+    )
+}
+
+/// Die Einstellung für GitHub Copilot in VS Code (`.vscode/mcp.json` bzw. die
+/// Benutzer-`mcp.json`, Schlüssel `servers`).
+pub fn schnipsel_copilot(endpunkt: &str, token: &str) -> String {
+    format!(
+        "{{\"servers\":{{\"quiver\":{{\"type\":\"http\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer {token}\"}}}}}}}}"
+    )
+}
+
+/// Der Eintrag für Hermes (`~/.hermes/config.yaml`, unter `mcp_servers:`).
+pub fn schnipsel_hermes(endpunkt: &str, token: &str) -> String {
+    format!(
+        "  quiver:\n    url: {endpunkt}\n    headers:\n      Authorization: Bearer {token}\n    enabled: true"
+    )
 }
 
 /// Dasselbe als JSON für andere MCP-Clients.
@@ -243,6 +273,175 @@ pub fn schnipsel_json(endpunkt: &str, token: &str) -> String {
     format!(
         "{{\"mcpServers\":{{\"quiver\":{{\"type\":\"http\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer {token}\"}}}}}}}}"
     )
+}
+
+/// Ein Schnipsel zum Einrichten: wohin er gehört und was zu kopieren ist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Schnipsel {
+    /// Die Zeile, die sagt, wo man ihn einfügt.
+    pub ort: String,
+    /// Der Text, der kopiert wird.
+    pub text: String,
+}
+
+/// Die Schnipsel für eine Agent-Art. Hermes bekommt zwei: den Eintrag und den
+/// Prüfbefehl danach. „Andere" bekommt das allgemeine JSON.
+pub fn schnipsel(sprache: Sprache, art: &AgentArt, endpunkt: &str, token: &str) -> Vec<Schnipsel> {
+    let ort = |schluessel: &str| t(sprache, schluessel);
+    match art {
+        AgentArt::Pi => vec![Schnipsel {
+            ort: ort("agenten.ort.shell"),
+            text: schnipsel_pi(endpunkt, token),
+        }],
+        AgentArt::ClaudeCode => vec![Schnipsel {
+            ort: ort("agenten.ort.shell"),
+            text: schnipsel_claude(endpunkt, token),
+        }],
+        AgentArt::OpenCode => vec![Schnipsel {
+            ort: ort("agenten.ort.opencode"),
+            text: schnipsel_opencode(endpunkt, token),
+        }],
+        AgentArt::Copilot => vec![Schnipsel {
+            ort: ort("agenten.ort.copilot"),
+            text: schnipsel_copilot(endpunkt, token),
+        }],
+        AgentArt::Hermes => vec![
+            Schnipsel {
+                ort: ort("agenten.ort.hermes"),
+                text: schnipsel_hermes(endpunkt, token),
+            },
+            Schnipsel {
+                ort: ort("agenten.ort.hermes_test"),
+                text: "hermes mcp test quiver".to_string(),
+            },
+        ],
+        AgentArt::Andere(_) => vec![Schnipsel {
+            ort: ort("agenten.ort.andere"),
+            text: schnipsel_json(endpunkt, token),
+        }],
+    }
+}
+
+/// Die Art eines Agenten (Summentyp). Bekannte Arten haben einen festen Namen,
+/// unter dem sie gekoppelt werden; „Andere" trägt seinen Namen selbst.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentArt {
+    Pi,
+    ClaudeCode,
+    OpenCode,
+    Copilot,
+    Hermes,
+    Andere(String),
+}
+
+impl AgentArt {
+    /// Die wählbaren Arten in der Reihenfolge der Auswahl.
+    pub fn alle() -> Vec<AgentArt> {
+        vec![
+            AgentArt::Pi,
+            AgentArt::ClaudeCode,
+            AgentArt::OpenCode,
+            AgentArt::Copilot,
+            AgentArt::Hermes,
+            AgentArt::Andere(String::new()),
+        ]
+    }
+
+    /// Der Name, unter dem der Agent gekoppelt wird.
+    pub fn name(&self) -> String {
+        match self {
+            AgentArt::Pi => "pi".to_string(),
+            AgentArt::ClaudeCode => "claude-code".to_string(),
+            AgentArt::OpenCode => "opencode".to_string(),
+            AgentArt::Copilot => "copilot".to_string(),
+            AgentArt::Hermes => "hermes".to_string(),
+            AgentArt::Andere(name) => name.trim().to_string(),
+        }
+    }
+
+    /// Anzeigename in der Auswahl. Markennamen bleiben, wie sie heißen; nur
+    /// „Andere" wird übersetzt.
+    pub fn anzeige(&self, sprache: Sprache) -> String {
+        match self {
+            AgentArt::Pi => "pi".to_string(),
+            AgentArt::ClaudeCode => "Claude Code".to_string(),
+            AgentArt::OpenCode => "OpenCode".to_string(),
+            AgentArt::Copilot => "GitHub Copilot".to_string(),
+            AgentArt::Hermes => "Hermes".to_string(),
+            AgentArt::Andere(_) => t(sprache, "agenten.art_andere"),
+        }
+    }
+
+    /// Bekannte Art: der Name steht fest.
+    pub fn ist_fest(&self) -> bool {
+        !matches!(self, AgentArt::Andere(_))
+    }
+
+    /// Gleiche Art? „Andere" zählt als eine Art, egal welcher Name darin steht.
+    pub fn gleich(&self, andere: &AgentArt) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(andere)
+    }
+
+    /// Aus einem gekoppelten Namen die Art erkennen (ohne Groß-/
+    /// Kleinschreibung). Unbekanntes wird zu „Andere".
+    pub fn aus_name(name: &str) -> AgentArt {
+        match name.trim().to_lowercase().as_str() {
+            "pi" => AgentArt::Pi,
+            "claude-code" | "claude" => AgentArt::ClaudeCode,
+            "opencode" => AgentArt::OpenCode,
+            "copilot" | "github-copilot" => AgentArt::Copilot,
+            "hermes" => AgentArt::Hermes,
+            _ => AgentArt::Andere(name.trim().to_string()),
+        }
+    }
+
+    /// Der einzutragende Name: fest bei bekannter Art, sonst die Eingabe.
+    pub fn einzutragen(&self, eingabe: &str) -> String {
+        match self {
+            AgentArt::Andere(_) => eingabe.trim().to_string(),
+            fest => fest.name(),
+        }
+    }
+}
+
+/// Eine Zeile der Art-Auswahl.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtZeile {
+    pub art: AgentArt,
+    /// Schon gekoppelt: dann nicht mehr wählbar.
+    pub gekoppelt: bool,
+}
+
+/// Die Art-Auswahl über den schon gekoppelten Namen: bekannte Arten, die es
+/// bereits gibt, sind ausgegraut; „Andere" bleibt immer wählbar.
+pub fn arten_auswahl(gekoppelte: &[String]) -> Vec<ArtZeile> {
+    AgentArt::alle()
+        .into_iter()
+        .map(|art| {
+            let gekoppelt = art.ist_fest() && name_vergeben(&art.name(), gekoppelte);
+            ArtZeile { art, gekoppelt }
+        })
+        .collect()
+}
+
+/// Die erste noch freie Art — damit ein Dialog nicht mit einer ausgegrauten
+/// Zeile beginnt. Ist alles Bekannte gekoppelt, ist es „Andere".
+pub fn erste_freie(gekoppelte: &[String]) -> AgentArt {
+    arten_auswahl(gekoppelte)
+        .into_iter()
+        .find(|zeile| !zeile.gekoppelt)
+        .map(|zeile| zeile.art)
+        .unwrap_or_else(|| AgentArt::Andere(String::new()))
+}
+
+/// Ist dieser Name schon vergeben? Ohne Groß-/Kleinschreibung und ohne
+/// Leerzeichen am Rand – dieselbe Regel wie in [`quiver_client::Kern::agent_koppeln`].
+pub fn name_vergeben(name: &str, gekoppelte: &[String]) -> bool {
+    let gesucht = name.trim().to_lowercase();
+    !gesucht.is_empty()
+        && gekoppelte
+            .iter()
+            .any(|vorhanden| vorhanden.trim().to_lowercase() == gesucht)
 }
 
 /// Name, unter dem sich das Gerät beim Server vorstellt. Ohne
@@ -469,6 +668,150 @@ mod tests {
             wert["mcpServers"]["quiver"]["url"],
             "http://127.0.0.1:8741/mcp"
         );
+    }
+
+    #[test]
+    fn jeder_agent_nur_einmal() {
+        let gekoppelt = vec!["pi".to_string(), "Claude Code".to_string()];
+        assert!(name_vergeben("PI", &gekoppelt), "ohne Groß/Klein");
+        assert!(name_vergeben("  claude code ", &gekoppelt), "am Rand");
+        assert!(!name_vergeben("hermes", &gekoppelt));
+        assert!(!name_vergeben("  ", &gekoppelt), "leer ist kein Name");
+        assert!(!name_vergeben("pi", &[]));
+    }
+
+    #[test]
+    fn arten_haben_feste_namen() {
+        assert_eq!(AgentArt::Pi.name(), "pi");
+        assert_eq!(AgentArt::ClaudeCode.name(), "claude-code");
+        assert_eq!(AgentArt::OpenCode.name(), "opencode");
+        assert_eq!(AgentArt::Copilot.name(), "copilot");
+        assert_eq!(AgentArt::Hermes.name(), "hermes");
+        let andere = AgentArt::Andere("  mein-agent ".into());
+        assert_eq!(andere.name(), "mein-agent");
+        assert!(!andere.ist_fest());
+        assert!(AgentArt::Pi.ist_fest());
+
+        // Hin und zurück: bekannte Namen werden erkannt, fremde bleiben.
+        for art in [
+            AgentArt::Pi,
+            AgentArt::ClaudeCode,
+            AgentArt::OpenCode,
+            AgentArt::Copilot,
+            AgentArt::Hermes,
+        ] {
+            assert!(AgentArt::aus_name(&art.name()).gleich(&art));
+        }
+        assert!(AgentArt::aus_name("PI").gleich(&AgentArt::Pi));
+        assert!(AgentArt::aus_name("claude").gleich(&AgentArt::ClaudeCode));
+        assert_eq!(
+            AgentArt::aus_name(" mein-agent "),
+            AgentArt::Andere("mein-agent".into())
+        );
+        // Andere bleibt Andere, egal welcher Name darin steht.
+        assert!(AgentArt::Andere("x".into()).gleich(&AgentArt::Andere("y".into())));
+
+        // Der einzutragende Name: fest bei bekannter Art, sonst die Eingabe.
+        assert_eq!(AgentArt::Hermes.einzutragen("egal"), "hermes");
+        assert_eq!(
+            AgentArt::Andere(String::new()).einzutragen("  mein-agent "),
+            "mein-agent"
+        );
+    }
+
+    #[test]
+    fn gekoppelte_arten_sind_ausgegraut() {
+        let zeilen = arten_auswahl(&["pi".into(), "Hermes".into(), "x".into()]);
+        assert_eq!(zeilen.len(), 6, "fünf bekannte Arten und Andere");
+        let gekoppelt = |art: &AgentArt| {
+            zeilen
+                .iter()
+                .find(|zeile| zeile.art.gleich(art))
+                .map(|zeile| zeile.gekoppelt)
+                .expect("Art steht in der Auswahl")
+        };
+        assert!(gekoppelt(&AgentArt::Pi));
+        assert!(gekoppelt(&AgentArt::Hermes), "ohne Groß/Klein");
+        assert!(!gekoppelt(&AgentArt::OpenCode));
+        assert!(
+            !gekoppelt(&AgentArt::Andere(String::new())),
+            "Andere bleibt immer wählbar"
+        );
+
+        // Doppelte Namen aus alten Profilen bleiben erhalten und stören nicht:
+        // „pi" ist trotzdem nur eine ausgegraute Zeile.
+        let mit_doppelten = arten_auswahl(&["pi".into(), "PI".into()]);
+        assert_eq!(mit_doppelten.len(), 6);
+        assert_eq!(
+            mit_doppelten.iter().filter(|zeile| zeile.gekoppelt).count(),
+            1
+        );
+
+        // Der Dialog beginnt bei der ersten freien Art …
+        assert!(erste_freie(&["pi".into()]).gleich(&AgentArt::ClaudeCode));
+        assert!(erste_freie(&[]).gleich(&AgentArt::Pi));
+        // … und bei „Andere", wenn alles Bekannte vergeben ist.
+        let alle = ["pi", "claude-code", "opencode", "copilot", "hermes"].map(String::from);
+        assert!(erste_freie(&alle).gleich(&AgentArt::Andere(String::new())));
+    }
+
+    #[test]
+    fn schnipsel_je_art() {
+        let e = "http://127.0.0.1:8741/mcp";
+        let t = "abc123";
+        let schnipsel = |art: AgentArt| {
+            let liste = schnipsel(Sprache::De, &art, e, t);
+            assert!(!liste.is_empty(), "{art:?} ohne Schnipsel");
+            for s in &liste {
+                assert!(!s.ort.is_empty(), "{art:?} ohne Ort");
+                // Der Prüfbefehl für Hermes trägt weder Endpunkt noch Token.
+                if s.text != "hermes mcp test quiver" {
+                    assert!(s.text.contains("abc123"), "{art:?} ohne Token: {}", s.text);
+                    assert!(s.text.contains(e), "{art:?} ohne Endpunkt: {}", s.text);
+                }
+            }
+            liste
+        };
+        assert_eq!(schnipsel(AgentArt::Pi)[0].text, schnipsel_pi(e, t));
+        assert_eq!(
+            schnipsel(AgentArt::ClaudeCode)[0].text,
+            schnipsel_claude(e, t)
+        );
+        assert_eq!(
+            schnipsel(AgentArt::OpenCode)[0].text,
+            schnipsel_opencode(e, t)
+        );
+        assert_eq!(
+            schnipsel(AgentArt::Copilot)[0].text,
+            schnipsel_copilot(e, t)
+        );
+        let hermes = schnipsel(AgentArt::Hermes);
+        assert_eq!(hermes.len(), 2, "Eintrag und Prüfbefehl");
+        assert_eq!(hermes[1].text, "hermes mcp test quiver");
+        assert_eq!(
+            schnipsel(AgentArt::Andere(String::new()))[0].text,
+            schnipsel_json(e, t)
+        );
+
+        // Die JSON-Schnipsel sind gültiges JSON, nicht nur richtig aussehend.
+        for (art, wert) in [
+            (AgentArt::OpenCode, schnipsel_opencode(e, t)),
+            (AgentArt::Copilot, schnipsel_copilot(e, t)),
+            (AgentArt::Andere(String::new()), schnipsel_json(e, t)),
+        ] {
+            let json: serde_json::Value = serde_json::from_str(&wert)
+                .unwrap_or_else(|fehler| panic!("{art:?} ist kein JSON: {fehler}\n{wert}"));
+            assert_eq!(
+                json.to_string().matches("Authorization").count(),
+                1,
+                "{art:?} trägt den Authorization-Kopf"
+            );
+            assert_eq!(
+                json.to_string().matches("Bearer abc123").count(),
+                1,
+                "{art:?} trägt das Token"
+            );
+        }
     }
 
     #[test]

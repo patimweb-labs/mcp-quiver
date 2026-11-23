@@ -13,7 +13,7 @@ use quiver_domain::EintragId;
 
 use crate::app::Aktion;
 use crate::bausteine::Icon;
-use crate::logik;
+use crate::logik::{self, AgentArt};
 use crate::profil::Einstellungen;
 use crate::texte::Sprache;
 use crate::thema::Thema;
@@ -83,10 +83,12 @@ pub enum Dialog {
         titel: String,
         eingaben: Vec<Feldeingabe>,
     },
-    /// Namen des neuen Agenten abfragen.
-    Koppeln { name: String },
+    /// Art wählen und koppeln; `name` gilt nur für „Andere".
+    Koppeln { art: AgentArt, name: String },
     /// Der Agent ist gekoppelt: Endpunkt, Token und die Schnipsel.
     Token { name: String, token: String },
+    /// Neues Token für einen Agenten (Rückfrage).
+    TokenErneuern { id: String, name: String },
     /// Einem Agenten den Zugang nehmen.
     AgentEntfernen { id: String, name: String },
 }
@@ -204,14 +206,15 @@ impl Sicht {
                     geheim,
                 });
             }
-            Dialog::Koppeln { name } => {
-                let name = name.trim().to_string();
+            Dialog::Koppeln { art, name } => {
+                let name = art.einzutragen(&name);
                 if name.is_empty() {
                     return None;
                 }
                 return Some(Aktion::AgentKoppeln { name });
             }
             Dialog::Token { .. } => {}
+            Dialog::TokenErneuern { id, .. } => return Some(Aktion::AgentTokenErneuern { id }),
             Dialog::AgentEntfernen { id, .. } => return Some(Aktion::AgentEntfernen { id }),
         }
         None
@@ -247,8 +250,26 @@ mod tests {
     fn unbekannter_dialog_bestaetigt_nichts() {
         let mut sicht = Sicht::neu(leeres_modell(), &Einstellungen::default());
         assert_eq!(sicht.dialog_bestaetigen(), None);
-        sicht.dialog = Dialog::Koppeln { name: "  ".into() };
-        assert_eq!(sicht.dialog_bestaetigen(), None, "ohne Namen kein Koppeln");
+        sicht.dialog = Dialog::Koppeln {
+            art: AgentArt::Andere(String::new()),
+            name: String::new(),
+        };
+        assert_eq!(
+            sicht.dialog_bestaetigen(),
+            None,
+            "leerer Name, kein Koppeln"
+        );
         assert_eq!(sicht.dialog, Dialog::Keiner);
+        // Eine feste Art trägt ihren Namen selbst.
+        sicht.dialog = Dialog::Koppeln {
+            art: AgentArt::Hermes,
+            name: String::new(),
+        };
+        assert_eq!(
+            sicht.dialog_bestaetigen(),
+            Some(Aktion::AgentKoppeln {
+                name: "hermes".into()
+            })
+        );
     }
 }

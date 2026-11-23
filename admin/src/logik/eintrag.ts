@@ -19,6 +19,7 @@ export function neuer_eintrag(id = ""): Eintrag {
       umgebung: {},
     },
     felder: [],
+    aktiv: true,
   };
 }
 

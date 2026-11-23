@@ -54,6 +54,9 @@ pub enum Aktion {
     },
     /// Einen Agenten koppeln; das Token kommt als [`Meldung::Token`] zurück.
     AgentKoppeln { name: String },
+    /// Ein neues Token für einen gekoppelten Agenten; es kommt wie beim
+    /// Koppeln als [`Meldung::Token`] zurück.
+    AgentTokenErneuern { id: String },
     /// Einem Agenten den Zugang nehmen.
     AgentEntfernen { id: String },
 }

@@ -107,6 +107,17 @@ window, toggles **Start at login** and quits. The same switch sits on the
 registry value or `.desktop` file), not remembered by the window. Autostart
 always starts with `--hintergrund`.
 
+Agents connect through the local endpoint and are paired **once** in the
+window (*Agents* → *Pair agent*). The kind decides the snippet: pi, Claude Code,
+OpenCode, GitHub Copilot and Hermes each bring their own ready-made text, and
+the token can be renewed at any time — the old one stops working immediately.
+
+![Pairing dialog](docs/bilder/fenster-dark-koppeln.png)
+
+On the admin side an entry can be switched off without deleting it (*Aktiv* in
+the edit dialog or the switch in the row). It stays in the library and in sets
+but runs on no device; the client stops it on its next sync.
+
 Environment (all optional):
 
 | Variable | Meaning |
@@ -134,6 +145,7 @@ the two images differ only in font smoothing:
 
 ![Client window, dark](docs/bilder/fenster-dark-tools.png)
 ![Client window, light](docs/bilder/fenster-light-tools.png)
+![Admin library, dark](docs/bilder/admin-dark-bibliothek.png)
 
 ## License
 

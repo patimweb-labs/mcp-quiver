@@ -50,6 +50,11 @@ Der Zustand einer Seite ist ein Summentyp (`Zustand<T>` in `logik/seite.ts`):
 `laedt`, `fertig` mit Daten oder `fehler` mit Text. Die Ansichten entscheiden
 nichts; Rechnen, Filtern und Prüfen steht in `logik/` und ist getestet.
 
+In der Bibliothek trägt jeder Eintrag ein `aktiv` (Standard `true`, siehe
+`crates/domain`). Ein abgeschalteter Eintrag bleibt in Bibliothek und Sätzen,
+läuft aber auf keinem Gerät: die Liste zeigt das Abzeichen *Abgeschaltet* und
+der Schalter in der Zeile dreht den Wert ohne den Bearbeiten-Dialog.
+
 ## Themes und Tokens
 
 Drei Themes, sonst nichts: `dark`, `light`, `mono` (`data-theme` am `<html>`).

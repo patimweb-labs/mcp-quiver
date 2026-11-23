@@ -442,11 +442,224 @@ async fn werkzeug_ist_nach_fuenf_sekunden_beim_agenten() {
     p.kern.beenden().await;
 }
 
+/// Ein abgeschalteter Eintrag: der Agent sieht das Werkzeug nicht mehr, der
+/// Client hat den Eintrag angehalten (kein Laeufer mehr, kein Prozess) und
+/// der Aufruf laeuft ins Leere. Alles innerhalb der Frist von 5 Sekunden.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn abgeschalteter_eintrag_verschwindet_beim_agenten() {
+    let p = Pruefung::neu().await;
+
+    let abschalt = eintrag("abschalt", Werte::new(), Vec::new());
+    p.put("/admin/eintraege/abschalt", &abschalt).await;
+    p.put(
+        "/admin/saetze/basis",
+        &Satz {
+            id: SatzId::neu("basis"),
+            titel: "Basis".into(),
+            prioritaet: 0,
+            eintraege: vec![SatzEintrag {
+                eintrag: EintragId::neu("abschalt"),
+                werte: Werte::new(),
+            }],
+        },
+    )
+    .await;
+    p.put(
+        "/admin/gruppen/team",
+        &Gruppe {
+            id: GruppeId::neu("team"),
+            titel: "Team".into(),
+            saetze: vec![SatzId::neu("basis")],
+        },
+    )
+    .await;
+
+    let code = p
+        .admin(
+            "POST",
+            "/admin/codes",
+            Some(json!({ "gruppen": ["team"], "minuten": 60 })),
+        )
+        .await;
+    let code = code["code"].as_str().expect("Code").to_string();
+
+    p.kern
+        .einbinden(&p.basis, &code, "Testrechner")
+        .await
+        .expect("Einbinden klappt");
+    let agent_token = p.kern.agent_koppeln("test").await.expect("Agent gekoppelt");
+
+    let (sender, mut meldungen) = tokio::sync::mpsc::unbounded_channel();
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(p.endpunkt()).auth_header(&agent_token),
+    );
+    let agent = Zeuge { meldungen: sender }
+        .serve(transport)
+        .await
+        .expect("Agent verbindet sich");
+
+    // Der Eintrag laeuft und ist beim Agenten sichtbar.
+    let beginn = Instant::now();
+    assert!(
+        warte_auf_werkzeug(agent.peer(), "abschalt__echo", beginn)
+            .await
+            .is_some(),
+        "vor dem Abschalten laeuft das Werkzeug"
+    );
+
+    // ------------------------------------------------------------ Abschalten
+    let beginn = Instant::now();
+    let mut aus = eintrag("abschalt", Werte::new(), Vec::new());
+    aus.aktiv = false;
+    p.put("/admin/eintraege/abschalt", &aus).await;
+
+    // 1. Innerhalb von 5 s ist das Werkzeug aus tools/list verschwunden.
+    let mut weg = false;
+    while beginn.elapsed() < FRIST {
+        let liste = agent
+            .peer()
+            .list_tools(Some(PaginatedRequestParams::default()))
+            .await
+            .expect("tools/list");
+        if liste.tools.iter().all(|tool| tool.name != "abschalt__echo") {
+            weg = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        weg,
+        "abschalt__echo muss innerhalb von 5 s aus tools/list verschwinden"
+    );
+
+    // 2. Der Client hat den Eintrag angehalten: kein Laeufer, kein Prozess.
+    let id = EintragId::neu("abschalt");
+    let frist = Instant::now() + FRIST;
+    let mut modell = p.kern.modell();
+    loop {
+        let weg_aus_dem_modell = !modell
+            .borrow_and_update()
+            .eintraege
+            .iter()
+            .any(|eintrag| eintrag.id == id);
+        if weg_aus_dem_modell {
+            break;
+        }
+        let rest = frist.saturating_duration_since(Instant::now());
+        assert!(!rest.is_zero(), "der Eintrag bleibt im Modell stehen");
+        let _ = tokio::time::timeout(rest, modell.changed()).await;
+    }
+    assert!(
+        !p.ordner.join("profil").join("zustand.json").exists()
+            || !std::fs::read_to_string(p.ordner.join("profil").join("zustand.json"))
+                .expect("zustand.json")
+                .contains("\"abschalt\""),
+        "der abgeschaltete Eintrag steht nicht mehr im Soll des Profils"
+    );
+
+    // 3. Der Aufruf laeuft ins Leere: es gibt keinen Laeufer mehr.
+    let aufruf = agent
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("abschalt__echo")
+                .with_arguments(eingaben(json!({ "text": "x" }))),
+        )
+        .await;
+    assert!(
+        aufruf.is_err(),
+        "ohne Laeufer gibt es keine Antwort mehr: {aufruf:?}"
+    );
+
+    // Und der Agent bekommt die Aenderung auch gemeldet (tools/list_changed).
+    assert!(
+        matches!(
+            tokio::time::timeout(FRIST, meldungen.recv()).await,
+            Ok(Some(()))
+        ),
+        "der Agent muss ueber die geaenderte Werkzeugliste informiert werden"
+    );
+    let _ = agent.cancel().await;
+    p.kern.beenden().await;
+}
+
+/// Teil A: jeder Agent nur einmal, aber ein neues Token auf Wunsch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agent_nur_einmal_koppeln_und_token_erneuern() {
+    let p = Pruefung::neu().await;
+
+    let alt = p.kern.agent_koppeln("pi").await.expect("erster Agent");
+    // Derselbe Agent noch einmal – auch anders geschrieben – geht nicht.
+    for name in ["pi", " PI ", "Pi"] {
+        let fehler = p.kern.agent_koppeln(name).await.expect_err("doppelt");
+        assert!(
+            fehler.to_string().contains("schon gekoppelt"),
+            "{name}: {fehler}"
+        );
+    }
+    assert_eq!(
+        p.kern.modell().borrow().agenten.len(),
+        1,
+        "nur ein Eintrag für pi"
+    );
+
+    // Ein anderer Name geht weiterhin.
+    p.kern.agent_koppeln("hermes").await.expect("zweiter Agent");
+
+    // Token erneuern: neues Token, das alte gilt sofort nicht mehr.
+    let id = p
+        .kern
+        .modell()
+        .borrow()
+        .agenten
+        .iter()
+        .find(|agent| agent.name == "pi")
+        .expect("pi gekoppelt")
+        .id
+        .clone();
+    let neu = p.kern.agent_token_erneuern(&id).await.expect("neues Token");
+    assert_ne!(alt, neu, "ein neues Token ist ein anderes");
+    assert_eq!(
+        p.kern.modell().borrow().agenten.len(),
+        2,
+        "Erneuern legt keinen zweiten Agenten an"
+    );
+
+    // Am Endpunkt: das alte Token wird abgewiesen, das neue kommt durch.
+    let endpunkt = p.endpunkt();
+    let frage = |token: String| {
+        let http = p.http.clone();
+        let endpunkt = endpunkt.clone();
+        async move {
+            http.post(&endpunkt)
+                .bearer_auth(token)
+                .json(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+                .send()
+                .await
+                .expect("Endpunkt erreichbar")
+                .status()
+        }
+    };
+    assert_eq!(
+        frage(alt).await,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "das alte Token gilt nicht mehr"
+    );
+    assert_ne!(
+        frage(neu).await,
+        reqwest::StatusCode::UNAUTHORIZED,
+        "das neue Token wird angenommen"
+    );
+
+    // Unbekannte Kennung: kein stiller Erfolg.
+    assert!(p.kern.agent_token_erneuern("gibtsnicht").await.is_err());
+
+    p.kern.beenden().await;
+}
+
 /// Hilfsfunktion: Argumente als JSON-Objekt.
 fn eingaben(wert: Value) -> rmcp::model::JsonObject {
     serde_json::from_value(wert).expect("JSON-Objekt")
 }
-
 /// Der Text einer Werkzeugantwort.
 fn text_aus(ergebnis: &CallToolResult) -> String {
     ergebnis

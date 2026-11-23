@@ -6,6 +6,8 @@ import {
   Package,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
   RefreshCw,
   Trash2,
   Upload,
@@ -19,7 +21,7 @@ import {
 import { tief_kopie } from "../logik/kopie";
 
 import { fehlertext, type Client } from "../api/client";
-import type { Eintrag } from "../api/typen";
+import type { Eintrag, EintragId } from "../api/typen";
 import Karte from "../bausteine/Karte.vue";
 import Kasten from "../bausteine/Kasten.vue";
 import Leer from "../bausteine/Leer.vue";
@@ -50,6 +52,9 @@ const importOffen = ref(false);
 const zuLoeschen = shallowRef<Eintrag | null>(null);
 const loeschfehler = ref("");
 const loescht = ref(false);
+// Welcher Eintrag gerade umgeschaltet wird (der Schalter in der Zeile).
+const schaltet = ref<EintragId | null>(null);
+const schaltfehler = ref("");
 
 const gefiltert = computed(() => {
   if (zustand.value.art !== "fertig") return [];
@@ -106,6 +111,32 @@ async function entfernen(): Promise<void> {
   }
 }
 
+/**
+ * Der schnelle Schalter in der Zeile: `aktiv` umdrehen und speichern. Der
+ * Server rechnet den Soll-Zustand neu; der Client beendet den Eintrag beim
+ * nächsten Abgleich.
+ */
+async function umschalten(eintrag: Eintrag): Promise<void> {
+  if (schaltet.value !== null) return;
+  schaltet.value = eintrag.id;
+  schaltfehler.value = "";
+  meldung.value = "";
+  try {
+    const geaendert = await props.client.eintragSetzen({
+      ...eintrag,
+      aktiv: !eintrag.aktiv,
+    });
+    meldung.value = geaendert.aktiv
+      ? `Eintrag ${geaendert.id} eingeschaltet.`
+      : `Eintrag ${geaendert.id} abgeschaltet.`;
+    await laden();
+  } catch (fehlerWert) {
+    schaltfehler.value = fehlertext(fehlerWert);
+  } finally {
+    schaltet.value = null;
+  }
+}
+
 onMounted(laden);
 </script>
 
@@ -138,6 +169,9 @@ onMounted(laden);
 
     <p v-if="meldung" class="meldung" role="status">
       <Status ton="gut" :text="meldung" />
+    </p>
+    <p v-if="schaltfehler" class="fehler" role="alert">
+      {{ schaltfehler }}
     </p>
 
     <template v-if="zustand.art === 'laedt'">
@@ -176,7 +210,7 @@ onMounted(laden);
         <article
           v-for="eintrag in gefiltert"
           :key="eintrag.id"
-          class="eintrag"
+          :class="['eintrag', { 'is-abgeschaltet': !eintrag.aktiv }]"
         >
           <Package class="eintrag__zeichen" aria-hidden="true" />
           <div class="eintrag__haupt">
@@ -185,6 +219,11 @@ onMounted(laden);
               <span class="marke-chip">{{ eintrag.version }}</span>
               <span class="marke-chip">{{ herkunft_text(eintrag.herkunft) }}</span>
               <span class="marke-chip">{{ laufzeit_text(eintrag.laufzeit) }}</span>
+              <Status
+                v-if="!eintrag.aktiv"
+                ton="leise"
+                text="Abgeschaltet"
+              />
             </div>
             <p v-if="eintrag.beschreibung" class="eintrag__beschreibung">
               {{ eintrag.beschreibung }}
@@ -192,6 +231,14 @@ onMounted(laden);
             <p class="mono blass">{{ eintrag.id }}</p>
           </div>
           <div class="eintrag__aktionen">
+            <WpIconButton
+              :icon="eintrag.aktiv ? Power : PowerOff"
+              :label="eintrag.aktiv ? 'Abschalten' : 'Einschalten'"
+              variant="ghost"
+              :active="!eintrag.aktiv"
+              :disabled="schaltet !== null"
+              @press="umschalten(eintrag)"
+            />
             <WpIconButton
               :icon="Pencil"
               label="Bearbeiten"
@@ -289,6 +336,12 @@ onMounted(laden);
   gap: var(--wp-space-3);
   padding-block: var(--wp-space-3);
   border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
+}
+
+/* Abgeschaltet: der ganze Eintrag tritt zurück, das Abzeichen trägt den Ton. */
+.eintrag.is-abgeschaltet .eintrag__titel,
+.eintrag.is-abgeschaltet .eintrag__beschreibung {
+  color: var(--wp-color-text-muted);
 }
 
 .eintrag:last-child {

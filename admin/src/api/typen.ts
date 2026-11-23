@@ -55,6 +55,11 @@ export interface Eintrag {
   herkunft: Herkunft;
   laufzeit: Laufzeit;
   felder: Feld[];
+  /**
+   * Abgeschaltet: bleibt in Bibliothek und Sätzen, wird aber auf keinem Gerät
+   * ausgeführt. Fehlt das Feld (ältere Daten), gilt der Eintrag als aktiv.
+   */
+  aktiv: boolean;
 }
 
 /** Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt. */

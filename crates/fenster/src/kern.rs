@@ -99,6 +99,23 @@ impl KernZugang for EchterKern {
                         .unwrap_or_else(|e| e.into_inner())
                         .push(Meldung::Token { name, token });
                 }),
+                Aktion::AgentTokenErneuern { id } => {
+                    // Der Name gehört zur Meldung; er steht schon im Modell.
+                    let name = kern
+                        .modell()
+                        .borrow()
+                        .agenten
+                        .iter()
+                        .find(|agent| agent.id == id)
+                        .map(|agent| agent.name.clone())
+                        .unwrap_or_else(|| id.clone());
+                    kern.agent_token_erneuern(&id).await.map(|token| {
+                        meldungen
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(Meldung::Token { name, token });
+                    })
+                }
                 Aktion::AgentEntfernen { id } => kern.agent_entfernen(&id).await,
             };
             if let Err(fehler) = ergebnis {

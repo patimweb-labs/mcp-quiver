@@ -48,6 +48,7 @@ function beispiel(): Eintrag {
         standard: null,
       },
     ],
+    aktiv: true,
   };
 }
 

@@ -341,10 +341,31 @@ fn agent_koppeln_zeigt_token_und_endpunkt() {
     h.get_by_role_and_label(Role::Button, "Agent koppeln")
         .click();
     h.run();
-    assert!(matches!(h.state().0.sicht.dialog, Dialog::Koppeln { .. }));
+    // Der Dialog beginnt bei der ersten freien Art – „pi" ist ja vergeben.
+    match &h.state().0.sicht.dialog {
+        Dialog::Koppeln { art, .. } => assert_eq!(
+            art,
+            &quiver_fenster::logik::AgentArt::ClaudeCode,
+            "pi ist gekoppelt, also die nächste freie Art"
+        ),
+        anderer => panic!("kein Koppeln-Dialog: {anderer:?}"),
+    }
+    // Die schon gekoppelte Art steht ausgegraut mit Hinweis da; ein Klick
+    // darauf ändert die Auswahl nicht.
+    assert!(h.query_by_label("schon gekoppelt").is_some());
+    h.get_by_role_and_label(Role::RadioButton, "pi").click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Koppeln { art, .. } => assert_eq!(
+            art,
+            &quiver_fenster::logik::AgentArt::ClaudeCode,
+            "eine ausgegraute Art ist nicht wählbar"
+        ),
+        anderer => panic!("kein Koppeln-Dialog: {anderer:?}"),
+    }
 
-    // Namen tippen: das Feld hat den Fokus schon (erster Bild des Dialogs).
-    h.get_by_role(Role::TextInput).type_text("hermes");
+    // Hermes wählen und koppeln.
+    h.get_by_role_and_label(Role::RadioButton, "Hermes").click();
     h.run();
     h.get_by_role_and_label(Role::Button, "Koppeln").click();
     h.run();
@@ -362,20 +383,128 @@ fn agent_koppeln_zeigt_token_und_endpunkt() {
     }));
     drop(aktionen);
 
-    // Token, Endpunkt und beide Schnipsel stehen im Dialog.
+    // Token, Endpunkt und der Schnipsel für die gewählte Art stehen im Dialog.
     assert!(h.query_by_label(TOKEN).is_some());
     assert!(h
         .query_by_label("Das Token wird nur einmal angezeigt.")
         .is_some());
-    let pi = quiver_fenster::logik::schnipsel_pi(ENDPUNKT, TOKEN);
-    assert!(h.query_by_label(&pi).is_some(), "pi-Schnipsel fehlt");
-    let json = quiver_fenster::logik::schnipsel_json(ENDPUNKT, TOKEN);
-    assert!(h.query_by_label(&json).is_some(), "JSON-Schnipsel fehlt");
+    let hermes = quiver_fenster::logik::schnipsel_hermes(ENDPUNKT, TOKEN);
+    assert!(
+        h.query_by_label(&hermes).is_some(),
+        "Hermes-Schnipsel fehlt"
+    );
+    assert!(
+        h.query_by_label("hermes mcp test quiver").is_some(),
+        "Prüfbefehl fehlt"
+    );
 
     // Schließen räumt den Dialog weg.
     h.get_by_role_and_label(Role::Button, "Schließen").click();
     h.run();
     assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+#[test]
+fn andere_art_hat_ein_namensfeld_und_meldet_doppelte() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Agenten),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Agent koppeln")
+        .click();
+    h.run();
+    // Feste Arten haben kein Namensfeld.
+    assert_eq!(h.query_all(By::new().role(Role::TextInput)).count(), 0);
+
+    h.get_by_role_and_label(Role::RadioButton, "Andere").click();
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().role(Role::TextInput)).count(),
+        1,
+        "„Andere“ bekommt ein Namensfeld"
+    );
+
+    // Ein Name, den es schon gibt, wird vor dem Absenden gezeigt.
+    h.get_by_role(Role::TextInput).type_text("  PI ");
+    h.run();
+    assert!(
+        h.query_by_label("Agent PI ist schon gekoppelt.").is_some(),
+        "doppelter Name muss sichtbar sein"
+    );
+
+    // Ein eigener Name geht durch.
+    if let Dialog::Koppeln { name, .. } = &mut h.state_mut().0.sicht.dialog {
+        *name = "mein-agent".into();
+    }
+    h.run();
+    assert!(h.query_by_label("Agent PI ist schon gekoppelt.").is_none());
+    h.get_by_role_and_label(Role::Button, "Koppeln").click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::AgentKoppeln {
+            name: "mein-agent".into()
+        }));
+    assert!(matches!(
+        &h.state().0.sicht.dialog,
+        Dialog::Token { name, .. } if name == "mein-agent"
+    ));
+    let json = quiver_fenster::logik::schnipsel_json(ENDPUNKT, TOKEN);
+    assert!(h.query_by_label(&json).is_some(), "allgemeines JSON fehlt");
+}
+
+#[test]
+fn token_erneuern_fragt_nach() {
+    let mut h = fenster(
+        modell(verbunden(), Vec::new()),
+        Some(Seite::Agenten),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Token erneuern");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Token erneuern“"
+    );
+    h.get_by_role_and_label(Role::Button, "Token erneuern")
+        .click();
+    h.run();
+    assert!(
+        matches!(&h.state().0.sicht.dialog, Dialog::TokenErneuern { id, name } if id == "a1" && name == "pi"),
+        "Rückfrage vor dem neuen Token: {:?}",
+        h.state().0.sicht.dialog
+    );
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .iter()
+            .any(|a| matches!(a, Aktion::AgentTokenErneuern { .. })),
+        "ohne Bestätigung kein neues Token"
+    );
+    // Der Knopf im Dialog bestätigt.
+    h.get_all_by_role_and_label(Role::Button, "Token erneuern")
+        .last()
+        .expect("Knopf im Dialog")
+        .click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::AgentTokenErneuern { id: "a1".into() }));
 }
 
 #[test]
@@ -501,6 +630,26 @@ fn alle_seiten_in_allen_themes() {
                         .expect("Bild schreibbar");
                 }
             }
+        }
+    }
+    // Der Koppeln-Dialog mit der Art-Auswahl — ein eigenes Bild, weil er
+    // sonst nie zu sehen wäre.
+    if let Some(ziel) = &ziel {
+        for thema in [Thema::Dunkel, Thema::Hell] {
+            let mut h = fenster(
+                modell(verbunden(), eintraege()),
+                Some(Seite::Agenten),
+                thema,
+                gross(),
+            );
+            h.run();
+            h.get_by_role_and_label(Role::Button, "Agent koppeln")
+                .click();
+            h.run();
+            assert!(matches!(h.state().0.sicht.dialog, Dialog::Koppeln { .. }));
+            let bild = h.render().expect("zeichnen (wgpu)");
+            bild.save(ziel.join(format!("fenster-{}-koppeln.png", thema.name())))
+                .expect("Bild schreibbar");
         }
     }
 }

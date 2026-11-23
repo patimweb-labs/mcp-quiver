@@ -18,6 +18,13 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
     let sprache = sicht.sprache;
     let mut koppeln = false;
     let mut entfernen: Option<(String, String)> = None;
+    let mut erneuern: Option<(String, String)> = None;
+    let gekoppelte: Vec<String> = sicht
+        .modell
+        .agenten
+        .iter()
+        .map(|a| a.name.clone())
+        .collect();
 
     bausteine::seite(ui, |ui| {
         hinweis(ui, sicht);
@@ -69,6 +76,7 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
                         (Ton::Blass, t(sprache, "verbindung.getrennt"))
                     };
                     let mut weg = false;
+                    let mut neu = false;
                     egui::Sides::new()
                         .height(thema::SIZE_CONTROL_SM)
                         .shrink_right()
@@ -77,7 +85,7 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
                             ui,
                             |ui| {
                                 // Punkt, Name und Stand in einer Zeile — so
-                                // steht der Knopf rechts auf derselben Höhe.
+                                // stehen die Knöpfe rechts auf derselben Höhe.
                                 ui.horizontal(|ui| {
                                     bausteine::status_klein(ui, &f, ton, &stand);
                                     ui.label(RichText::new(&agent.name).font(egui::FontId::new(
@@ -88,15 +96,27 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
                                 });
                             },
                             |ui| {
-                                weg = bausteine::knopf(
-                                    ui,
-                                    &f,
-                                    Icon::Papierkorb,
-                                    &t(sprache, "agenten.entfernen"),
-                                )
-                                .clicked();
+                                ui.horizontal(|ui| {
+                                    neu = bausteine::knopf(
+                                        ui,
+                                        &f,
+                                        Icon::Neuladen,
+                                        &t(sprache, "agenten.token_erneuern"),
+                                    )
+                                    .clicked();
+                                    weg = bausteine::knopf(
+                                        ui,
+                                        &f,
+                                        Icon::Papierkorb,
+                                        &t(sprache, "agenten.entfernen"),
+                                    )
+                                    .clicked();
+                                });
                             },
                         );
+                    if neu {
+                        erneuern = Some((agent.id.clone(), agent.name.clone()));
+                    }
                     if weg {
                         entfernen = Some((agent.id.clone(), agent.name.clone()));
                     }
@@ -107,8 +127,12 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
 
     if koppeln {
         sicht.dialog = Dialog::Koppeln {
+            art: crate::logik::erste_freie(&gekoppelte),
             name: String::new(),
         };
+    }
+    if let Some((id, name)) = erneuern {
+        sicht.dialog = Dialog::TokenErneuern { id, name };
     }
     if let Some((id, name)) = entfernen {
         sicht.dialog = Dialog::AgentEntfernen { id, name };
@@ -117,15 +141,11 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
 
 /// Was ein Agent zum Anschließen braucht, als Text zum Kopieren. Reine
 /// Rechnung — sie steht in [`crate::logik`].
-pub fn schnipsel(sprache: Sprache, endpunkt: &str, token: &str) -> [(String, String); 2] {
-    [
-        (
-            t(sprache, "agenten.schnipsel_pi"),
-            crate::logik::schnipsel_pi(endpunkt, token),
-        ),
-        (
-            t(sprache, "agenten.schnipsel_json"),
-            crate::logik::schnipsel_json(endpunkt, token),
-        ),
-    ]
+pub fn schnipsel(
+    sprache: Sprache,
+    art: &crate::logik::AgentArt,
+    endpunkt: &str,
+    token: &str,
+) -> Vec<crate::logik::Schnipsel> {
+    crate::logik::schnipsel(sprache, art, endpunkt, token)
 }

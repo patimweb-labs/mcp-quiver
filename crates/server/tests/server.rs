@@ -714,6 +714,72 @@ async fn ereignisse_melden_nur_was_dieses_geraet_betrifft() {
     );
 }
 
+#[tokio::test]
+async fn abgeschalteter_eintrag_verlaesst_soll_und_meldet_sich() {
+    let p = Pruefung::neu().await;
+    let antwort = p.aufbau().await;
+    assert_eq!(p.soll(&antwort.token).await.eintraege.len(), 1);
+
+    // Ereignisstrom öffnen: zuerst kommt die aktuelle Revision.
+    let anfrage = Request::builder()
+        .uri("/api/v1/geraet/ereignisse")
+        .header("authorization", format!("Bearer {}", antwort.token))
+        .body(Body::empty())
+        .expect("Anfrage");
+    let antwort_strom = p.router.clone().oneshot(anfrage).await.expect("Antwort");
+    assert_eq!(antwort_strom.status(), StatusCode::OK);
+    let mut strom = EreignisStrom::neu(antwort_strom.into_body());
+    let (name, revision_an) = strom
+        .naechstes(Duration::from_secs(5))
+        .await
+        .expect("sofort ein Ereignis mit der aktuellen Revision");
+    assert_eq!(name, "soll");
+    assert_eq!(revision_an, p.soll(&antwort.token).await.revision);
+
+    // Abschalten: der Eintrag bleibt in Bibliothek und Satz.
+    let mut aus = eintrag("wetter");
+    aus.aktiv = false;
+    assert_eq!(p.put_eintrag(&aus).await.0, StatusCode::OK);
+    let (status, rumpf) = p.admin("GET", "/admin/eintraege/wetter", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let gespeichert: Eintrag = als(&rumpf);
+    assert!(!gespeichert.aktiv, "der Eintrag bleibt, nur abgeschaltet");
+    let (_, satz_rumpf) = p.admin("GET", "/admin/saetze/basis", None).await;
+    let satz: Satz = als(&satz_rumpf);
+    assert_eq!(satz.eintraege.len(), 1, "der Satz verliert ihn nicht");
+
+    // Das Soll des Geräts enthält ihn nicht mehr.
+    let soll = p.soll(&antwort.token).await;
+    assert!(
+        soll.eintraege.is_empty(),
+        "ein abgeschalteter Eintrag läuft auf keinem Gerät: {:?}",
+        soll.eintraege
+            .iter()
+            .map(|e| &e.eintrag.id)
+            .collect::<Vec<_>>()
+    );
+
+    // Und das Ereignis kommt.
+    let (name, revision_aus) = strom
+        .naechstes(Duration::from_secs(5))
+        .await
+        .expect("Ereignis nach dem Abschalten");
+    assert_eq!(name, "soll");
+    assert_ne!(revision_an, revision_aus, "neue Revision");
+    assert_eq!(revision_aus, soll.revision);
+
+    // Wieder einschalten: der Eintrag ist zurück.
+    assert_eq!(p.put_eintrag(&eintrag("wetter")).await.0, StatusCode::OK);
+    let soll = p.soll(&antwort.token).await;
+    assert_eq!(soll.eintraege.len(), 1);
+    assert_eq!(soll.eintraege[0].eintrag.id, EintragId::neu("wetter"));
+    let (_, revision_wieder) = strom
+        .naechstes(Duration::from_secs(5))
+        .await
+        .expect("Ereignis nach dem Einschalten");
+    assert_eq!(revision_wieder, soll.revision);
+}
+
 /// Liest `ereignis`-Blöcke aus einem SSE-Rumpf.
 struct EreignisStrom {
     koerper: Body,
