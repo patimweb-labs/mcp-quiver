@@ -43,9 +43,9 @@ impl Thema {
     /// Schlüssel für den Anzeigenamen in `texte.json`.
     pub fn text_schluessel(self) -> &'static str {
         match self {
-            Thema::Dunkel => "admin.theme.dark",
-            Thema::Hell => "admin.theme.light",
-            Thema::Mono => "admin.theme.mono",
+            Thema::Dunkel => "thema.dark",
+            Thema::Hell => "thema.light",
+            Thema::Mono => "thema.mono",
         }
     }
 
@@ -253,8 +253,8 @@ mod tests {
         }
     }
 
-    /// Zwei Signale: das Türkis führt (Akzent), das Orange spricht (Signal).
-    /// Wer sie verwechselt, sieht nicht, wer gerade redet.
+    /// Zwei Signale: das Türkis führt (Akzent), das Orange hebt hervor
+    /// (Signal). Wer sie verwechselt, verliert die Unterscheidung.
     #[test]
     fn akzent_und_signal_sind_verschieden() {
         for (name, f) in [("dark", &DUNKEL), ("light", &HELL), ("mono", &MONO)] {
@@ -297,95 +297,18 @@ mod tests {
         }
     }
 
-    /// Zeichen und Tokens tragen dieselben Farben: wer eine Farbe nur an einer
-    /// der beiden Stellen ändert, bekommt einen roten Test (ADR 0015).
-    #[test]
-    fn zeichen_und_tokens_tragen_dieselben_farben() {
-        let dunkel = include_str!("../../../assets/sprechwerk-logo.svg");
-        let hell = include_str!("../../../assets/sprechwerk-hell.svg");
-        let mono = include_str!("../../../assets/sprechwerk-mono.svg");
-        for (datei, was, farbe) in [
-            (dunkel, "Türkis der hinteren Blase", DUNKEL.accent_default),
-            (dunkel, "Orange der vorderen Blase", DUNKEL.signal_default),
-            (dunkel, "Kachel oben", DUNKEL.bg_raised),
-            (dunkel, "Kachel unten", DUNKEL.bg_panel),
-            (hell, "Kachel oben", HELL.bg_panel),
-            (hell, "Kachel unten", HELL.bg_canvas),
-            (mono, "Zeichnung mono", MONO.accent_hover),
-            (mono, "Kachel mono", MONO.bg_panel),
-        ] {
-            assert!(
-                datei.contains(&hex(farbe)),
-                "{was}: {} steht nicht im Zeichen",
-                hex(farbe)
-            );
-        }
-    }
-
     #[test]
     fn eckig_wie_die_marke() {
         assert_eq!(RADIUS_MD, 0.0);
         const { assert!(SPACE_2 > 0.0 && SPACE_4 > SPACE_2) };
     }
 
-    /// Die kleinen Fassungen tragen dieselben Farben wie das große Zeichen.
+    /// Jedes Theme hat einen Anzeigenamen in den Texten.
     #[test]
-    fn kleine_fassungen_tragen_dieselben_farben() {
-        for (kante, klein) in [
-            (16, include_str!("../../../assets/sprechwerk-16.svg")),
-            (24, include_str!("../../../assets/sprechwerk-24.svg")),
-            (32, include_str!("../../../assets/sprechwerk-32.svg")),
-        ] {
-            for (was, farbe) in [
-                ("Türkis", DUNKEL.accent_default),
-                ("Orange", DUNKEL.signal_default),
-                ("Kachel", DUNKEL.bg_raised),
-                ("Trennung", DUNKEL.bg_panel),
-            ] {
-                assert!(
-                    klein.contains(&hex(farbe)),
-                    "{kante} px: {was} {} steht nicht in der kleinen Fassung",
-                    hex(farbe)
-                );
-            }
-        }
-    }
-
-    /// Die kleinen Fassungen sind Pixelraster: jede Kante liegt auf dem Zielraster
-    /// und nichts wird geglättet. Ein halber Pixel macht aus den Blasen einen Fleck.
-    #[test]
-    fn kleine_fassungen_liegen_auf_dem_raster() {
-        for (kante, klein) in [
-            (16, include_str!("../../../assets/sprechwerk-16.svg")),
-            (24, include_str!("../../../assets/sprechwerk-24.svg")),
-            (32, include_str!("../../../assets/sprechwerk-32.svg")),
-        ] {
-            let kante = kante as f64;
-            assert!(
-                klein.contains(&format!(
-                    "width=\"{kante}\" height=\"{kante}\" viewBox=\"0 0 {kante} {kante}\""
-                )),
-                "{kante} px: viewBox und Kante stimmen nicht überein"
-            );
-            assert!(
-                klein.contains("shape-rendering=\"crispEdges\""),
-                "{kante} px: ohne crispEdges glättet der Zeichner"
-            );
-            for merkmal in [" x=\"", " y=\"", " width=\"", " height=\""] {
-                for zahl in klein
-                    .split(&merkmal)
-                    .skip(1)
-                    .filter_map(|rest| rest.split('"').next())
-                {
-                    let wert: f64 = zahl
-                        .parse()
-                        .unwrap_or_else(|_| panic!("{kante} px: {zahl:?} ist keine Zahl"));
-                    assert!(
-                        wert.fract() == 0.0 && (0.0..=kante).contains(&wert),
-                        "{kante} px: {merkmal}= {zahl} liegt nicht auf dem Raster"
-                    );
-                }
-            }
+    fn jedes_thema_hat_einen_namen() {
+        for t in Thema::ALLE {
+            let text = crate::texte::t(crate::texte::Sprache::De, t.text_schluessel());
+            assert_ne!(text, t.text_schluessel(), "{} ohne Text", t.name());
         }
     }
 }

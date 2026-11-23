@@ -48,6 +48,21 @@ and looks exactly like the client.
 - **Server:** one container image (Docker, Azure Container Apps, anywhere).
 - **Client:** macOS, Windows and Linux.
 
+## Development
+
+```bash
+# check everything (before every commit)
+cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace
+```
+
+The token files in `tokens/` are the single source of colours, sizes and fonts —
+for the client window (egui) and for the admin interface (Vue). The admin CSS is
+generated from them and checked in; never edit it by hand:
+
+```bash
+cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
+```
+
 ## License
 
 [MIT](LICENSE)

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Bausteine beider Fenster: Karte, Seitenkopf, Pegelbalken, Hauptknopf,
-//! leere Fläche, Kürzel. Sie bekommen Farben aus dem Theme, nie Werte.
+//! Bausteine des Client-Fensters: Karte, Seitenkopf, Hauptknopf, leere
+//! Fläche, Kürzel, Formularzeilen. Sie bekommen Farben aus dem Theme, nie
+//! Werte.
 
-use crate::thema::{self, fett, Farben, Thema, Ton};
+use crate::thema::{self, fett, Farben, Ton};
 use egui::{Color32, RichText, Sense, Stroke};
 
 /// Text in einer Bedeutungsfarbe.
@@ -44,187 +45,6 @@ pub fn karte<R>(
         .inner
 }
 
-/// Schmaler Pegelbalken 0–100 mit optionaler Marke (Sprechschwelle).
-/// Über der Schwelle leuchtet er im Sprechsignal (Orange, ADR 0015).
-pub fn pegelbalken(ui: &mut egui::Ui, f: &Farben, pegel: u8, marke: Option<u8>, breite: f32) {
-    let (rect, antwort) =
-        ui.allocate_exact_size(egui::vec2(breite, thema::SPACE_2), Sense::hover());
-    let p = ui.painter();
-    p.rect_filled(rect, 0.0, f.bg_input);
-    let mut voll = rect;
-    voll.set_width(rect.width() * pegel.min(100) as f32 / 100.0);
-    let farbe = match marke {
-        Some(m) if pegel < m => f.text_faint,
-        _ => f.signal_default,
-    };
-    p.rect_filled(voll, 0.0, farbe);
-    if let Some(m) = marke {
-        let x = rect.left() + rect.width() * m.min(100) as f32 / 100.0;
-        p.line_segment(
-            [
-                egui::pos2(x, rect.top() - thema::SIZE_FOCUS),
-                egui::pos2(x, rect.bottom() + thema::SIZE_FOCUS),
-            ],
-            Stroke::new(thema::SIZE_BORDER, f.text_default),
-        );
-    }
-    antwort.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::Role::ProgressIndicator, true, format!("{pegel} %"))
-    });
-}
-
-/// Wert 0–100 aus einer waagerechten Position im Balken (rein, für Tests).
-pub fn wert_aus_position(x: f32, links: f32, breite: f32) -> u8 {
-    if breite <= 0.0 {
-        return 0;
-    }
-    (((x - links) / breite).clamp(0.0, 1.0) * 100.0).round() as u8
-}
-
-/// Pegel und Sprechschwelle in einem: der Balken zeigt den Pegel live, die
-/// Marke ist die Schwelle — ziehen oder klicken setzt sie, die Pfeiltasten
-/// auch. Unter der Schwelle ist der Balken blass, darüber in der
-/// Akzentfarbe: man sieht sofort, ob die Stimme durchkommt. Ohne Schwelle
-/// (`None`, Push-to-Talk) ist es nur ein Pegel.
-pub fn pegelregler(
-    ui: &mut egui::Ui,
-    f: &Farben,
-    pegel: u8,
-    schwelle: Option<&mut u8>,
-    breite: f32,
-    name: &str,
-) -> egui::Response {
-    let hoehe = thema::SPACE_4;
-    let sinn = if schwelle.is_some() {
-        Sense::click_and_drag()
-    } else {
-        Sense::hover()
-    };
-    let (rect, mut antwort) = ui.allocate_exact_size(egui::vec2(breite, hoehe), sinn);
-    let mut marke = None;
-    if let Some(s) = schwelle {
-        if let Some(pos) = antwort.interact_pointer_pos() {
-            let neu = wert_aus_position(pos.x, rect.left(), rect.width());
-            if neu != *s {
-                *s = neu;
-                antwort.mark_changed();
-            }
-        }
-        if antwort.has_focus() {
-            let (links, rechts) = ui.input(|i| {
-                (
-                    i.key_pressed(egui::Key::ArrowLeft),
-                    i.key_pressed(egui::Key::ArrowRight),
-                )
-            });
-            if links && *s > 0 {
-                *s -= 1;
-                antwort.mark_changed();
-            }
-            if rechts && *s < 100 {
-                *s += 1;
-                antwort.mark_changed();
-            }
-        }
-        marke = Some(*s);
-    }
-    let p = ui.painter();
-    p.rect_filled(rect, 0.0, f.bg_input);
-    p.rect_stroke(
-        rect,
-        0.0,
-        Stroke::new(thema::SIZE_BORDER, f.border_subtle),
-        egui::StrokeKind::Inside,
-    );
-    let mut voll = rect.shrink(thema::SIZE_BORDER);
-    voll.set_width(voll.width() * pegel.min(100) as f32 / 100.0);
-    let farbe = match marke {
-        Some(m) if pegel < m => f.text_faint,
-        _ => f.signal_default,
-    };
-    p.rect_filled(voll, 0.0, farbe);
-    if let Some(m) = marke {
-        let x = rect.left() + rect.width() * m.min(100) as f32 / 100.0;
-        let linie = if antwort.hovered() || antwort.dragged() || antwort.has_focus() {
-            thema::SIZE_FOCUS
-        } else {
-            thema::SIZE_BORDER
-        };
-        p.line_segment(
-            [
-                egui::pos2(x, rect.top() - thema::SPACE_1),
-                egui::pos2(x, rect.bottom() + thema::SPACE_1),
-            ],
-            Stroke::new(linie, f.text_default),
-        );
-        if antwort.has_focus() {
-            p.rect_stroke(
-                rect.expand(thema::SIZE_FOCUS),
-                0.0,
-                Stroke::new(thema::SIZE_FOCUS, f.focus_ring),
-                egui::StrokeKind::Outside,
-            );
-        }
-    }
-    let name = name.to_string();
-    match marke {
-        Some(m) => antwort.widget_info(|| egui::WidgetInfo::slider(true, m as f64, &name)),
-        None => antwort.widget_info(|| {
-            egui::WidgetInfo::labeled(
-                egui::Role::ProgressIndicator,
-                true,
-                format!("{name}: {pegel} %"),
-            )
-        }),
-    }
-    if marke.is_some() {
-        antwort = antwort.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-    }
-    antwort
-}
-
-/// Farben des Rollenabzeichens (Fläche, Schrift). Mitglieder — die Regel —
-/// haben keins: so fällt auf, wer mehr (oder weniger) darf.
-pub fn rollenfarben(f: &Farben, rolle: sprechwerk_domain::Role) -> Option<(Color32, Color32)> {
-    use sprechwerk_domain::Role;
-    match rolle {
-        Role::Administrator => Some((f.accent_default, f.text_on_accent)),
-        Role::Moderator => Some((f.status_ok, f.text_on_accent)),
-        Role::Gast => Some((f.bg_selected, f.text_muted)),
-        Role::Mitglied => None,
-    }
-}
-
-/// Seitenlänge eines Rollenabzeichens.
-pub const ABZEICHEN: f32 = thema::SPACE_4;
-
-/// Quadratisches Abzeichen mit dem Anfangsbuchstaben der Rolle (A, M, G).
-/// Nimmt immer denselben Platz ein — auch ohne Abzeichen —, damit die
-/// Spalten im Baum bündig bleiben. `name` ist Hinweis und zugänglicher Name.
-pub fn rollenabzeichen(
-    ui: &mut egui::Ui,
-    f: &Farben,
-    rolle: sprechwerk_domain::Role,
-    kurz: &str,
-    name: &str,
-) -> egui::Response {
-    let (rect, antwort) = ui.allocate_exact_size(egui::vec2(ABZEICHEN, ABZEICHEN), Sense::hover());
-    let Some((flaeche, schrift)) = rollenfarben(f, rolle) else {
-        return antwort;
-    };
-    ui.painter().rect_filled(rect, 0.0, flaeche);
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        kurz,
-        egui::FontId::new(thema::FONT_SIZE_XS, fett()),
-        schrift,
-    );
-    let name = name.to_string();
-    antwort.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &name));
-    antwort.on_hover_text(name)
-}
-
 /// Hauptschaltfläche (Akzent).
 pub fn hauptknopf(ui: &mut egui::Ui, f: &Farben, beschriftung: &str) -> egui::Response {
     ui.add(
@@ -259,9 +79,9 @@ pub fn kasten<R>(ui: &mut egui::Ui, f: &Farben, inhalt: impl FnOnce(&mut egui::U
         .inner
 }
 
-/// Kürzel-Quadrat (Avatar): Akzent für mich, sonst neutral; Rand im
-/// Sprechsignal (Orange), wenn die Person spricht.
-pub fn kuerzel(ui: &mut egui::Ui, f: &Farben, name: &str, ich: bool, spricht: bool) {
+/// Kürzel-Quadrat (Avatar): Akzent für mich, sonst neutral; ein Rand im
+/// Signal, wenn hervorgehoben.
+pub fn kuerzel(ui: &mut egui::Ui, f: &Farben, name: &str, ich: bool, hervorgehoben: bool) {
     let groesse = thema::SIZE_CONTROL_SM;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(groesse, groesse), Sense::hover());
     let p = ui.painter();
@@ -271,7 +91,7 @@ pub fn kuerzel(ui: &mut egui::Ui, f: &Farben, name: &str, ich: bool, spricht: bo
         (f.bg_selected, f.text_default)
     };
     p.rect_filled(rect, 0.0, flaeche);
-    if spricht {
+    if hervorgehoben {
         p.rect_stroke(
             rect.expand(thema::SIZE_FOCUS),
             0.0,
@@ -293,48 +113,20 @@ pub fn kuerzel(ui: &mut egui::Ui, f: &Farben, name: &str, ich: bool, spricht: bo
     );
 }
 
-/// Seitenverhältnisse (Breite zu Höhe) der Marken-SVGs aus `assets/`.
-const ZEICHEN_SEITEN: f32 = 438.0 / 341.0;
-const SCHRIFTZUG_SEITEN: f32 = 909.0 / 100.0;
-
-/// Die Marke im Kopf: das Zeichen und die Wortmarke als SVG aus `assets/`
-/// (ADR 0015) — kein Text, keine Schrift. Im Farbthema bringt das Zeichen
-/// seine türkis-orangen Farben mit; im Mono-Thema nimmt es die Textfarbe an,
-/// damit nichts Farbiges auf einer einfarbigen Fläche steht. Die Wortmarke
-/// wird immer mit der Textfarbe eingefärbt. Beide Fenster zeichnen sie so.
-pub fn marke(ui: &mut egui::Ui, f: &Farben, thema: Thema) {
-    // Die Wortmarke steht in der Höhe ihrer Großbuchstaben; das Zeichen ist
-    // etwas höher als eine Zeile und füllt die Kopfleiste.
-    let hoehe = thema::FONT_SIZE_LG;
-    let zeichen = thema::SIZE_CONTROL_SM - thema::SPACE_1;
-    let bild = if thema == Thema::Mono {
-        egui::Image::new(egui::include_image!(
-            "../../../assets/sprechwerk-symbolic.svg"
-        ))
-        .tint(f.text_default)
-    } else {
-        egui::Image::new(egui::include_image!(
-            "../../../assets/sprechwerk-zeichen.svg"
-        ))
-    };
-    ui.add(
-        bild.fit_to_exact_size(egui::vec2(zeichen * ZEICHEN_SEITEN, zeichen))
-            .alt_text("sprechwerk-Zeichen"),
-    );
-    ui.add_space(thema::SPACE_1);
-    ui.add(
-        egui::Image::new(egui::include_image!(
-            "../../../assets/sprechwerk-schriftzug.svg"
-        ))
-        .tint(f.text_default)
-        .fit_to_exact_size(egui::vec2(hoehe * SCHRIFTZUG_SEITEN, hoehe))
-        .alt_text("sprechwerk"),
+/// Die Marke im Kopf. Ein Zeichen gibt es noch nicht (kommt vom Nutzer, siehe
+/// AGENTS.md §8); bis dahin steht die Wortmarke als Text in der fetten
+/// Schrift, in der Textfarbe. Beide Fenster zeichnen sie so.
+pub fn marke(ui: &mut egui::Ui, f: &Farben) {
+    ui.label(
+        RichText::new("mcp-quiver")
+            .font(egui::FontId::new(thema::FONT_SIZE_LG, fett()))
+            .color(f.text_default),
     );
 }
 
 /// Die Icons der Fenster — dieselbe kuratierte Lucide-Auswahl wie
-/// `@weppelmann/icons` (erzeugt mit `scripts/icons-holen.py`). Ein Summentyp:
-/// eine Ansicht kann kein Icon verlangen, das es nicht gibt.
+/// `@weppelmann/icons`. Ein Summentyp: eine Ansicht kann kein Icon verlangen,
+/// das es nicht gibt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Plus,
@@ -343,34 +135,33 @@ pub enum Icon {
     PanelRechts,
     PanelZu,
     Schliessen,
-    Mikrofon,
-    MikrofonAus,
-    Kopfhoerer,
-    KopfhoererAus,
     Stecker,
     Trennen,
     Einstellungen,
     Neuladen,
-    Lautsprecher,
     Chat,
-    Sprechblase,
+    Paket,
+    Satz,
+    Gruppe,
+    Geraet,
+    Schluessel,
+    Agent,
     Papierkorb,
     Kopieren,
-    Reagieren,
     Server,
-    Leute,
     Protokoll,
     Sperre,
     Start,
     Stopp,
-    Senden,
+    Haken,
+    Hinweis,
+    Bearbeiten,
+    Hochladen,
+    Suchen,
     Warnung,
-    Anhang,
     Datei,
-    Film,
     Herunterladen,
     Extern,
-    Smiley,
 }
 
 impl Icon {
@@ -382,34 +173,33 @@ impl Icon {
             Icon::PanelRechts => egui::include_image!("../icons/panel_right.svg"),
             Icon::PanelZu => egui::include_image!("../icons/panel_close.svg"),
             Icon::Schliessen => egui::include_image!("../icons/close.svg"),
-            Icon::Mikrofon => egui::include_image!("../icons/mic.svg"),
-            Icon::MikrofonAus => egui::include_image!("../icons/mic_off.svg"),
-            Icon::Kopfhoerer => egui::include_image!("../icons/headphones.svg"),
-            Icon::KopfhoererAus => egui::include_image!("../icons/headphone_off.svg"),
             Icon::Stecker => egui::include_image!("../icons/plug.svg"),
             Icon::Trennen => egui::include_image!("../icons/unplug.svg"),
             Icon::Einstellungen => egui::include_image!("../icons/settings.svg"),
             Icon::Neuladen => egui::include_image!("../icons/refresh.svg"),
-            Icon::Lautsprecher => egui::include_image!("../icons/speaker.svg"),
             Icon::Chat => egui::include_image!("../icons/chat.svg"),
-            Icon::Sprechblase => egui::include_image!("../icons/sprechblase.svg"),
+            Icon::Paket => egui::include_image!("../icons/package.svg"),
+            Icon::Satz => egui::include_image!("../icons/layers.svg"),
+            Icon::Gruppe => egui::include_image!("../icons/users.svg"),
+            Icon::Geraet => egui::include_image!("../icons/monitor.svg"),
+            Icon::Schluessel => egui::include_image!("../icons/key_round.svg"),
+            Icon::Agent => egui::include_image!("../icons/bot.svg"),
             Icon::Papierkorb => egui::include_image!("../icons/trash.svg"),
             Icon::Kopieren => egui::include_image!("../icons/copy.svg"),
-            Icon::Reagieren => egui::include_image!("../icons/react.svg"),
             Icon::Server => egui::include_image!("../icons/server.svg"),
-            Icon::Leute => egui::include_image!("../icons/users.svg"),
             Icon::Protokoll => egui::include_image!("../icons/log.svg"),
             Icon::Sperre => egui::include_image!("../icons/ban.svg"),
             Icon::Start => egui::include_image!("../icons/play.svg"),
             Icon::Stopp => egui::include_image!("../icons/stop.svg"),
-            Icon::Senden => egui::include_image!("../icons/send.svg"),
+            Icon::Haken => egui::include_image!("../icons/check.svg"),
+            Icon::Hinweis => egui::include_image!("../icons/circle_alert.svg"),
+            Icon::Bearbeiten => egui::include_image!("../icons/pencil.svg"),
+            Icon::Hochladen => egui::include_image!("../icons/upload.svg"),
+            Icon::Suchen => egui::include_image!("../icons/search.svg"),
             Icon::Warnung => egui::include_image!("../icons/warning.svg"),
-            Icon::Anhang => egui::include_image!("../icons/anhang.svg"),
             Icon::Datei => egui::include_image!("../icons/datei.svg"),
-            Icon::Film => egui::include_image!("../icons/film.svg"),
             Icon::Herunterladen => egui::include_image!("../icons/herunterladen.svg"),
             Icon::Extern => egui::include_image!("../icons/external.svg"),
-            Icon::Smiley => egui::include_image!("../icons/smiley.svg"),
         }
     }
 
@@ -493,9 +283,8 @@ pub fn hauptknopf_mit(ui: &mut egui::Ui, f: &Farben, icon: Icon, text: &str) -> 
     )
 }
 
-// ---- Seiten und Formulare: einheitlich in beiden Fenstern ----------------
+// ---- Seiten und Formulare ------------------------------------------------
 
-/// Größte Breite des Inhalts einer Seite — lange Zeilen lesen sich schlecht.
 /// Größte Breite eines Eingabefelds — lange Felder lesen sich schlecht,
 /// und alle Felder einer Seite sind gleich breit.
 pub const FELDBREITE_MAX: f32 = thema::SPACE_8 * 10.0;
@@ -678,6 +467,13 @@ pub fn auswahl<T: PartialEq + Copy>(
     geaendert
 }
 
+/// Häkchen mit Beschriftung. egui setzt auf Häkchen keinen Hand-Cursor — hier
+/// steht er (AGENTS.md §2.12).
+pub fn haken(ui: &mut egui::Ui, an: &mut bool, beschriftung: &str) -> egui::Response {
+    ui.add(egui::Checkbox::new(an, beschriftung))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// Zustand als kleines Schild: Quadrat in der Statusfarbe, Text daneben.
 pub fn status(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str) -> egui::Response {
     ui.horizontal(|ui| {
@@ -715,13 +511,25 @@ pub fn kopierbar(ui: &mut egui::Ui, f: &Farben, wert: &str, kopieren: &str) {
 mod tests {
     use super::*;
 
+    /// Jedes neue Icon hat eine Datei: der Summentyp verhindert, dass eine
+    /// Ansicht ein Icon verlangt, das es nicht gibt.
     #[test]
-    fn schwelle_aus_der_position_im_balken() {
-        assert_eq!(wert_aus_position(10.0, 10.0, 200.0), 0);
-        assert_eq!(wert_aus_position(110.0, 10.0, 200.0), 50);
-        assert_eq!(wert_aus_position(210.0, 10.0, 200.0), 100);
-        assert_eq!(wert_aus_position(-50.0, 10.0, 200.0), 0, "links daneben");
-        assert_eq!(wert_aus_position(999.0, 10.0, 200.0), 100, "rechts daneben");
-        assert_eq!(wert_aus_position(5.0, 0.0, 0.0), 0, "ohne Breite");
+    fn jedes_icon_hat_eine_quelle() {
+        for icon in [
+            Icon::Paket,
+            Icon::Satz,
+            Icon::Gruppe,
+            Icon::Geraet,
+            Icon::Schluessel,
+            Icon::Agent,
+            Icon::Haken,
+            Icon::Hinweis,
+            Icon::Bearbeiten,
+            Icon::Hochladen,
+            Icon::Suchen,
+        ] {
+            let quelle: egui::ImageSource<'static> = icon.quelle();
+            let _ = quelle;
+        }
     }
 }
