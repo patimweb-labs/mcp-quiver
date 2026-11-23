@@ -384,7 +384,7 @@ fn agent_koppeln_zeigt_token_und_endpunkt() {
     drop(aktionen);
 
     // Token, Endpunkt und der Schnipsel für die gewählte Art stehen im Dialog.
-    assert!(h.query_by_label(TOKEN).is_some());
+    assert!(h.query_all_by_label(TOKEN).count() >= 1);
     assert!(h
         .query_by_label("Das Token wird nur einmal angezeigt.")
         .is_some());
