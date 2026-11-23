@@ -2,8 +2,8 @@
 
 **English:** [README.md](README.md)
 
-> **Stand: Konzept.** Noch nichts zu installieren – das Repo enthält bisher die
-> Spezifikation ([SPEC.md](SPEC.md)).
+> **Stand: MVP in Arbeit.** Server, Client und Admin-Oberfläche funktionieren Ende zu Ende;
+> Umfang in [SPEC.md](SPEC.md) §0, bekannte Lücken in [docs/offen.md](docs/offen.md).
 
 **Ein Köcher voller Tools für alle deine Agenten.** mcp-quiver ist eine zentrale
 Bibliothek von [MCP](https://modelcontextprotocol.io/)-Tools und ein kleiner
@@ -49,6 +49,17 @@ Vue und sieht genauso aus wie der Client.
 
 - **Server:** ein Container-Image (Docker, Azure Container Apps, überall).
 - **Client:** macOS, Windows und Linux.
+
+## Server starten (Docker)
+
+```bash
+docker build -t mcp-quiver-server .
+docker run -d --name quiver -p 8740:8740 -v quiver-daten:/daten mcp-quiver-server
+docker exec quiver cat /daten/admin-token   # Admin-Token, beim ersten Start erzeugt
+```
+
+Dann `http://localhost:8740` öffnen und mit dem Admin-Token anmelden. Ohne Docker-Hub-Login
+mit `--build-arg BASIS=public.ecr.aws/docker/library` bauen.
 
 ## Entwicklung
 

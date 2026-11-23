@@ -2,8 +2,8 @@
 
 **Deutsch:** [README.de.md](README.de.md)
 
-> **Status: concept.** Nothing to install yet – this repository currently holds
-> the specification ([SPEC.md](SPEC.md)).
+> **Status: MVP in progress.** Server, client and admin interface work end to end;
+> see [SPEC.md](SPEC.md) §0 for the scope and [docs/offen.md](docs/offen.md) for known gaps.
 
 **One quiver of tools for all your agents.** mcp-quiver is a central library of
 [MCP](https://modelcontextprotocol.io/) tools plus a small client on every
@@ -47,6 +47,17 @@ and looks exactly like the client.
 
 - **Server:** one container image (Docker, Azure Container Apps, anywhere).
 - **Client:** macOS, Windows and Linux.
+
+## Run the server (Docker)
+
+```bash
+docker build -t mcp-quiver-server .
+docker run -d --name quiver -p 8740:8740 -v quiver-daten:/daten mcp-quiver-server
+docker exec quiver cat /daten/admin-token   # admin token, created on first start
+```
+
+Then open `http://localhost:8740` and sign in with the admin token. Without a Docker Hub
+login, build with `--build-arg BASIS=public.ecr.aws/docker/library`.
 
 ## Development
 
