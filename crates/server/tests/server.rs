@@ -242,6 +242,7 @@ fn eintrag(id: &str) -> Eintrag {
         titel: format!("Titel {id}"),
         beschreibung: "Ein Testeintrag".into(),
         aktiv: true,
+        anmeldung: None,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "npx".into(),

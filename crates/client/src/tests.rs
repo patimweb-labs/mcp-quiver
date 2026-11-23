@@ -31,6 +31,7 @@ fn eintrag(id: &str) -> Eintrag {
         titel: format!("Titel {id}"),
         beschreibung: format!("Beschreibung {id}"),
         aktiv: true,
+        anmeldung: None,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "echo".into(),

@@ -24,6 +24,7 @@
 //!     },
 //!     felder: Vec::new(),
 //!     aktiv: true,
+//!     anmeldung: None,
 //! };
 //! assert_eq!(importieren(&exportieren(&eintrag)).unwrap(), eintrag);
 //! ```
@@ -112,6 +113,7 @@ pub fn importieren(server_json: &Value) -> Result<Eintrag, ImportFehler> {
         laufzeit,
         felder,
         aktiv: true,
+        anmeldung: None,
     })
 }
 

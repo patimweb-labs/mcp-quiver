@@ -329,6 +329,7 @@ mod tests {
             },
             felder: Vec::new(),
             aktiv: true,
+            anmeldung: None,
         }
     }
 

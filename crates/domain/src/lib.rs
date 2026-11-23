@@ -125,6 +125,26 @@ pub struct Eintrag {
     /// ausgeführt. Fehlt das Feld (ältere Daten), gilt der Eintrag als aktiv.
     #[serde(default = "wahr")]
     pub aktiv: bool,
+    /// Braucht das Tool eine Anmeldung des Users (z. B. Microsoft im Browser)?
+    /// Dann bietet das Client-Fenster „Anmelden“ an; ein Agent löst sie nie aus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anmeldung: Option<Anmeldung>,
+}
+
+/// Wie der Client die Anmeldung eines `Stdio`-Tools steuert (SPEC.md §7).
+///
+/// Jeder Befehl ist eine Argumentliste für **dasselbe** Programm mit **derselben**
+/// Umgebung wie die Laufzeit des Eintrags (Platzhalter `${feld}` gelten auch hier).
+/// Beispiel quiver-m365: `["anmelden"]`, `["status"]`, `["abmelden"]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anmeldung {
+    /// Öffnet den Browser, wartet auf die Anmeldung, Exit 0 = angemeldet.
+    pub anmelden: Vec<String>,
+    /// Exit 0 = angemeldet, Exit 1 = nicht angemeldet, sonst Fehler.
+    /// Die erste Zeile von stdout ist der Anzeigename des Kontos (optional).
+    pub status: Vec<String>,
+    /// Exit 0 = abgemeldet.
+    pub abmelden: Vec<String>,
 }
 
 /// Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt.

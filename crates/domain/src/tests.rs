@@ -28,6 +28,7 @@ fn eintrag(id: &str) -> Eintrag {
             feld("token", Quelle::Geheim),
         ],
         aktiv: true,
+        anmeldung: None,
     }
 }
 
