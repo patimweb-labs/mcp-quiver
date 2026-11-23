@@ -93,7 +93,15 @@ Themes aus denselben Tokens. Die Bildschirmfotos erzeugt der Oberflächentest
 
 ```bash
 QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
+QUIVER_BILDER=docs/bilder cargo test -p quiver-oberflaeche --test muster
 ```
+
+Der `muster`-Test zeichnet die Vergleichsseite, die es in der Verwaltung unter
+`/muster` gibt (nur im Entwicklungsbau); beide lesen dieselben Token-Dateien,
+deshalb unterscheiden sich die Bilder nur in der Schriftglättung:
+
+![Musterseite, egui](docs/bilder/muster-egui-dark.png)
+![Musterseite, Vue](docs/bilder/muster-vue-dark.png)
 
 ![Client-Fenster, dunkel](docs/bilder/fenster-dark-tools.png)
 ![Client-Fenster, hell](docs/bilder/fenster-light-tools.png)

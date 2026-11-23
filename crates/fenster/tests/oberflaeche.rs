@@ -593,9 +593,10 @@ fn theme_und_sprache_landen_im_profil() {
     h.run();
     // Der erste Bild schreibt den Standard.
     assert_eq!(Einstellungen::laden(&ordner).thema(), Thema::Dunkel);
-    h.get_by_role_and_label(Role::Button, "Mono").click();
+    h.get_by_role_and_label(Role::RadioButton, "Mono").click();
     h.run();
-    h.get_by_role_and_label(Role::Button, "English").click();
+    h.get_by_role_and_label(Role::RadioButton, "English")
+        .click();
     h.run();
     let gespeichert = Einstellungen::laden(&ordner);
     assert_eq!(gespeichert.thema(), Thema::Mono);

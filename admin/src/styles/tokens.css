@@ -95,11 +95,16 @@
   --wp-radius-none: 0;
   --wp-radius-pill: 0;
   --wp-radius-sm: 0;
+  --wp-size-akzentbalken: 2px;
   --wp-size-border: 1px;
   --wp-size-control-lg: 40px;
   --wp-size-control-md: 32px;
+  --wp-size-control-padding: 14px;
   --wp-size-control-sm: 28px;
   --wp-size-focus: 2px;
+  --wp-size-kopf: 62px;
+  --wp-size-navzeile: 28px;
+  --wp-size-seitenleiste: 192px;
   --wp-size-titlebar-macos: 68px;
   --wp-space-0: 0;
   --wp-space-1: 4px;

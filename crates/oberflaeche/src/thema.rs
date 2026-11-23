@@ -167,8 +167,15 @@ pub fn anwenden(ctx: &egui::Context, thema: Thema) {
 
     let s = &mut style.spacing;
     s.item_spacing = egui::vec2(SPACE_2, SPACE_2);
-    s.button_padding = egui::vec2(SPACE_3, SPACE_1);
-    s.interact_size.y = SIZE_CONTROL_SM;
+    // Ein Knopf ist so hoch wie ein Bedienelement (`control-md`) und trägt
+    // 14 px Polster links und rechts wie der Knopf der Verwaltung. Im Browser
+    // zählt der 1-px-Rahmen zum Kasten, in egui liegt er innen — deshalb hier
+    // ein Pixel mehr, sonst wäre der Knopf zwei Pixel schmaler (§2.11).
+    s.button_padding = egui::vec2(SIZE_CONTROL_PADDING + SIZE_BORDER, SPACE_0);
+    s.interact_size.y = SIZE_CONTROL_MD;
+    // Zeichen und Text stehen 8 px auseinander — wie in den Bausteinen der
+    // Verwaltung.
+    s.icon_spacing = SPACE_2;
     s.window_margin = egui::Margin::same(SPACE_4 as i8);
     s.menu_margin = egui::Margin::same(SPACE_1 as i8);
 
@@ -295,6 +302,20 @@ mod tests {
                 "{name}: Schrift auf dem Akzent ist zu schwach"
             );
         }
+    }
+
+    /// Das gemeinsame Maß von egui und Vue (AGENTS.md §2.11). Die Werte
+    /// stehen in `tokens/primitives.tokens.json`; hier wird nur geprüft, dass
+    /// sie auch ankommen — und dass niemand sie unterwegs ändert.
+    #[test]
+    fn gemeinsames_mass() {
+        assert_eq!(SIZE_KOPF, 62.0, "Kopfhöhe");
+        assert_eq!(SIZE_SEITENLEISTE, 192.0, "Breite der Seitenleiste");
+        assert_eq!(SIZE_NAVZEILE, 28.0, "Höhe einer Zeile der Seitenleiste");
+        assert_eq!(SIZE_AKZENTBALKEN, 2.0, "Breite des Akzentbalkens");
+        assert_eq!(SIZE_CONTROL_SM, 28.0, "kleines Bedienelement (Segment)");
+        assert_eq!(SIZE_CONTROL_MD, 32.0, "Knopf und Eingabefeld");
+        assert_eq!(SIZE_CONTROL_PADDING, 14.0, "Polster eines Knopfes");
     }
 
     #[test]

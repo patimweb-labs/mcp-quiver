@@ -44,9 +44,11 @@ pub fn hinweis(ui: &mut egui::Ui, sicht: &Sicht) {
     ui.add_space(crate::thema::SPACE_4);
 }
 
-/// Ein Abschnitt mit Abstand darunter — Karten stehen nie aneinander.
+/// Ein Abschnitt mit Abstand darunter — Karten stehen nie aneinander. Die
+/// 8 px plus den Abstand zwischen zwei Elementen (8 px) ergeben die 16 px,
+/// die `.seite` in der Verwaltung zwischen zwei Karten setzt.
 pub fn abstand(ui: &mut egui::Ui) {
-    ui.add_space(crate::thema::SPACE_4);
+    ui.add_space(crate::thema::SPACE_2);
 }
 
 /// Ein Titel in der fetten Schrift (Karteninhalt, Dialoge).

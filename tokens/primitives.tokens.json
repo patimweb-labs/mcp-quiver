@@ -237,6 +237,18 @@
   },
   "size": {
     "$type": "dimension",
+    "kopf": {
+      "$value": "62px"
+    },
+    "seitenleiste": {
+      "$value": "192px"
+    },
+    "navzeile": {
+      "$value": "28px"
+    },
+    "akzentbalken": {
+      "$value": "2px"
+    },
     "control-sm": {
       "$value": "28px"
     },
@@ -245,6 +257,9 @@
     },
     "control-lg": {
       "$value": "40px"
+    },
+    "control-padding": {
+      "$value": "14px"
     },
     "border": {
       "$value": "1px"

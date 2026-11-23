@@ -56,7 +56,7 @@ fn einbinden(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
                 Some(&t(sprache, "verbindung.server_hinweis")),
                 |ui| {
                     ui.add(
-                        egui::TextEdit::singleline(&mut sicht.eingaben.server)
+                        bausteine::eingabefeld(&mut sicht.eingaben.server)
                             .hint_text("http://quiver.example:8080")
                             .desired_width(bausteine::feldbreite(ui)),
                     )
@@ -69,7 +69,7 @@ fn einbinden(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
                 Some(&t(sprache, "verbindung.code_hinweis")),
                 |ui| {
                     ui.add(
-                        egui::TextEdit::singleline(&mut sicht.eingaben.code)
+                        bausteine::eingabefeld(&mut sicht.eingaben.code)
                             .hint_text("K7QM-3XPA")
                             .desired_width(bausteine::feldbreite(ui)),
                     )

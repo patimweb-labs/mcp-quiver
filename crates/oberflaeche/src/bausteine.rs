@@ -15,10 +15,15 @@ pub fn text(f: &Farben, inhalt: impl Into<String>, art: Ton) -> RichText {
 
 /// Überschrift einer Seite mit Unterzeile.
 pub fn seitenkopf(ui: &mut egui::Ui, f: &Farben, titel: &str, unter: &str) {
+    // Titel und Unterzeile stehen 4 px auseinander, darunter folgt der Inhalt
+    // mit 32 px — dieselben Maße wie `Seitenkopf.vue` und `.seite`.
     ui.add_space(thema::SPACE_4);
-    ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_2XL, fett())));
-    ui.label(text(f, unter, Ton::Leise));
-    ui.add_space(thema::SPACE_4);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = thema::SPACE_1;
+        ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_2XL, fett())));
+        ui.label(text(f, unter, Ton::Leise));
+    });
+    ui.add_space(thema::SPACE_5);
 }
 
 /// Eine Karte: Rahmen, Titel, Inhalt.
@@ -35,11 +40,15 @@ pub fn karte<R>(
         .inner_margin(egui::Margin::same(thema::SPACE_4 as i8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_LG, fett())));
-            if let Some(u) = unter {
-                ui.label(RichText::new(u).color(f.text_muted));
-            }
-            ui.add_space(thema::SPACE_2);
+            // Titel und Unterzeile 4 px auseinander, der Inhalt 8 px darunter
+            // (`Karte.vue`).
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = thema::SPACE_1;
+                ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_LG, fett())));
+                if let Some(u) = unter {
+                    ui.label(RichText::new(u).color(f.text_muted));
+                }
+            });
             inhalt(ui)
         })
         .inner
@@ -309,7 +318,6 @@ pub fn seite<R>(ui: &mut egui::Ui, inhalt: impl FnOnce(&mut egui::Ui) -> R) -> R
                 // Nie breiter als das Fenster — sonst wüchse der Inhalt mit
                 // dem längsten Element über den Rand.
                 ui.set_max_width(ui.available_width());
-                ui.add_space(thema::SPACE_2);
                 let r = inhalt(ui);
                 ui.add_space(thema::SPACE_6);
                 r
@@ -360,6 +368,8 @@ fn formularzeile(
     benennt: bool,
     inhalt: impl FnOnce(&mut egui::Ui) -> egui::Response,
 ) -> egui::Response {
+    // `Feld.vue` hat 4 px Polster oben und unten; hier steht dasselbe.
+    ui.add_space(thema::SPACE_1);
     let nebeneinander = ui.available_width() >= FORMULAR_NEBENEINANDER;
     let verknuepfen = |a: egui::Response, l: &egui::Response| {
         if benennt {
@@ -370,8 +380,12 @@ fn formularzeile(
     };
     let antwort = if nebeneinander {
         ui.horizontal(|ui| {
-            let l = beschriftungsspalte(ui, f, beschriftung, thema::SIZE_CONTROL_SM);
+            // Beschriftung und Feld stehen 12 px auseinander — wie in der
+            // Verwaltung (`Feld.vue`).
+            ui.spacing_mut().item_spacing.x = thema::SPACE_3;
+            let l = beschriftungsspalte(ui, f, beschriftung, thema::SIZE_CONTROL_MD);
             ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = thema::SPACE_1;
                 let a = verknuepfen(inhalt(ui), &l);
                 if let Some(h) = hinweis {
                     ui.add(egui::Label::new(text(f, h, Ton::Blass).small()).wrap());
@@ -383,7 +397,8 @@ fn formularzeile(
         .inner
     } else {
         ui.vertical(|ui| {
-            let l = ui.label(text(f, beschriftung, Ton::Leise));
+            ui.spacing_mut().item_spacing.y = thema::SPACE_1;
+            let l = ui.label(text(f, beschriftung, Ton::Leise).small());
             let a = verknuepfen(inhalt(ui), &l);
             if let Some(h) = hinweis {
                 ui.add(egui::Label::new(text(f, h, Ton::Blass).small()).wrap());
@@ -408,7 +423,7 @@ fn beschriftungsspalte(
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_size(egui::vec2(BESCHRIFTUNG, hoehe));
-            ui.add(egui::Label::new(text(f, beschriftung, Ton::Leise)).truncate())
+            ui.add(egui::Label::new(text(f, beschriftung, Ton::Leise).small()).truncate())
         },
     )
     .inner
@@ -442,29 +457,220 @@ pub fn fakten(ui: &mut egui::Ui, f: &Farben, zeilen: &[(String, String, bool)]) 
     }
 }
 
-/// Auswahl aus wenigen Möglichkeiten als Reihe (Farbschema, Sprache …).
-/// Bricht um, wenn der Platz nicht reicht.
-pub fn auswahl<T: PartialEq + Copy>(
+// ---- Kopf, Seitenleiste, Segmentauswahl ---------------------------------
+
+/// Der Kopf des Fensters: links Wortmarke und Verbindungsstatus, rechts die
+/// Auswahl. Die Verwaltung baut ihn genauso (`Kopf.vue`): feste Höhe aus
+/// `size.kopf`, Inhalt mittig, 16 px Rand links und rechts (AGENTS.md §2.11).
+/// Der Rahmen unten ist die Trennlinie des Panels.
+pub fn kopf(
     ui: &mut egui::Ui,
+    f: &Farben,
+    links: impl FnOnce(&mut egui::Ui),
+    rechts: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Panel::top("kopf")
+        .exact_size(thema::SIZE_KOPF)
+        .frame(
+            egui::Frame::new()
+                .fill(f.bg_panel)
+                .inner_margin(egui::Margin::symmetric(
+                    thema::SPACE_4 as i8,
+                    thema::SPACE_2 as i8,
+                )),
+        )
+        .show(ui, |ui| {
+            egui::Sides::new()
+                .height(ui.available_height())
+                .spacing(thema::SPACE_3)
+                .shrink_left()
+                .truncate()
+                .show(ui, links, rechts);
+        });
+}
+
+/// Eine Auswahl aus wenigen Möglichkeiten als zusammenhängende Segmentreihe
+/// (Farbschema, Sprache). Gewählt ist eine Akzentfläche mit Schrift in
+/// `text-on-accent`; die Knöpfe teilen sich die Linien zwischen sich, wie
+/// `margin-left: -1px` im Browser. Höhe: `size.control-sm`, Schrift: `sm`.
+pub fn segmentauswahl<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    f: &Farben,
     wert: &mut T,
     moeglichkeiten: &[(T, String)],
 ) -> bool {
+    let schrift = egui::FontId::proportional(thema::FONT_SIZE_SM);
+    // Im Kopf füllt egui die rechte Seite von rechts nach links; dort stünde
+    // die erste Möglichkeit sonst ganz rechts. Die Liste gilt immer von links
+    // nach rechts gelesen — in beiden Welten.
+    let reihenfolge: Vec<&(T, String)> = if ui.layout().main_dir() == egui::Direction::RightToLeft {
+        moeglichkeiten.iter().rev().collect()
+    } else {
+        moeglichkeiten.iter().collect()
+    };
     let mut geaendert = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = thema::SPACE_1;
-        for (m, name) in moeglichkeiten {
+    ui.horizontal(|ui| {
+        // Die Knöpfe überlappen sich um den Rahmen: eine Linie für zwei.
+        ui.spacing_mut().item_spacing.x = -thema::SIZE_BORDER;
+        // 12 px Polster wie im Segment der Verwaltung (nicht die 15 px eines
+        // gewöhnlichen Knopfes mit 14 px Polster).
+        ui.spacing_mut().button_padding.x = thema::SPACE_3 + thema::SIZE_BORDER;
+        for (m, name) in reihenfolge {
             let gewaehlt = *wert == *m;
-            if ui
-                .add(egui::Button::selectable(gewaehlt, name.as_str()).frame_when_inactive(true))
-                .clicked()
-                && !gewaehlt
-            {
+            let (flaeche, linie, schriftfarbe) = if gewaehlt {
+                (f.accent_default, f.accent_default, f.text_on_accent)
+            } else {
+                (f.bg_raised, f.border_strong, f.text_muted)
+            };
+            // So breit wie der Text plus zweimal das Polster und den Rahmen —
+            // der Browser rechnet dasselbe.
+            let breite = ui
+                .painter()
+                .layout_no_wrap(name.clone(), schrift.clone(), schriftfarbe)
+                .rect
+                .width()
+                + 2.0 * thema::SPACE_3
+                + 2.0 * thema::SIZE_BORDER;
+            let antwort = ui.add(
+                egui::Button::new(
+                    RichText::new(name)
+                        .font(schrift.clone())
+                        .color(schriftfarbe),
+                )
+                .small()
+                .min_size(egui::vec2(breite, thema::SIZE_CONTROL_SM))
+                .fill(flaeche)
+                .stroke(Stroke::new(thema::SIZE_BORDER, linie)),
+            );
+            antwort.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::RadioButton, true, gewaehlt, name)
+            });
+            if antwort.clicked() && !gewaehlt {
                 *wert = *m;
                 geaendert = true;
             }
         }
     });
     geaendert
+}
+
+/// Ein Eintrag der Seitenleiste.
+pub struct NavEintrag<'a> {
+    pub icon: Icon,
+    pub name: &'a str,
+    pub gewaehlt: bool,
+}
+
+/// Die Seitenleiste: Abschnittsname klein in Großbuchstaben, darunter eine
+/// Zeile je Ziel (Zeichen und Name). Gewählt ist eine ruhige Fläche mit einem
+/// Akzentbalken links. Gibt den Index des angeklickten Eintrags zurück.
+pub fn seitenleiste(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    titel: &str,
+    eintraege: &[NavEintrag<'_>],
+) -> Option<usize> {
+    let mut wahl = None;
+    egui::Panel::left("seitenleiste")
+        .exact_size(thema::SIZE_SEITENLEISTE)
+        .resizable(false)
+        .frame(
+            egui::Frame::new()
+                .fill(f.bg_panel)
+                .inner_margin(egui::Margin::same(thema::SPACE_2 as i8)),
+        )
+        .show(ui, |ui| {
+            // Die Zeilen stehen dicht an dicht wie in der Verwaltung.
+            ui.spacing_mut().item_spacing.y = 0.0;
+            abschnitt(ui, f, titel);
+            for (index, eintrag) in eintraege.iter().enumerate() {
+                if navzeile(ui, f, eintrag).clicked() {
+                    wahl = Some(index);
+                }
+            }
+        });
+    wahl
+}
+
+/// Der Abschnittsname über der Liste: eine Zeile hoch wie ein Eintrag.
+fn abschnitt(ui: &mut egui::Ui, f: &Farben, titel: &str) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), thema::SIZE_NAVZEILE),
+        Sense::hover(),
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + thema::SPACE_2, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        titel.to_uppercase(),
+        egui::FontId::proportional(thema::FONT_SIZE_XS),
+        thema::ton(f, Ton::Blass),
+    );
+}
+
+/// Eine Zeile der Seitenleiste. Hand-Cursor und Name für den Screenreader
+/// kommen von hier (AGENTS.md §2.12).
+fn navzeile(ui: &mut egui::Ui, f: &Farben, eintrag: &NavEintrag<'_>) -> egui::Response {
+    let breite = ui.available_width();
+    let (rect, antwort) =
+        ui.allocate_exact_size(egui::vec2(breite, thema::SIZE_NAVZEILE), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let flaeche = if eintrag.gewaehlt {
+            f.bg_raised
+        } else if antwort.hovered() {
+            f.bg_hover
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        let (zeichenfarbe, schrift) = if eintrag.gewaehlt {
+            (f.accent_default, f.text_default)
+        } else {
+            (f.text_muted, f.text_muted)
+        };
+        let maler = ui.painter();
+        maler.rect_filled(rect, 0.0, flaeche);
+        if eintrag.gewaehlt {
+            maler.rect_filled(
+                egui::Rect::from_min_size(
+                    rect.min,
+                    egui::vec2(thema::SIZE_AKZENTBALKEN, rect.height()),
+                ),
+                0.0,
+                f.accent_default,
+            );
+        }
+        let zeichen_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.left() + thema::SPACE_2,
+                rect.center().y - thema::FONT_SIZE_MD / 2.0,
+            ),
+            egui::vec2(thema::FONT_SIZE_MD, thema::FONT_SIZE_MD),
+        );
+        eintrag
+            .icon
+            .bild(thema::FONT_SIZE_MD, zeichenfarbe)
+            .paint_at(ui, zeichen_rect);
+        ui.painter().text(
+            egui::pos2(zeichen_rect.right() + thema::SPACE_2, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            eintrag.name,
+            egui::FontId::proportional(thema::FONT_SIZE_MD),
+            schrift,
+        );
+    }
+    antwort.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, eintrag.name));
+    antwort.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Ein Eingabefeld im Maß der Verwaltung: so hoch wie ein Bedienelement, 8 px
+/// Polster und der Text mittig. egui setzt sonst das Polster der Knöpfe, dann
+/// stünde der Text am oberen Rand.
+pub fn eingabefeld(wert: &mut String) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(wert)
+        .align(egui::Align2::LEFT_CENTER)
+        .margin(egui::Margin::symmetric(
+            (thema::SPACE_2 + thema::SIZE_BORDER) as i8,
+            0,
+        ))
 }
 
 /// Häkchen mit Beschriftung. egui setzt auf Häkchen keinen Hand-Cursor — hier
@@ -476,12 +682,20 @@ pub fn haken(ui: &mut egui::Ui, an: &mut bool, beschriftung: &str) -> egui::Resp
 
 /// Zustand als kleines Schild: Quadrat in der Statusfarbe, Text daneben.
 pub fn status(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str) -> egui::Response {
-    ui.horizontal(|ui| {
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(thema::SPACE_2, thema::SPACE_2), Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, thema::ton(f, ton));
-        ui.label(text(f, beschriftung, ton));
-    })
+    // Eine Zeile ist so hoch wie eine Textzeile — nicht wie ein Bedienelement
+    // (`ui.horizontal` nähme sonst die Höhe eines Knopfes an).
+    let hoehe = thema::FONT_SIZE_MD * thema::FONT_LINE_NORMAL;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), hoehe),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = thema::SPACE_1;
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(thema::SPACE_2, thema::SPACE_2), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, thema::ton(f, ton));
+            ui.label(text(f, beschriftung, ton));
+        },
+    )
     .response
 }
 

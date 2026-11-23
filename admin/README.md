@@ -23,7 +23,7 @@ npm run dev        # Vite auf 5173; /api geht an http://127.0.0.1:8740
 npm run build      # nach admin/dist (der Server liefert sie unter / aus)
 npm run typecheck  # vue-tsc
 npm test           # vitest, reine Logik
-npm run bilder     # Bildschirmfotos (Server muss laufen)
+npm run bilder     # Bildschirmfotos: Muster immer, Verwaltung mit Server
 ```
 
 Zum Ausprobieren im Betrieb: `cargo run -p quiver-server` im Wurzelverzeichnis,
@@ -38,7 +38,9 @@ src/
   api/client.ts       fetch mit Bearer-Token; 401 führt zur Anmeldung
   logik/              reine Funktionen mit Tests (Zustände, Prüfung, Format)
   bausteine/          eigene Bausteine, gleiche Namen und Maße wie in
-                      crates/oberflaeche/src/bausteine.rs
+                      crates/oberflaeche/src/bausteine.rs: Kopf,
+                      Seitenleiste, Segmentauswahl, Karte, Status, Feld, …
+  ansichten/Muster.vue Musterseite für den Vergleich (nur im Dev-Bau)
   ansichten/          Überblick, Bibliothek, Sätze, Gruppen, Geräte
   styles/tokens.css   erzeugt aus tokens/ – nicht von Hand ändern
   styles/schriften.css IBM Plex Sans/Mono aus crates/oberflaeche/schriften
@@ -66,10 +68,25 @@ Alles Klickbare zeigt den Hand-Cursor. Das kommt aus
 und Komponenten und aus den eigenen Bausteinen (`cursor: pointer` im Baustein,
 nie in der Ansicht).
 
+## Musterseite
+
+Unter `/muster` steht im Entwicklungsbau (`npm run dev`) dieselbe Seite wie im
+Client-Fenster (`crates/oberflaeche/tests/muster.rs`): Kopf, Seitenleiste mit
+drei Einträgen, Seitenkopf, Karte mit Hauptknopf und Knopf, drei Statuszeilen,
+ein Eingabefeld. Sie braucht keine Anmeldung und zeigt keine Daten — sie ist
+der Vergleich der Maße zwischen Vue und egui (AGENTS.md §2.11). Im gebauten
+Stand gibt es sie nicht.
+
 ## Bildschirmfotos
 
-`npm run bilder` schreibt `docs/bilder/admin-{dark,light}-{bibliothek,geraete}.png`,
-damit sie neben den egui-Fotos liegen. Es braucht einen laufenden Server mit
-Daten und `admin/dist` (`npm run build`). Der Token kommt aus
-`QUIVER_ADMIN_TOKEN` oder aus `daten/admin-token`; die Adresse aus
-`QUIVER_BILD_BASIS` (Standard `http://127.0.0.1:8740`).
+`npm run bilder` schreibt zwei Sätze Bilder nach `docs/bilder/`:
+
+- `muster-vue-{dark,light}.png` (1200 × 800) — dafür startet das Skript den
+  Entwicklungs-Server selbst; es braucht weder Server noch Anmeldung. Das
+  Gegenstück erzeugt `QUIVER_BILDER=docs/bilder cargo test -p quiver-oberflaeche
+  --test muster`.
+- `admin-{dark,light}-{bibliothek,geraete}.png` — dafür muss ein Server mit
+  Daten laufen und `admin/dist` gebaut sein (`npm run build`). Der Token kommt
+  aus `QUIVER_ADMIN_TOKEN` oder aus `daten/admin-token`; die Adresse aus
+  `QUIVER_BILD_BASIS` (Standard `http://127.0.0.1:8740`). Fehlt der Token,
+  bleiben diese Bilder unverändert.

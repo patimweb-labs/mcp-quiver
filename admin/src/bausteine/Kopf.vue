@@ -1,19 +1,21 @@
 <script setup lang="ts">
-// Kopf der Verwaltung: Wortmarke links, Theme-Auswahl und Abmelden rechts.
-// Entspricht dem Kopf des Client-Fensters (bausteine::marke, thema::auswahl).
+// Kopf der Verwaltung: Wortmarke links, Farbschema und Abmelden rechts.
+// Dasselbe Muster wie `bausteine::kopf` im Client-Fenster: feste Höhe aus
+// `size.kopf`, Inhalt mittig, 16 px Rand links und rechts (AGENTS.md §2.11).
 import { LogOut } from "lucide-vue-next";
-import { WpButton, WpToggleGroup } from "@weppelmann/components";
+import { WpButton } from "@weppelmann/components";
 
 import type { Thema } from "../api/typen";
 import { THEMEN, THEMA_TEXT } from "../logik/thema";
 import Marke from "./Marke.vue";
+import Segmentauswahl from "./Segmentauswahl.vue";
 
 defineProps<{ thema: Thema }>();
 const emit = defineEmits<{ thema: [string]; abmelden: [] }>();
 
 const farbschemen = THEMEN.map((wert) => ({
-  value: wert,
-  label: THEMA_TEXT[wert],
+  wert,
+  name: THEMA_TEXT[wert],
 }));
 
 function waehleThema(wert: string): void {
@@ -25,12 +27,11 @@ function waehleThema(wert: string): void {
   <header class="kopf">
     <Marke />
     <div class="kopf__rechts">
-      <WpToggleGroup
-        :model-value="thema"
-        :options="farbschemen"
-        size="sm"
+      <Segmentauswahl
+        :wert="thema"
+        :moeglichkeiten="farbschemen"
         label="Farbschema"
-        @update:model-value="waehleThema"
+        @waehle="waehleThema"
       />
       <WpButton
         label="Abmelden"
@@ -49,8 +50,8 @@ function waehleThema(wert: string): void {
   align-items: center;
   justify-content: space-between;
   gap: var(--wp-space-3);
-  flex-wrap: wrap;
-  padding: var(--wp-space-2) var(--wp-space-4);
+  height: var(--wp-size-kopf);
+  padding-inline: var(--wp-space-4);
   background: var(--wp-color-bg-panel);
   border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
 }
@@ -59,6 +60,5 @@ function waehleThema(wert: string): void {
   display: flex;
   align-items: center;
   gap: var(--wp-space-3);
-  flex-wrap: wrap;
 }
 </style>

@@ -16,4 +16,7 @@ serde_json.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-egui_kittest = { version = "0.37" }
+egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
+# `image` gehört zu `egui_kittest` (es liefert die Bilder); hier steht es, damit
+# der Muster-Test den 8-px-Rand des Prüfgerüsts abschneiden kann.
+image = "0.25"

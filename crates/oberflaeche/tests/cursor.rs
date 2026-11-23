@@ -8,7 +8,8 @@
 use egui::CursorIcon;
 use egui_kittest::kittest::Queryable as _;
 use egui_kittest::Harness;
-use quiver_oberflaeche::bausteine::{self, Icon};
+use quiver_oberflaeche::bausteine::{self, Icon, NavEintrag};
+use quiver_oberflaeche::texte::{self, Sprache};
 use quiver_oberflaeche::thema::{self, Thema};
 
 /// Zeiger über das Element mit diesem Namen führen und den Zeiger zurückgeben.
@@ -23,6 +24,28 @@ fn zeiger_ueber(harness: &mut Harness<'_>, name: &str) -> CursorIcon {
 #[test]
 fn hand_ueber_allem_klickbaren() {
     let mut haken = false;
+    let mut thema = Thema::Dunkel;
+    let farbschemen: Vec<(Thema, String)> = Thema::ALLE
+        .iter()
+        .map(|wert| (*wert, texte::t(Sprache::De, wert.text_schluessel())))
+        .collect();
+    let eintraege = [
+        NavEintrag {
+            icon: Icon::Paket,
+            name: "Bibliothek",
+            gewaehlt: true,
+        },
+        NavEintrag {
+            icon: Icon::Satz,
+            name: "Sätze",
+            gewaehlt: false,
+        },
+        NavEintrag {
+            icon: Icon::Geraet,
+            name: "Geräte",
+            gewaehlt: false,
+        },
+    ];
     let mut harness = Harness::builder()
         .with_size(egui::vec2(360.0, 480.0))
         .with_context_setup(|ctx| {
@@ -35,9 +58,25 @@ fn hand_ueber_allem_klickbaren() {
             bausteine::knopf(ui, f, Icon::Kopieren, "Kopieren");
             bausteine::icon_knopf(ui, f, Icon::Schluessel, "Geheimnis", false);
             bausteine::haken(ui, &mut haken, "Merken");
+            bausteine::segmentauswahl(ui, f, &mut thema, &farbschemen);
+            bausteine::seitenleiste(ui, f, "Verwaltung", &eintraege);
         });
 
-    for name in ["Gerät einbinden", "Kopieren", "Geheimnis", "Merken"] {
+    for name in [
+        // Knöpfe, Häkchen
+        "Gerät einbinden",
+        "Kopieren",
+        "Geheimnis",
+        "Merken",
+        // Segmentauswahl
+        "Dunkel",
+        "Hell",
+        "Mono",
+        // Seitenleiste
+        "Bibliothek",
+        "Sätze",
+        "Geräte",
+    ] {
         assert_eq!(
             zeiger_ueber(&mut harness, name),
             CursorIcon::PointingHand,

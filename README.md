@@ -90,7 +90,15 @@ test (with a stand-in core, no server and no runtime):
 
 ```bash
 QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
+QUIVER_BILDER=docs/bilder cargo test -p quiver-oberflaeche --test muster
 ```
+
+The `muster` test draws the comparison page that the admin interface also has
+under `/muster` (development build only); both read the same token files, so
+the two images differ only in font smoothing:
+
+![Musterseite, egui](docs/bilder/muster-egui-dark.png)
+![Musterseite, Vue](docs/bilder/muster-vue-dark.png)
 
 ![Client window, dark](docs/bilder/fenster-dark-tools.png)
 ![Client window, light](docs/bilder/fenster-light-tools.png)

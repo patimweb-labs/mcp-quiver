@@ -55,8 +55,8 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                     });
                     let wert = &mut eingabe.wert;
                     bausteine::feld(ui, &f, &name, hinweis.as_deref(), |ui| {
-                        let mut feld = egui::TextEdit::singleline(wert)
-                            .desired_width(bausteine::feldbreite(ui));
+                        let mut feld =
+                            bausteine::eingabefeld(wert).desired_width(bausteine::feldbreite(ui));
                         if geheim {
                             feld = feld.password(true);
                             if gesetzt {
@@ -96,7 +96,7 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                 ui.add_space(thema::SPACE_3);
                 let feld = bausteine::feld(ui, &f, &t(sprache, "agenten.name"), None, |ui| {
                     ui.add(
-                        egui::TextEdit::singleline(name)
+                        bausteine::eingabefeld(name)
                             .hint_text("pi")
                             .desired_width(f32::INFINITY),
                     )
