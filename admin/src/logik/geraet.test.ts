@@ -1,0 +1,165 @@
+import { describe, expect, it } from "vitest";
+
+import type { EintragZustand, GeraetStand, Gruppe } from "../api/typen";
+import {
+  anzahl_mit_problemen,
+  geraete_mit_problemen,
+  gruppen_namen,
+  hat_problem,
+  problem_texte,
+  revision_kurz,
+  stand_text,
+  stand_ton,
+  wird_aktualisiert,
+  zustand_text,
+  zustand_ton,
+} from "./geraet";
+
+function stand(teil: Partial<GeraetStand> = {}): GeraetStand {
+  return {
+    geraet: {
+      id: "g1",
+      name: "Büro",
+      gruppen: ["team"],
+      gesperrt: false,
+    },
+    soll_revision: "aaaa",
+    meldung: {
+      revision: "aaaa",
+      client_version: "0.1.0",
+      eintraege: [],
+    },
+    zuletzt_gesehen: null,
+    verbunden: true,
+    ...teil,
+  };
+}
+
+describe("Eintrag-Zustand", () => {
+  it("gibt jedem Zustand eine Bedeutung", () => {
+    const faelle: [EintragZustand, string, string][] = [
+      [{ zustand: "laeuft", tools: 1 }, "gut", "Läuft · 1 Tool"],
+      [{ zustand: "laeuft", tools: 3 }, "gut", "Läuft · 3 Tools"],
+      [
+        { zustand: "wartet-auf-werte", felder: ["pfad"] },
+        "warnung",
+        "Braucht Angaben: pfad",
+      ],
+      [
+        { zustand: "wartet-auf-werte", felder: [] },
+        "warnung",
+        "Braucht Angaben",
+      ],
+      [{ zustand: "startet" }, "leise", "Startet …"],
+      [{ zustand: "fehler", text: "kaputt" }, "fehler", "Fehler: kaputt"],
+    ];
+    for (const [zustand, ton, text] of faelle) {
+      expect(zustand_ton(zustand)).toBe(ton);
+      expect(zustand_text(zustand)).toBe(text);
+    }
+  });
+});
+
+describe("wird_aktualisiert", () => {
+  it("vergleicht Soll- und gemeldete Revision", () => {
+    expect(wird_aktualisiert(stand())).toBe(false);
+    expect(wird_aktualisiert(stand({ soll_revision: "bbbb" }))).toBe(true);
+  });
+
+  it("ohne Meldung gibt es nichts zu vergleichen", () => {
+    expect(wird_aktualisiert(stand({ meldung: null }))).toBe(false);
+  });
+});
+
+describe("Probleme", () => {
+  it("erkennt Fehler und fehlende Angaben", () => {
+    expect(hat_problem(stand())).toBe(false);
+    const krank = stand({
+      meldung: {
+        revision: "aaaa",
+        client_version: "0.1.0",
+        eintraege: [
+          ["mail", { zustand: "fehler", text: "startet nicht" }],
+          ["chat", { zustand: "wartet-auf-werte", felder: ["token"] }],
+        ],
+      },
+    });
+    expect(hat_problem(krank)).toBe(true);
+    expect(problem_texte(krank, (id) => `Titel ${id}`)).toEqual([
+      "Titel chat: Braucht Angaben: token",
+      "Titel mail: Fehler: startet nicht",
+    ]);
+  });
+
+  it("sammelt nur die kranken Geräte", () => {
+    const gut = stand();
+    const krank = stand({
+      geraet: { id: "g2", name: "Keller", gruppen: [], gesperrt: false },
+      meldung: {
+        revision: "aaaa",
+        client_version: "0.1.0",
+        eintraege: [["mail", { zustand: "fehler", text: "x" }]],
+      },
+    });
+    expect(geraete_mit_problemen([gut, krank]).map((g) => g.geraet.id)).toEqual([
+      "g2",
+    ]);
+    expect(anzahl_mit_problemen([gut, krank])).toBe(1);
+  });
+});
+
+describe("stand_text", () => {
+  it("sagt, warum ein Gerät auffällt", () => {
+    expect(stand_text(stand())).toBe("aktuell");
+    expect(stand_text(stand({ soll_revision: "bbbb" }))).toBe(
+      "wird aktualisiert",
+    );
+    expect(stand_text(stand({ meldung: null }))).toBe("noch keine Meldung");
+    expect(
+      stand_text(
+        stand({
+          geraet: {
+            id: "g1",
+            name: "Büro",
+            gruppen: [],
+            gesperrt: true,
+          },
+        }),
+      ),
+    ).toBe("gesperrt");
+  });
+});
+
+describe("stand_ton", () => {
+  it("färbt gesperrt, hinkend und ungemeldet", () => {
+    expect(stand_ton(stand())).toBe("gut");
+    expect(stand_ton(stand({ soll_revision: "bbbb" }))).toBe("warnung");
+    expect(stand_ton(stand({ meldung: null }))).toBe("leise");
+    expect(
+      stand_ton(
+        stand({
+          geraet: { id: "g1", name: "Büro", gruppen: [], gesperrt: true },
+        }),
+      ),
+    ).toBe("fehler");
+  });
+});
+
+describe("Gruppen und Revision", () => {
+  const gruppen: Gruppe[] = [
+    { id: "team", titel: "Team", saetze: [] },
+    { id: "ops", titel: "Betrieb", saetze: [] },
+  ];
+
+  it("löst Kennungen in Titel auf, unbekannte bleiben Kennung", () => {
+    expect(gruppen_namen(["ops", "fehlt"], gruppen)).toEqual([
+      "Betrieb",
+      "fehlt",
+    ]);
+  });
+
+  it("kürzt lange Revisionen", () => {
+    expect(revision_kurz("kurz")).toBe("kurz");
+    expect(revision_kurz("0123456789abcdef")).toBe("0123456789ab…");
+  });
+});
