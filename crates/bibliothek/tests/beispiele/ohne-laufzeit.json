@@ -1,0 +1,19 @@
+{
+  "name": "io.github.someone/leer",
+  "description": "Hat nur unbrauchbare Transporte",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@someone/leer",
+      "version": "1.0.0",
+      "transport": { "type": "sse" }
+    }
+  ],
+  "remotes": [
+    {
+      "type": "sse",
+      "url": "https://example.com/sse"
+    }
+  ]
+}

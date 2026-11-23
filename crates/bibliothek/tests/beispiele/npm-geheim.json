@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.someone/weather",
+  "description": "Wetterdaten als MCP-Tools",
+  "version": "1.2.0",
+  "title": "Weather",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@someone/weather-mcp",
+      "version": "1.2.0",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "positional", "value": "--fast" },
+        { "type": "named", "name": "--region", "value": "emea" },
+        { "type": "named", "name": "--leise" }
+      ],
+      "environmentVariables": [
+        {
+          "name": "API_KEY",
+          "description": "Schluessel des Wetterdienstes",
+          "isRequired": true,
+          "isSecret": true,
+          "default": null
+        }
+      ]
+    }
+  ]
+}
