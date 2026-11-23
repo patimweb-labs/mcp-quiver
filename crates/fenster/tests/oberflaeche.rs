@@ -17,10 +17,10 @@ use egui_kittest::Harness;
 use quiver_client::{
     AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung,
 };
-use quiver_domain::{EintragId, FehlendesFeld, Feld, Quelle, Werte};
+use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldLink, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
 use quiver_fenster::egui::accesskit::Role;
-use quiver_fenster::egui::CursorIcon;
+use quiver_fenster::egui::{CursorIcon, OutputCommand};
 use quiver_fenster::modell::{Dialog, Meldung, Seite, Sicht};
 use quiver_fenster::profil::Einstellungen;
 use quiver_fenster::thema::Thema;
@@ -107,6 +107,31 @@ fn eintrag(
         anmeldung: None,
         einrichtung: None,
     }
+}
+
+/// Ein Eintrag wie Outline in der Aufgabe: `url` trägt die Adresse, `api_key`
+/// bekommt den Hilfe-Link „Token in Outline erstellen" (Aufgabe 13).
+fn link_eintrag() -> EintragSicht {
+    let mut schluessel = feld("api_key", Quelle::Geheim, "Token aus Outline");
+    schluessel.link = Some(FeldLink {
+        text: "Token in Outline erstellen".into(),
+        url: "${url}/settings/api-and-access".into(),
+    });
+    let mut eintrag = eintrag(
+        "outline",
+        "Outline",
+        "Wiki lesen und schreiben.",
+        EintragZustand::WartetAufWerte {
+            felder: vec!["url".into()],
+        },
+        vec![feld("url", Quelle::Client, "Adresse der Wiki"), schluessel],
+    );
+    eintrag.fehlende = vec![FehlendesFeld {
+        name: "url".into(),
+        beschreibung: "Adresse der Wiki".into(),
+        quelle: Quelle::Client,
+    }];
+    eintrag
 }
 
 /// Drei Einträge, drei Zustände — so viele, wie die Seite unterscheiden muss.
@@ -392,6 +417,100 @@ fn braucht_angaben_oeffnet_die_eingaben() {
     );
     assert!(geheim.is_empty(), "leeres Geheimnis überschreibt nichts");
     assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+#[test]
+fn angaben_zeigen_den_hilfe_link() {
+    let mut h = fenster(
+        modell(verbunden(), vec![link_eintrag()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+        .click();
+    h.run();
+    assert!(matches!(h.state().0.sicht.dialog, Dialog::Werte { .. }));
+
+    // Ohne Adresse: der Knopf steht da, ist aber gesperrt und sagt, was fehlt.
+    let knopf = h.get_by_role_and_label(Role::Button, "Token in Outline erstellen");
+    assert!(
+        knopf.accesskit_node().is_disabled(),
+        "ohne ${{url}} darf der Link nicht aufgehen"
+    );
+    knopf.hover();
+    h.run_steps(20);
+    assert!(
+        h.query_by_label("Erst url eintragen").is_some(),
+        "der gesperrte Knopf nennt das fehlende Feld"
+    );
+
+    // Adresse eintragen: der Knopf wird aktiv, ohne Speichern.
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        eingaben[0].wert = "https://wiki.example.de".into();
+    }
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Token in Outline erstellen");
+    assert!(
+        !knopf.accesskit_node().is_disabled(),
+        "mit Adresse ist der Link aktiv"
+    );
+    // Hand-Cursor auf dem Knopf (AGENTS.md §2.12).
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf dem Hilfe-Link"
+    );
+
+    // Der Klick öffnet den Standardbrowser mit der aufgelösten Adresse.
+    h.get_by_role_and_label(Role::Button, "Token in Outline erstellen")
+        .click();
+    h.step();
+    let geoeffnet = h.output().platform_output.commands.iter().any(|befehl| {
+        matches!(befehl, OutputCommand::OpenUrl(url) if url.url == "https://wiki.example.de/settings/api-and-access")
+    });
+    assert!(
+        geoeffnet,
+        "die Adresse muss geöffnet werden: {:?}",
+        h.output().platform_output.commands
+    );
+}
+
+/// Der Angaben-Dialog mit Hilfe-Link (`fenster-{dark,light}-angaben.png`).
+#[test]
+fn bildschirmfoto_der_angaben() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in [Thema::Dunkel, Thema::Hell] {
+        let mut h = fenster(
+            modell(verbunden(), vec![link_eintrag()]),
+            Some(Seite::Tools),
+            thema,
+            gross(),
+        );
+        h.run();
+        h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+            .click();
+        h.run();
+        // Mit Adresse: der Link steht aktiv neben dem Token-Feld.
+        if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+            eingaben[0].wert = "https://wiki.example.de".into();
+        }
+        h.run();
+        assert!(
+            h.query_by_label("Token in Outline erstellen").is_some(),
+            "{}: der Link-Knopf fehlt",
+            thema.name()
+        );
+        let bild = h.render().expect("zeichnen (wgpu)");
+        bild.save(ziel.join(format!("fenster-{}-angaben.png", thema.name())))
+            .expect("Bild schreibbar");
+    }
 }
 
 #[test]

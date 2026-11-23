@@ -6,6 +6,7 @@ import type {
   Eintrag,
   Einrichtung,
   Feld,
+  FeldLink,
   Laufzeit,
   Quelle,
   Werte,
@@ -41,7 +42,21 @@ export function neues_feld(): Feld {
     quelle: "server",
     pflicht: true,
     standard: null,
+    link: null,
   };
+}
+
+/**
+ * Ein Hilfe-Link beim Säubern: Ränder weg, und beide Teile leer heißt „kein
+ * Link“ (`null`, wie `Option<FeldLink>` in Rust).
+ */
+export function link_saeubern(
+  link: FeldLink | null | undefined,
+): FeldLink | null {
+  const text = link?.text.trim() ?? "";
+  const url = link?.url.trim() ?? "";
+  if (text.length === 0 && url.length === 0) return null;
+  return { text, url };
 }
 
 /**
@@ -254,6 +269,7 @@ export function eintrag_saeubern(eintrag: Eintrag): Eintrag {
       name: feld.name.trim(),
       beschreibung: feld.beschreibung.trim(),
       standard: standard.length > 0 ? standard : null,
+      link: link_saeubern(feld.link),
     };
   });
   if (sauber.laufzeit.art === "stdio") {

@@ -22,6 +22,7 @@ import {
   laufzeit_text,
   leere_anmeldung,
   leere_einrichtung,
+  link_saeubern,
   neuer_eintrag,
   neues_feld,
   server_felder,
@@ -51,6 +52,7 @@ function beispiel(): Eintrag {
         quelle: "server",
         pflicht: true,
         standard: null,
+        link: null,
       },
       {
         name: "passwort",
@@ -58,6 +60,7 @@ function beispiel(): Eintrag {
         quelle: "geheim",
         pflicht: true,
         standard: null,
+        link: null,
       },
     ],
     aktiv: true,
@@ -136,6 +139,41 @@ describe("Server-Felder", () => {
         unbekannt: "x",
       }),
     ).toEqual({ konto: "ich@example.org" });
+  });
+});
+
+describe("Hilfe-Link", () => {
+  it("nimmt Text und Adresse durch das Säubern", () => {
+    const eintrag = beispiel();
+    eintrag.felder[1].link = {
+      text: "  Token in Outline erstellen  ",
+      url: "  ${url}/settings/api-and-access  ",
+    };
+    expect(eintrag_saeubern(eintrag).felder[1].link).toEqual({
+      text: "Token in Outline erstellen",
+      url: "${url}/settings/api-and-access",
+    });
+  });
+
+  it("macht aus zwei leeren Angaben keinen Link", () => {
+    expect(link_saeubern({ text: "  ", url: "" })).toBeNull();
+    expect(link_saeubern(null)).toBeNull();
+    expect(link_saeubern(undefined)).toBeNull();
+    // Ein neues Feld bringt keinen Link mit.
+    expect(neues_feld().link).toBeNull();
+    const eintrag = beispiel();
+    eintrag.felder[0].link = { text: " ", url: "\n" };
+    const sauber = eintrag_saeubern(eintrag);
+    expect(sauber.felder[0].link).toBeNull();
+    // Das ist gültiges JSON für `Option<FeldLink>`.
+    expect(JSON.parse(JSON.stringify(sauber)).felder[0].link).toBeNull();
+  });
+
+  it("behält eine halbe Angabe, damit nichts unbemerkt verschwindet", () => {
+    expect(link_saeubern({ text: "Token", url: " " })).toEqual({
+      text: "Token",
+      url: "",
+    });
   });
 });
 

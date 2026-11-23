@@ -237,6 +237,17 @@ function quelleSetzen(index: number, wert: string | null): void {
   }
 }
 
+/**
+ * Link-Text und Link-Adresse eines Felds setzen (Aufgabe 13). Solange der
+ * Link leer ist, steht dort ein leerer Text; `eintrag_saeubern` macht daraus
+ * `null`.
+ */
+function linkSetzen(index: number, teil: "text" | "url", wert: string): void {
+  const feld = entwurf.value.felder[index];
+  const link = feld.link ?? { text: "", url: "" };
+  feld.link = teil === "text" ? { ...link, text: wert } : { ...link, url: wert };
+}
+
 async function speichern(): Promise<void> {
   const sauber = eintrag_saeubern(entwurf.value);
   fehler.value = eintrag_pruefen(sauber);
@@ -597,6 +608,33 @@ async function speichern(): Promise<void> {
               />
             </template>
           </Feld>
+
+          <div class="feldkarte__zeile">
+            <Feld beschriftung="Link-Text" hinweis="Leer heißt: kein Hilfe-Link.">
+              <template #default="{ id }">
+                <WpInput
+                  :id="id"
+                  :model-value="feld.link?.text ?? ''"
+                  placeholder="Token in Outline erstellen"
+                  @update:model-value="(wert) => linkSetzen(i, 'text', wert)"
+                />
+              </template>
+            </Feld>
+
+            <Feld
+              beschriftung="Link-Adresse"
+              hinweis="Platzhalter ${feld} sind erlaubt."
+            >
+              <template #default="{ id }">
+                <WpInput
+                  :id="id"
+                  :model-value="feld.link?.url ?? ''"
+                  placeholder="${url}/settings/api-and-access"
+                  @update:model-value="(wert) => linkSetzen(i, 'url', wert)"
+                />
+              </template>
+            </Feld>
+          </div>
         </fieldset>
       </div>
 

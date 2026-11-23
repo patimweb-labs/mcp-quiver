@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use quiver_client::{EintragSicht, Modell};
-use quiver_domain::EintragId;
+use quiver_domain::{EintragId, FeldLink};
 
 use crate::app::Aktion;
 use crate::bausteine::Icon;
@@ -70,6 +70,9 @@ pub struct Feldeingabe {
     pub gesetzt: bool,
     /// Was im Feld steht. Leer heißt bei Geheimnissen „unverändert".
     pub wert: String,
+    /// Hilfe-Link neben dem Feld (Aufgabe 13), z. B. „Token in Outline
+    /// erstellen". Er darf die Eingaben des Dialogs als Platzhalter nutzen.
+    pub link: Option<FeldLink>,
 }
 
 /// Der offene Dialog — höchstens einer.

@@ -211,6 +211,10 @@
     "de": "Pflichtfeld",
     "en": "required"
   },
+  "tools.link_erst": {
+    "de": "Erst {} eintragen",
+    "en": "Enter {} first"
+  },
   "agenten.sub": {
     "de": "Wer den Endpunkt dieses Geräts benutzen darf.",
     "en": "Who may use this device's endpoint."

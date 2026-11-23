@@ -130,6 +130,15 @@ an agent. In the admin interface the command sits in the *Einrichtung
 
 ![Setup on the tools card](docs/bilder/fenster-dark-einrichten.png)
 
+Some fields carry a **help link** next to the input (admin: *Link text* and
+*Link address*, `${feld}` placeholders allowed — for example
+`${url}/settings/api-and-access`). The button is only clickable once every
+placeholder can be filled from what stands in the dialog right now; otherwise
+it is greyed out and says which field is still missing. A click opens the
+address in the default browser — nothing else, no login, no listener.
+
+![Settings dialog with a help link](docs/bilder/fenster-dark-angaben.png)
+
 Environment (all optional):
 
 | Variable | Meaning |

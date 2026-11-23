@@ -6,7 +6,7 @@
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
 use quiver_client::{AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung};
-use quiver_domain::{FehlendesFeld, Quelle, Werte};
+use quiver_domain::{link_aufloesen, FehlendesFeld, FeldLink, Quelle, Werte};
 use quiver_protocol::EintragZustand;
 
 use crate::modell::{Feldeingabe, Seite};
@@ -303,9 +303,78 @@ pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
                         .cloned()
                         .unwrap_or_default()
                 },
+                link: feld.link.clone(),
             }
         })
         .collect()
+}
+
+/// Die Werte, die der Dialog nicht hergibt: die Standardwerte der Felder
+/// (Aufgabe 13). Was der Server selbst einsetzt, kennt das Fenster nicht —
+/// `EintragSicht` führt nur Client- und Geheimfelder.
+pub fn link_basis(eintrag: &EintragSicht) -> Werte {
+    eintrag
+        .felder
+        .iter()
+        .filter_map(|feld| {
+            let wert = feld.standard.as_deref()?.trim();
+            (!wert.is_empty()).then(|| (feld.name.clone(), wert.to_string()))
+        })
+        .collect()
+}
+
+/// Die Werte, mit denen ein Hilfe-Link aufgelöst wird: erst die Basis, dann
+/// die **aktuellen** Eingaben des Dialogs — sie gewinnen (Aufgabe 13: „nicht
+/// nur die gespeicherten Werte"). Leere Eingaben zählen nicht.
+pub fn link_werte(eingaben: &[Feldeingabe], basis: &Werte) -> Werte {
+    let mut werte = basis.clone();
+    for eingabe in eingaben {
+        let wert = eingabe.wert.trim();
+        if !wert.is_empty() {
+            werte.insert(eingabe.name.clone(), wert.to_string());
+        }
+    }
+    werte
+}
+
+/// Die Adresse des Hilfe-Links oder `None`, solange ein verwendeter
+/// Platzhalter ohne Wert ist (dann bleibt der Knopf gesperrt).
+pub fn link_adresse(link: &FeldLink, eingaben: &[Feldeingabe], basis: &Werte) -> Option<String> {
+    link_aufloesen(link, &link_werte(eingaben, basis))
+}
+
+/// Welche Felder noch fehlen, damit der Link aufgeht: die Platzhalter in
+/// `link.url`, für die kein Wert da ist. Leer heißt: der Link ist fertig.
+pub fn link_fehlende(link: &FeldLink, eingaben: &[Feldeingabe], basis: &Werte) -> Vec<String> {
+    let werte = link_werte(eingaben, basis);
+    platzhalter(&link.url)
+        .into_iter()
+        .filter(|name| !werte.contains_key(name))
+        .collect()
+}
+
+/// Der Tooltip des gesperrten Knopfs: „Erst <Feld> eintragen".
+pub fn link_hinweis(fehlende: &[String], sprache: Sprache) -> String {
+    tf(sprache, "tools.link_erst", &[&fehlende.join(", ")])
+}
+
+/// Die Namen in `${...}` einer Vorlage, in der Reihenfolge des Auftretens und
+/// ohne Doppelte.
+fn platzhalter(text: &str) -> Vec<String> {
+    let mut namen: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        let nach = &rest[start + 2..];
+        let Some(ende) = nach.find('}') else {
+            break;
+        };
+        let name = &nach[..ende];
+        if !namen.iter().any(|vorhanden| vorhanden == name) {
+            namen.push(name.to_string());
+        }
+        rest = &nach[ende + 1..];
+    }
+    namen
 }
 
 /// Die Eingaben aufteilen in lokale und geheime Werte. Ein leeres Geheimnis
@@ -828,6 +897,103 @@ mod tests {
         let (lokal, geheim) = werte_splitten(&eingaben);
         assert_eq!(lokal.get("PFAD").map(String::as_str), Some(""));
         assert_eq!(geheim.get("SCHLUESSEL").map(String::as_str), Some("s3cret"));
+    }
+
+    /// Outline aus der Aufgabe: `url` trägt die Adresse, `api_key` den Link.
+    fn eintrag_mit_link() -> EintragSicht {
+        let mut eintrag = eintrag();
+        eintrag.felder = vec![
+            Feld {
+                name: "url".into(),
+                beschreibung: "Adresse der Wiki".into(),
+                quelle: Quelle::Client,
+                pflicht: true,
+                standard: None,
+                link: None,
+            },
+            Feld {
+                name: "api_key".into(),
+                beschreibung: "Token".into(),
+                quelle: Quelle::Geheim,
+                pflicht: true,
+                standard: None,
+                link: Some(FeldLink {
+                    text: "Token in Outline erstellen".into(),
+                    url: "${url}/settings/api-and-access".into(),
+                }),
+            },
+        ];
+        eintrag.lokale_werte = Werte::new();
+        eintrag.geheim_gesetzt = Vec::new();
+        eintrag
+    }
+
+    #[test]
+    fn link_knopf_folgt_den_aktuellen_eingaben() {
+        let eintrag = eintrag_mit_link();
+        let mut eingaben = eingaben(&eintrag);
+        let link = eingaben[1].link.clone().expect("Link am zweiten Feld");
+        assert!(eingaben[0].link.is_none(), "url ohne Link");
+        let basis = link_basis(&eintrag);
+
+        // Ohne Adresse bleibt der Knopf gesperrt — und sagt, was fehlt.
+        assert_eq!(link_adresse(&link, &eingaben, &basis), None);
+        assert_eq!(link_fehlende(&link, &eingaben, &basis), vec!["url"]);
+        assert_eq!(
+            link_hinweis(&link_fehlende(&link, &eingaben, &basis), Sprache::De),
+            "Erst url eintragen"
+        );
+
+        // Die Eingabe im Dialog zählt, nicht nur der gespeicherte Wert (der
+        // hier leer ist). Ein Schrägstrich am Ende stört nicht.
+        eingaben[0].wert = " https://wiki.example.de/ ".into();
+        assert_eq!(
+            link_adresse(&link, &eingaben, &basis).as_deref(),
+            Some("https://wiki.example.de/settings/api-and-access")
+        );
+        assert!(link_fehlende(&link, &eingaben, &basis).is_empty());
+
+        // Nur http(s) kommt durch — auch wenn alles ausgefüllt ist.
+        eingaben[0].wert = "javascript:alert(1)".into();
+        assert_eq!(link_adresse(&link, &eingaben, &basis), None);
+    }
+
+    #[test]
+    fn link_basis_sind_die_standardwerte() {
+        let mut eintrag = eintrag_mit_link();
+        eintrag.felder[0].standard = Some(" https://wiki.example.de ".into());
+        let basis = link_basis(&eintrag);
+        assert_eq!(
+            basis.get("url").map(String::as_str),
+            Some("https://wiki.example.de")
+        );
+        assert!(
+            !basis.contains_key("api_key"),
+            "leere Standards zählen nicht"
+        );
+
+        // Standard füllt die Lücke, die Eingabe gewinnt.
+        let mut eingaben = eingaben(&eintrag);
+        let link = eingaben[1].link.clone().expect("Link am zweiten Feld");
+        assert_eq!(
+            link_adresse(&link, &eingaben, &basis).as_deref(),
+            Some("https://wiki.example.de/settings/api-and-access")
+        );
+        eingaben[0].wert = "https://anderes.example".into();
+        assert_eq!(
+            link_adresse(&link, &eingaben, &basis).as_deref(),
+            Some("https://anderes.example/settings/api-and-access")
+        );
+    }
+
+    #[test]
+    fn platzhalter_kommen_in_reihenfolge_und_einmal() {
+        assert_eq!(
+            platzhalter("${b}/x/${a}/${b}"),
+            vec!["b".to_string(), "a".to_string()]
+        );
+        assert!(platzhalter("ohne").is_empty(), "nichts zu ersetzen");
+        assert!(platzhalter("${offen").is_empty(), "unvollständig");
     }
 
     #[test]

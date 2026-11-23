@@ -136,6 +136,15 @@ Einrichtung*.
 
 ![Einrichten auf der Tools-Karte](docs/bilder/fenster-dark-einrichten.png)
 
+Manche Felder bringen einen **Hilfe-Link** neben der Eingabe mit (Verwaltung:
+*Link-Text* und *Link-Adresse*, Platzhalter `${feld}` erlaubt — zum Beispiel
+`${url}/settings/api-and-access`). Der Knopf ist nur klickbar, wenn sich jeder
+Platzhalter aus dem füllen lässt, was gerade im Dialog steht; sonst ist er
+gesperrt und sagt, welches Feld noch fehlt. Ein Klick öffnet die Adresse im
+Standardbrowser — sonst nichts, keine Anmeldung, kein Lauscher.
+
+![Angaben-Dialog mit Hilfe-Link](docs/bilder/fenster-dark-angaben.png)
+
 Umgebung (alles optional):
 
 | Variable | Bedeutung |

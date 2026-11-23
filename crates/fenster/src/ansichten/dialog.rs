@@ -5,6 +5,7 @@
 //! welchen Text er trägt, aus den Texten.
 
 use eframe::egui::{self, RichText};
+use quiver_domain::Werte;
 
 use crate::ansichten::{agenten, fett, text};
 use crate::app::Aktion;
@@ -37,6 +38,18 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
     let breite = BREITE.min(ctx.content_rect().width() - thema::SPACE_8);
     let mut bestaetigen = false;
     let mut abbrechen = false;
+    // Werte, die der Dialog nicht zeigt (Standardwerte der Felder). Ein
+    // Hilfe-Link darf auch sie als Platzhalter nutzen (Aufgabe 13).
+    let basis = match &sicht.dialog {
+        Dialog::Werte { eintrag, .. } => sicht
+            .modell
+            .eintraege
+            .iter()
+            .find(|e| &e.id == eintrag)
+            .map(logik::link_basis)
+            .unwrap_or_default(),
+        _ => Werte::new(),
+    };
 
     // Innenabstand wie `WpDialog` in der Verwaltung (`--wp-space-5`); der
     // Standardrahmen von egui nimmt nur den Menüabstand (4 px).
@@ -56,24 +69,24 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                             .wrap(),
                     );
                     ui.add_space(thema::SPACE_3);
-                    for eingabe in eingaben.iter_mut() {
-                        let name = eingabe.name.clone();
-                        let geheim = eingabe.geheim;
-                        let gesetzt = eingabe.gesetzt;
-                        let hinweis = (!eingabe.beschreibung.is_empty()).then(|| {
-                            if eingabe.pflicht {
+                    for i in 0..eingaben.len() {
+                        let name = eingaben[i].name.clone();
+                        let geheim = eingaben[i].geheim;
+                        let gesetzt = eingaben[i].gesetzt;
+                        let link = eingaben[i].link.clone();
+                        let hinweis = (!eingaben[i].beschreibung.is_empty()).then(|| {
+                            if eingaben[i].pflicht {
                                 format!(
                                     "{} · {}",
-                                    eingabe.beschreibung,
+                                    eingaben[i].beschreibung,
                                     t(sprache, "tools.pflicht")
                                 )
                             } else {
-                                eingabe.beschreibung.clone()
+                                eingaben[i].beschreibung.clone()
                             }
                         });
-                        let wert = &mut eingabe.wert;
                         bausteine::feld(ui, &f, &name, hinweis.as_deref(), |ui| {
-                            let mut feld = bausteine::eingabefeld(wert)
+                            let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
                                 .desired_width(bausteine::feldbreite(ui));
                             if geheim {
                                 feld = feld.password(true);
@@ -85,6 +98,30 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                             }
                             ui.add(feld)
                         });
+                        // Hilfe-Link neben dem Feld: nur aktiv, wenn die
+                        // **aktuellen** Eingaben eine Adresse ergeben; sonst
+                        // gesperrt mit dem Hinweis, was noch fehlt.
+                        if let Some(link) = link {
+                            let adresse = logik::link_adresse(&link, eingaben, &basis);
+                            let fehlende = logik::link_fehlende(&link, eingaben, &basis);
+                            ui.add_space(thema::SPACE_1);
+                            let geklickt = ui
+                                .add_enabled_ui(adresse.is_some(), |ui| {
+                                    let knopf = bausteine::knopf(ui, &f, Icon::Extern, &link.text);
+                                    if fehlende.is_empty() {
+                                        knopf
+                                    } else {
+                                        knopf.on_disabled_hover_text(logik::link_hinweis(
+                                            &fehlende, sprache,
+                                        ))
+                                    }
+                                })
+                                .inner
+                                .clicked();
+                            if let (true, Some(url)) = (geklickt, adresse) {
+                                aktionen.push(Aktion::LinkOeffnen(url));
+                            }
+                        }
                     }
                     ui.add_space(thema::SPACE_3);
                     ui.horizontal(|ui| {

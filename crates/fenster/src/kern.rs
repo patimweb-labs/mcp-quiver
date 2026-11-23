@@ -120,6 +120,9 @@ impl KernZugang for EchterKern {
                 Aktion::EintragAnmelden { eintrag } => kern.anmelden(&eintrag).await,
                 Aktion::EintragAbmelden { eintrag } => kern.abmelden_eintrag(&eintrag).await,
                 Aktion::EintragEinrichten { eintrag } => kern.einrichten(&eintrag).await,
+                // Den Browser öffnet das Fenster selbst (siehe `Fenster::bild`):
+                // hier gibt es nichts zu tun.
+                Aktion::LinkOeffnen(_) => Ok(()),
             };
             if let Err(fehler) = ergebnis {
                 meldungen

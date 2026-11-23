@@ -66,6 +66,9 @@ pub enum Aktion {
     /// Die Einrichtung eines Eintrags im Browser starten (Aufgabe 11): das
     /// Tool öffnet seine Seite selbst, ein Agent löst sie nie aus.
     EintragEinrichten { eintrag: EintragId },
+    /// Einen Hilfe-Link neben einem Feld im Standardbrowser öffnen
+    /// (Aufgabe 13). Sonst passiert nichts: keine Anmeldung, kein Lauscher.
+    LinkOeffnen(String),
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -217,6 +220,13 @@ impl<K: KernZugang> Fenster<K> {
             // Ein neuer Versuch räumt den alten Fehler weg: er ist nicht mehr
             // der Stand der Dinge.
             self.sicht.hinweis = None;
+            // Einen Hilfe-Link öffnet das Fenster selbst: der Standardbrowser
+            // hängt am Fenster (egui-winit führt `OpenUrl` aus), nicht am Kern.
+            // Damit braucht es keine weitere Abhängigkeit.
+            if let Aktion::LinkOeffnen(url) = &aktion {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                continue;
+            }
             self.kern.ausfuehren(aktion);
         }
         self.autostart_pflegen();
@@ -286,6 +296,11 @@ mod tests {
                 eintrag: EintragId::neu("postfach")
             },
             "anmelden und einrichten sind zwei Aktionen"
+        );
+        assert_ne!(
+            Aktion::LinkOeffnen("https://wiki.example".into()),
+            Aktion::LinkOeffnen("https://wiki.example/zwei".into()),
+            "die Adresse gehört zur Aktion"
         );
     }
 

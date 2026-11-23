@@ -37,6 +37,19 @@ export type Laufzeit =
 /** Wer ein Feld füllt (SPEC.md §6). */
 export type Quelle = "server" | "client" | "geheim";
 
+/**
+ * Ein Hilfe-Link neben einem Feld (Aufgabe 13; in Rust `FeldLink`,
+ * `crates/domain`). `url` darf Platzhalter `${feld}` anderer Felder enthalten;
+ * der Client zeigt den Knopf erst, wenn alle verwendeten Felder einen Wert
+ * haben.
+ */
+export interface FeldLink {
+  /** Beschriftung des Knopfs, z. B. „Token in Outline erstellen“. */
+  text: string;
+  /** Adresse im Standardbrowser; Platzhalter `${feld}` sind erlaubt. */
+  url: string;
+}
+
 /** Ein Konfigurationsfeld eines Eintrags. */
 export interface Feld {
   name: string;
@@ -44,6 +57,8 @@ export interface Feld {
   quelle: Quelle;
   pflicht: boolean;
   standard: string | null;
+  /** Hilfe-Link neben dem Feld; `null` heißt: keiner. */
+  link: FeldLink | null;
 }
 
 /**
