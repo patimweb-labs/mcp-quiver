@@ -331,6 +331,7 @@ mod tests {
             aktiv: true,
             anmeldung: None,
             einrichtung: None,
+            mehrfach: None,
         }
     }
 

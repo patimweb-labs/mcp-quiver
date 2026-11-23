@@ -34,6 +34,7 @@ fn eintrag(id: &str) -> Eintrag {
         aktiv: true,
         anmeldung: None,
         einrichtung: None,
+        mehrfach: None,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "echo".into(),

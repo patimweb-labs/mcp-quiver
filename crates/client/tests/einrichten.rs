@@ -294,6 +294,7 @@ fn eintrag(p: &Pruefung, id: &str, einrichten: Vec<String>) -> Eintrag {
         aktiv: true,
         anmeldung: None,
         einrichtung: Some(Einrichtung { einrichten }),
+        mehrfach: None,
     }
 }
 

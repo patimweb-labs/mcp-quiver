@@ -446,6 +446,7 @@ mod tests {
                 version: "1.0.0".into(),
                 titel: "Postfach".into(),
                 beschreibung: String::new(),
+                mehrfach: None,
                 herkunft: quiver_domain::Herkunft::Eigen,
                 laufzeit,
                 felder,

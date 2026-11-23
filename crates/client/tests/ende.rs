@@ -190,6 +190,7 @@ fn eintrag(id: &str, umgebung: Werte, felder: Vec<Feld>) -> Eintrag {
         version: "0.1.0".into(),
         titel: format!("Titel {id}"),
         beschreibung: format!("Beschreibung {id}"),
+        mehrfach: None,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: echo_bin(),

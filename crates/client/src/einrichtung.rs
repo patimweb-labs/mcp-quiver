@@ -121,6 +121,7 @@ mod tests {
                 version: "1.0.0".into(),
                 titel: "Outline".into(),
                 beschreibung: String::new(),
+                mehrfach: None,
                 herkunft: Herkunft::Eigen,
                 laufzeit,
                 felder: vec![feld("ABLAGE", Quelle::Server), feld("PFAD", Quelle::Client)],

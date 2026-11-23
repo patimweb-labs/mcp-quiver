@@ -95,6 +95,7 @@ impl Geruest {
             aktiv: true,
             anmeldung: None,
             einrichtung: None,
+            mehrfach: None,
         };
         let soll = Soll::neu(vec![SollEintrag {
             eintrag,

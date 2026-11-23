@@ -171,6 +171,7 @@ fn rundlauf_importieren_exportieren() {
         aktiv: true,
         anmeldung: None,
         einrichtung: None,
+        mehrfach: None,
         herkunft: Herkunft::Eigen,
         laufzeit: Laufzeit::Stdio {
             befehl: "npx".into(),
@@ -240,6 +241,7 @@ fn rundlauf_mit_unbekanntem_befehl_traegt_meta() {
         aktiv: true,
         anmeldung: None,
         einrichtung: None,
+        mehrfach: None,
     };
 
     let json = exportieren(&eintrag);

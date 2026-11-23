@@ -161,6 +161,45 @@ pub struct Eintrag {
     /// das Client-Fenster „Einrichten“ an. Zugangsdaten gehen so nie durch einen Agenten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub einrichtung: Option<Einrichtung>,
+    /// Mehrere gleichartige Zugänge (z. B. SSH-Verbindungen), die der User im
+    /// Client-Fenster nach und nach anlegt. Siehe [`Mehrfach`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mehrfach: Option<Mehrfach>,
+}
+
+/// Beschreibung einer Liste von Zugängen, die der User selbst pflegt.
+///
+/// Der Client speichert je Zugang einen Namen und Werte zu `felder`
+/// (`Quelle::Geheim` im Schlüsselbund, sonst in der Client-Konfiguration) und
+/// übergibt beim Start **alle** Zugänge als JSON in der Umgebungsvariable
+/// [`MEHRFACH_UMGEBUNG`]:
+/// `[{"name": "web-01", "werte": {"host": "…", "passwort": "…"}}, …]`.
+/// `Quelle::Server` ist hier nicht erlaubt (die Liste gehört dem User).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mehrfach {
+    /// Überschrift der Liste, z. B. „Verbindungen“.
+    pub titel: String,
+    /// Bezeichnung eines Elements, z. B. „Verbindung“.
+    pub einzahl: String,
+    pub felder: Vec<Feld>,
+}
+
+/// Name der Umgebungsvariable, in der der Client die Zugänge übergibt.
+pub const MEHRFACH_UMGEBUNG: &str = "QUIVER_ZUGAENGE";
+
+/// Ein Zugang aus einer [`Mehrfach`]-Liste, wie er dem Tool übergeben wird.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Zugang {
+    pub name: String,
+    pub werte: Werte,
+}
+
+/// Namen von Zugängen: `a-z0-9-_`, 1–40 Zeichen, eindeutig.
+pub fn zugangsname_gueltig(name: &str) -> bool {
+    (1..=40).contains(&name.len())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// Wie der Client die Einrichtung eines `Stdio`-Tools startet (SPEC.md §7).

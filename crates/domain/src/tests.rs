@@ -31,6 +31,7 @@ fn eintrag(id: &str) -> Eintrag {
         aktiv: true,
         anmeldung: None,
         einrichtung: None,
+        mehrfach: None,
     }
 }
 
@@ -241,4 +242,24 @@ fn link_wird_aus_feldern_gebaut() {
     );
     let boese: Werte = [("url".to_string(), "javascript:alert(1)".to_string())].into();
     assert_eq!(link_aufloesen(&link, &boese), None, "nur http(s)");
+}
+
+#[test]
+fn zugangsnamen() {
+    assert!(zugangsname_gueltig("web-01"));
+    assert!(!zugangsname_gueltig(""));
+    assert!(!zugangsname_gueltig("Web 01"));
+    assert!(!zugangsname_gueltig(&"a".repeat(41)));
+}
+
+#[test]
+fn zugaenge_json_form() {
+    let z = vec![Zugang {
+        name: "web-01".into(),
+        werte: [("host".to_string(), "10.0.0.1".to_string())].into(),
+    }];
+    assert_eq!(
+        serde_json::to_string(&z).unwrap(),
+        r#"[{"name":"web-01","werte":{"host":"10.0.0.1"}}]"#
+    );
 }

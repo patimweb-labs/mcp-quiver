@@ -246,6 +246,7 @@ fn eintrag(p: &Pruefung) -> Eintrag {
             abmelden: vec!["abmelden".into()],
         }),
         einrichtung: None,
+        mehrfach: None,
     }
 }
 

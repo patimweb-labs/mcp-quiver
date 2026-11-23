@@ -26,6 +26,7 @@
 //!     aktiv: true,
 //!     anmeldung: None,
 //!     einrichtung: None,
+//!     mehrfach: None,
 //! };
 //! assert_eq!(importieren(&exportieren(&eintrag)).unwrap(), eintrag);
 //! ```
@@ -116,6 +117,7 @@ pub fn importieren(server_json: &Value) -> Result<Eintrag, ImportFehler> {
         aktiv: true,
         anmeldung: None,
         einrichtung: None,
+        mehrfach: None,
     })
 }
 
