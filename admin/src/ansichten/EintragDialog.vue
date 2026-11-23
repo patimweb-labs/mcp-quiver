@@ -604,7 +604,7 @@ async function speichern(): Promise<void> {
           Gleichartige Zugänge, die der User am Gerät anlegt – etwa
           SSH-Verbindungen. Der Client übergibt sie dem Tool beim Start als
           JSON in <code>QUIVER_ZUGAENGE</code>; Geheimes liegt im
-          Schlüsselbund. Die Liste gehört dem Gerät, deshalb füllt sie nie der
+          Tresor-Datei. Die Liste gehört dem Gerät, deshalb füllt sie nie der
           Server.
         </p>
 

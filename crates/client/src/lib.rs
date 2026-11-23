@@ -30,6 +30,7 @@
 
 mod abgleich;
 mod anmeldung;
+mod dateitresor;
 mod einrichtung;
 mod endpunkt;
 mod hilfen;
@@ -58,7 +59,7 @@ use tokio::sync::{watch, Notify};
 pub use anmeldung::AnmeldeZustand;
 pub use einrichtung::EinrichtZustand;
 use hilfen::Abbruch;
-pub use tresor::{Schluesselbund, SpeicherTresor, Tresor};
+pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
 const STATUS_ABSTAND: Duration = Duration::from_secs(10 * 60);
@@ -75,7 +76,7 @@ pub struct KernKonfig {
     /// Port `0` lässt sich vom Betriebssystem vergeben; die tatsächliche
     /// Adresse steht dann in [`Modell::endpunkt`].
     pub mcp_adresse: SocketAddr,
-    /// Wo Geheimnisse liegen (Standard: Schlüsselbund, in Tests: im Speicher).
+    /// Wo Geheimnisse liegen (Standard: Tresor-Datei `<profil>/tresor`, in Tests: im Speicher).
     pub tresor: Arc<dyn Tresor>,
 }
 
@@ -86,9 +87,9 @@ impl KernKonfig {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("mcp-quiver");
         Self {
+            tresor: Arc::new(DateiTresor::fuer_profil(&profil, true)),
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
-            tresor: Arc::new(Schluesselbund),
         }
     }
 }

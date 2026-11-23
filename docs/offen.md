@@ -54,4 +54,6 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Linux-Teil (`ksni`) ist hier nicht baubar (macOS) — nur nach Vorlage
       geschrieben, nicht gelaufen.
 - [ ] `QUIVER_TRESOR=speicher` ist ein Entwicklerweg (Geheimnisse gehen beim
-      Beenden verloren); gedacht für Rechner ohne Schlüsselbund.
+      Beenden verloren); gedacht für Läufe ohne Spuren.
+
+- [ ] Tresor-Datei (ADR mcp-quiver 0001): Umzug aus dem macOS-Schlüsselbund entfernen, sobald alle Geräte umgezogen sind; optional Hauptpasswort (Argon2) beim Start.

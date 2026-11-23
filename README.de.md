@@ -34,7 +34,7 @@ Vue und sieht genauso aus wie der Client.
   automatisch installiert, aktualisiert und entfernt.
 - **Konfiguration in Schichten.** Der Server pusht, was er weiß (Endpunkte,
   Tenant, Vorgaben). Der Client ergänzt, was nur das Gerät weiß (lokale Pfade,
-  persönliche Geheimnisse im Schlüsselbund des Betriebssystems).
+  persönliche Geheimnisse im Tresor-Datei des Clients).
 - **Authentifizierung an einer Stelle.** Agent → Client und Client → Server,
   sonst nichts. Der Client fügt Zugangsdaten bei jedem Tool-Aufruf ein. Der
   Agent sieht immer nur Tools.
@@ -144,7 +144,7 @@ zeigt dann „Verbindungen (2)“ mit **Verbindung hinzufügen** und der
 aufklappbaren Liste: bearbeiten, löschen (mit Rückfrage) und je gesetztem
 Geheimnis ein eigenes **Geheimnis löschen** — praktisch, wenn das
 Anmelde-Passwort weg soll, sobald der Schlüssel eingerichtet ist. Geheimes
-liegt im Schlüsselbund, die übrigen Werte in der Client-Konfiguration. Beim
+liegt in der Tresor-Datei, die übrigen Werte in der Client-Konfiguration. Beim
 Start bekommt das Tool alle Zugänge als JSON in `QUIVER_ZUGAENGE`; ein Eintrag
 ohne Zugang läuft trotzdem und meldet selbst „kein Zugang“.
 
@@ -166,7 +166,7 @@ Umgebung (alles optional):
 | `QUIVER_PROFIL` | Profilordner (Standard `~/Library/Application Support/mcp-quiver` und Entsprechungen) |
 | `QUIVER_MCP_ADRESSE` | MCP-Endpunkt (Standard `127.0.0.1:8741`; ein zweiter Port lässt zwei Instanzen nebeneinander laufen) |
 | `QUIVER_AUTOSTART_DIR` | Ordner für die Autostart-Datei (macOS und Linux; Tests und andere Sitzungen) |
-| `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt im Schlüsselbund (Rechner ohne Schlüsselbund, zum Ausprobieren) |
+| `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt in der Tresor-Datei (Läufe ohne Spuren, zum Ausprobieren) |
 
 Aufbau wie die Admin-Oberfläche: Kopf, Navigation links, Inhalt als Karten, drei
 Themes aus denselben Tokens. Die Bildschirmfotos erzeugt der Oberflächentest

@@ -90,7 +90,7 @@ export interface Einrichtung {
 /**
  * Mehrere gleichartige Zugänge, die der User im Client-Fenster anlegt
  * (Aufgabe 14; in Rust `Mehrfach`, `crates/domain`). Der Client speichert je
- * Zugang einen Namen und die Werte, Geheimes im Schlüsselbund, und übergibt
+ * Zugang einen Namen und die Werte, Geheimes in der Tresor-Datei, und übergibt
  * beim Start alle Zugänge als JSON in `QUIVER_ZUGAENGE`.
  */
 export interface Mehrfach {

@@ -33,7 +33,7 @@ and looks exactly like the client.
   and removed automatically.
 - **Configuration in layers.** The server pushes what it knows (endpoints,
   tenant, defaults). The client completes what only the device knows (local
-  paths, personal secrets in the OS keychain).
+  paths, personal secrets in an encrypted vault file).
 - **Auth in one place.** Agent → client and client → server. Nothing else.
   The client adds credentials to each tool call. The agent only ever sees
   tools.
@@ -137,7 +137,7 @@ heading, a singular label and fields, source only *device*); the tools card then
 shows “Verbindungen (2)” with **Verbindung hinzufügen** and the expandable list:
 edit, delete (with a confirmation) and, per stored secret, a separate **Geheimnis
 löschen** — handy when the login password should go once the key is set up.
-Secrets live in the keychain, the remaining values in the client configuration.
+Secrets live in the encrypted vault file, the remaining values in the client configuration.
 On start the tool receives all connections as JSON in `QUIVER_ZUGAENGE`; an
 entry without any connection still runs and reports “no connection” itself.
 
@@ -159,7 +159,7 @@ Environment (all optional):
 | `QUIVER_PROFIL` | Profile folder (default `~/Library/Application Support/mcp-quiver` and equivalents) |
 | `QUIVER_MCP_ADRESSE` | MCP endpoint (default `127.0.0.1:8741`; a second port lets two instances run side by side) |
 | `QUIVER_AUTOSTART_DIR` | Folder for the autostart file (macOS and Linux; tests and other sessions) |
-| `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the keychain (machines without one, and for trying things out) |
+| `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the vault file (for trying things out without traces) |
 
 Same layout as the admin interface: header, navigation on the left, content as
 cards, three themes from the same tokens. The screenshots are produced by the UI

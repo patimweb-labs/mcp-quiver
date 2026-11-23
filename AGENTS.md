@@ -56,7 +56,7 @@ crates/domain          Datenmodell: Eintrag, Satz, Zuweisung, Soll/Ist   → Uni
 crates/bibliothek      server.json + quiver-_meta lesen, prüfen          → Unit-Tests
 crates/protocol        Client ↔ Server: Soll-Zustand, Ereignisse         → Vertragstests
 crates/server          Bibliothek, Zuweisung, Admin-API + `quiver-server`→ Integration
-crates/client          Abgleich, Laufzeiten, MCP-Endpunkt, Schlüsselbund → Integration
+crates/client          Abgleich, Laufzeiten, MCP-Endpunkt, Tresor-Datei → Integration
 crates/laufzeit        wasm (wasmtime), nativ, npx/uvx, oci, remote      → Integration
 crates/agent-sdk       Agent → Client für Plugins                        → Vertragstests
 crates/oberflaeche     Bausatz: Themes aus Tokens, Texte, Schriften
@@ -123,7 +123,7 @@ sprechwerk (dort ADR 0015). Regeln folgen mit dem Logo als ADR.
   Gerät; Teams und Firmen mit Entra ID und mehreren Agenten (pi, Hermes, weitere).
 - **Besonderheiten:**
   * Der Server ist nur Bibliothek und Steuerung, er führt keine Tools aus.
-  * Zugangsdaten liegen nur im Client (Schlüsselbund) und erreichen nie den Agenten.
+  * Zugangsdaten liegen nur im Client (Tresor-Datei) und erreichen nie den Agenten.
   * Firmenspezifische Rollen-Abbildungen gehören in die Konfiguration des Betreibers,
     nicht in dieses Repo.
   * Eigene Tools und Plugins sind reines Rust.

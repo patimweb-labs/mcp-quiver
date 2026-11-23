@@ -88,7 +88,7 @@ pub enum Quelle {
     Server,
     /// User am Gerät, steht in der Client-Konfiguration.
     Client,
-    /// User am Gerät, liegt im Schlüsselbund und verlässt das Gerät nie.
+    /// User am Gerät, liegt in der Tresor-Datei und verlässt das Gerät nie.
     Geheim,
 }
 
@@ -170,7 +170,7 @@ pub struct Eintrag {
 /// Beschreibung einer Liste von Zugängen, die der User selbst pflegt.
 ///
 /// Der Client speichert je Zugang einen Namen und Werte zu `felder`
-/// (`Quelle::Geheim` im Schlüsselbund, sonst in der Client-Konfiguration) und
+/// (`Quelle::Geheim` in der Tresor-Datei, sonst in der Client-Konfiguration) und
 /// übergibt beim Start **alle** Zugänge als JSON in der Umgebungsvariable
 /// [`MEHRFACH_UMGEBUNG`]:
 /// `[{"name": "web-01", "werte": {"host": "…", "passwort": "…"}}, …]`.

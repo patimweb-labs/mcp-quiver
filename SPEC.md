@@ -111,7 +111,7 @@ Standard des Eintrags  →  Werte des Satzes (Admin)  →  Werte am Gerät (User
 |---|---|---|
 | `server` | Admin | Server, wird mitgepusht |
 | `client` | User am Gerät | Client-Konfiguration |
-| `geheim` | User am Gerät | Schlüsselbund des Betriebssystems, verlässt das Gerät nie |
+| `geheim` | User am Gerät | Tresor-Datei des Clients, verlässt das Gerät nie |
 
 ## 7. Authentifizierung
 
