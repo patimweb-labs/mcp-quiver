@@ -136,6 +136,21 @@ Einrichtung*.
 
 ![Einrichten auf der Tools-Karte](docs/bilder/fenster-dark-einrichten-800.png)
 
+Ein Eintrag lässt sich **nur auf diesem Gerät abschalten**: jede Karte auf der
+Seite *Tools* trägt rechts den Schalter *Auf diesem Gerät aktiv*, standardmäßig
+an. Aus beendet den laufenden Prozess in unter einer Sekunde, nimmt seine
+Werkzeuge aus `tools/list` und sagt jedem verbundenen Agenten Bescheid
+(`list_changed`). Ein Aufruf danach antwortet „<Titel> ist auf diesem Gerät
+abgeschaltet – im quiver-Fenster unter Tools einschalten“, nie „unbekannt“.
+Angaben, Zugänge, Geheimnisse und die Anmeldung bleiben erhalten — nur
+*Anmelden* und *Einrichten* sind gesperrt, solange der Eintrag aus ist. Die Wahl
+überlebt Neustart, Abgleich, Änderung am Server und einen Import (**aus bleibt
+aus**; die Sicherung nimmt sie mit), und die Verwaltung zeigt „am Gerät
+abgeschaltet“ als neutralen Zustand, nicht als Problem. Agenten können nichts
+schalten; dafür gibt es kein Werkzeug.
+
+![Am Gerät abgeschaltet](docs/bilder/fenster-dark-abschaltung-800.png)
+
 Manche Tools brauchen **mehrere gleichartige Zugänge**, die der User nach und
 nach anlegt — etwa SSH-Verbindungen mit Name, Host, Port und Benutzer. Solche
 Einträge tragen eine *Zugangsliste* (Verwaltung: *Mehrere Zugänge (optional)*
@@ -176,7 +191,8 @@ Agent-Tokens und die Anmeldungen der Tools selbst sind nie dabei, die gehören z
 Gerät bzw. zur Anmeldung. Der Import zeigt erst eine Vorschau (neu, ändert,
 übersprungen), mischt dann statt zu ersetzen — was nur am Gerät steht, bleibt —
 und startet die betroffenen Einträge neu. Einträge, die es hier nicht gibt,
-werden übersprungen; ein falsches Passwort ändert nichts.
+werden übersprungen; ein falsches Passwort ändert nichts. Die Wahl „auf diesem
+Gerät abgeschaltet“ geht mit und steht in der Vorschau — aus bleibt aus.
 
 Umgebung (alles optional):
 

@@ -10,7 +10,12 @@ import type {
 } from "../api/typen";
 import type { Ton } from "./ton";
 
-/** Farbe des Zustands: grün läuft, orange braucht Angaben, rot Fehler. */
+/** Farbe des Zustands: grün läuft, orange braucht Angaben, rot Fehler.
+ *
+ * „Am Gerät abgeschaltet“ ist die Wahl des Users und **kein** Problem: neutral
+ * und leise. Einen Zustand, den diese Fassung nicht kennt (neuere Gegenseite),
+ * liest die Verwaltung genauso neutral (Aufgabe 19).
+ */
 export function zustand_ton(zustand: EintragZustand): Ton {
   switch (zustand.zustand) {
     case "laeuft":
@@ -20,6 +25,11 @@ export function zustand_ton(zustand: EintragZustand): Ton {
     case "fehler":
       return "fehler";
     case "startet":
+      return "leise";
+    case "am-geraet-aus":
+    case "unbekannt":
+      return "leise";
+    default:
       return "leise";
   }
 }
@@ -35,8 +45,14 @@ export function zustand_text(zustand: EintragZustand): string {
         : `Braucht Angaben: ${zustand.felder.join(", ")}`;
     case "startet":
       return "Startet …";
+    case "am-geraet-aus":
+      return "am Gerät abgeschaltet";
     case "fehler":
       return `Fehler: ${zustand.text}`;
+    case "unbekannt":
+      return "Unbekannt";
+    default:
+      return "Unbekannt";
   }
 }
 

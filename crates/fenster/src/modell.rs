@@ -221,6 +221,8 @@ pub struct Sicht {
     pub offen: BTreeSet<EintragId>,
     /// Aufgeklappte Zugangslisten (je Eintrag, Aufgabe 14).
     pub zugaenge_offen: BTreeSet<EintragId>,
+    /// Zeigt die Seite Tools nur die aktiven Einträge (Aufgabe 19)?
+    pub nur_aktive: bool,
     pub eingaben: Eingaben,
     /// Was der Kern zuletzt gemeldet hat (Fehler), oben auf jeder Seite.
     pub hinweis: Option<String>,
@@ -265,6 +267,7 @@ impl Sicht {
             sprache: einstellungen.sprache(),
             offen: BTreeSet::new(),
             zugaenge_offen: BTreeSet::new(),
+            nur_aktive: false,
             eingaben: Eingaben::default(),
             hinweis: None,
             ergebnis: None,

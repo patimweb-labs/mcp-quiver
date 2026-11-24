@@ -42,11 +42,15 @@ pub fn seite_nach_wechsel(vorher: &Verbindung, nachher: &Verbindung, aktuell: Se
 }
 
 /// Bedeutung des Zustands eines Eintrags (ok, warn, error, leise).
+///
+/// „Am Gerät abgeschaltet“ ist **kein** Problem: es ist die Wahl des Users.
+/// Ein unbekannter Zustand (neuere Gegenseite) bleibt ebenfalls neutral.
 pub fn zustand_ton(zustand: &EintragZustand) -> Ton {
     match zustand {
         EintragZustand::Laeuft { .. } => Ton::Gut,
         EintragZustand::WartetAufWerte { .. } => Ton::Warnung,
         EintragZustand::Startet => Ton::Leise,
+        EintragZustand::AmGeraetAus | EintragZustand::Unbekannt => Ton::Blass,
         EintragZustand::Fehler { .. } => Ton::Fehler,
     }
 }
@@ -61,8 +65,19 @@ pub fn zustand_text(sprache: Sprache, zustand: &EintragZustand) -> String {
         }
         EintragZustand::WartetAufWerte { .. } => t(sprache, "tools.wartet"),
         EintragZustand::Startet => t(sprache, "tools.startet"),
+        EintragZustand::AmGeraetAus => t(sprache, "tools.abgeschaltet"),
+        EintragZustand::Unbekannt => t(sprache, "tools.unbekannt"),
         EintragZustand::Fehler { .. } => t(sprache, "tools.fehler"),
     }
+}
+
+/// Die Einträge, die der Filter „nur aktive“ durchlässt (Aufgabe 19).
+pub fn sichtbare_eintraege(eintraege: &[EintragSicht], nur_aktive: bool) -> Vec<EintragSicht> {
+    eintraege
+        .iter()
+        .filter(|eintrag| !nur_aktive || !eintrag.am_geraet_aus)
+        .cloned()
+        .collect()
 }
 
 /// Der Fehlertext eines Eintrags, falls es einen gibt.
@@ -677,6 +692,10 @@ pub fn vorschau_detail(sprache: Sprache, eintrag: &VorschauEintrag) -> String {
             &[&eintrag.zugaenge],
         ));
     }
+    // Die Wahl „abgeschaltet“ geht mit (Aufgabe 19) – aus bleibt aus.
+    if eintrag.am_geraet_aus {
+        teile.push(t(sprache, "einstellungen.vorschau_aus"));
+    }
     teile.join(" · ")
 }
 
@@ -1214,6 +1233,7 @@ mod tests {
             anmeldung: None,
             einrichtung: None,
             zugaenge: None,
+            am_geraet_aus: false,
         }
     }
 
@@ -1278,6 +1298,45 @@ mod tests {
             ),
             "Braucht Angaben"
         );
+    }
+
+    /// Am Gerät abgeschaltet und unbekannt sind neutral – kein Fehler
+    /// (Aufgabe 19).
+    #[test]
+    fn abgeschaltet_und_unbekannt_sind_neutral() {
+        for zustand in [EintragZustand::AmGeraetAus, EintragZustand::Unbekannt] {
+            assert_eq!(zustand_ton(&zustand), Ton::Blass);
+            assert_eq!(fehlertext(&zustand), None);
+        }
+        assert_eq!(
+            zustand_text(Sprache::De, &EintragZustand::AmGeraetAus),
+            "Abgeschaltet"
+        );
+        assert_eq!(
+            zustand_text(Sprache::En, &EintragZustand::AmGeraetAus),
+            "Switched off"
+        );
+        assert_eq!(
+            zustand_text(Sprache::De, &EintragZustand::Unbekannt),
+            "Unbekannt"
+        );
+    }
+
+    /// Der Filter „nur aktive“ lässt abgeschaltete Karten weg (Aufgabe 19).
+    #[test]
+    fn der_filter_nur_aktive_laesst_abgeschaltete_weg() {
+        let mut aus = eintrag();
+        aus.id = EintragId::neu("aus");
+        aus.am_geraet_aus = true;
+        aus.zustand = EintragZustand::AmGeraetAus;
+        aus.tools.clear();
+        let liste = vec![eintrag(), aus];
+
+        let alle = sichtbare_eintraege(&liste, false);
+        assert_eq!(alle.len(), 2, "ohne Filter steht alles da");
+        let aktive = sichtbare_eintraege(&liste, true);
+        assert_eq!(aktive.len(), 1, "mit Filter nur das Aktive");
+        assert_eq!(aktive[0].id.als_str(), "echo");
     }
 
     #[test]
@@ -1924,6 +1983,7 @@ mod tests {
                 neue,
                 geaenderte,
                 zugaenge,
+                am_geraet_aus: false,
             };
         assert_eq!(
             vorschau_detail(Sprache::De, &zeile(VorschauArt::Neu, 2, 0, 0)),
@@ -2055,6 +2115,19 @@ mod tests {
         assert!(
             tray_zeile(&m, Sprache::De).ends_with("2 Agenten"),
             "Mehrzahl"
+        );
+        // Am Gerät abgeschaltete Einträge zählen nicht: sie bieten keine
+        // Werkzeuge an (Aufgabe 19).
+        m.eintraege.push(EintragSicht {
+            am_geraet_aus: true,
+            zustand: EintragZustand::AmGeraetAus,
+            tools: Vec::new(),
+            ..eintrag()
+        });
+        assert_eq!(
+            tray_zeile(&m, Sprache::De),
+            "Verbunden · 4 Tools · 2 Agenten",
+            "abgeschaltete Einträge zählen nicht"
         );
     }
 

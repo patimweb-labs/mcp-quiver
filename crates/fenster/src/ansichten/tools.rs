@@ -32,7 +32,35 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
             );
             return;
         }
-        for eintrag in sicht.modell.eintraege.clone() {
+        // Filter „nur aktive“ (Aufgabe 19): abgeschaltete Karten verschwinden.
+        // Die Zeile gibt es nur, wenn es etwas zu filtern gibt – sonst nähme sie
+        // den Karten Platz weg (Aufgabe 18).
+        if sicht
+            .modell
+            .eintraege
+            .iter()
+            .any(|eintrag| eintrag.am_geraet_aus)
+        {
+            bausteine::leiste(ui, |ui| {
+                bausteine::haken(
+                    ui,
+                    &mut sicht.nur_aktive,
+                    &t(sicht.sprache, "tools.nur_aktive"),
+                );
+            });
+            ui.add_space(thema::SPACE_4);
+        }
+        let sichtbar = logik::sichtbare_eintraege(&sicht.modell.eintraege, sicht.nur_aktive);
+        if sichtbar.is_empty() {
+            leer(
+                ui,
+                sicht,
+                &t(sicht.sprache, "tools.leer_aus"),
+                &t(sicht.sprache, "tools.abgeschaltet_hinweis"),
+            );
+            return;
+        }
+        for eintrag in sichtbar {
             karte(ui, sicht, &eintrag, aktionen);
             abstand(ui);
         }
@@ -126,6 +154,11 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let mut anmelden = false;
     let mut abmelden = false;
     let mut einrichten = false;
+    let mut schalten: Option<bool> = None;
+    // Abgeschaltet: die Karte ist gedämpft, die Knöpfe sind gesperrt
+    // (Aufgabe 19).
+    let aus = eintrag.am_geraet_aus;
+    let gesperrt = t(sprache, "tools.gesperrt_hinweis");
     // Zugänge (Aufgabe 14): aufklappen, anlegen, bearbeiten, löschen.
     let mut zugaenge_aufklappen = false;
     let mut zugang_neu = false;
@@ -134,7 +167,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let offen = sicht.offen.contains(&eintrag.id);
     let zugaenge_offen = sicht.zugaenge_offen.contains(&eintrag.id);
 
-    bausteine::karte(ui, &f, &eintrag.titel, unter.as_deref(), |ui| {
+    bausteine::karte_mit(ui, &f, &eintrag.titel, unter.as_deref(), aus, |ui| {
         egui::Sides::new()
             .height(thema::SIZE_CONTROL_SM)
             .shrink_right()
@@ -193,38 +226,38 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     |ui| match zeile.knopf {
                         logik::AnmeldeKnopf::Keiner => {}
                         logik::AnmeldeKnopf::Anmelden => {
-                            if bausteine::hauptknopf_mit(
-                                ui,
-                                &f,
-                                Icon::Schluessel,
-                                &t(sprache, "anmeldung.anmelden"),
-                            )
-                            .clicked()
-                            {
+                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Schluessel,
+                                    &t(sprache, "anmeldung.anmelden"),
+                                )
+                            }) {
                                 anmelden = true;
                             }
                         }
                         logik::AnmeldeKnopf::Erneut => {
-                            if bausteine::hauptknopf_mit(
-                                ui,
-                                &f,
-                                Icon::Neuladen,
-                                &t(sprache, "anmeldung.erneut"),
-                            )
-                            .clicked()
-                            {
+                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Neuladen,
+                                    &t(sprache, "anmeldung.erneut"),
+                                )
+                            }) {
                                 anmelden = true;
                             }
                         }
                         logik::AnmeldeKnopf::Abmelden => {
-                            if bausteine::knopf(
-                                ui,
-                                &f,
-                                Icon::Trennen,
-                                &t(sprache, "anmeldung.abmelden"),
-                            )
-                            .clicked()
-                            {
+                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                                bausteine::knopf(
+                                    ui,
+                                    &f,
+                                    Icon::Trennen,
+                                    &t(sprache, "anmeldung.abmelden"),
+                                )
+                            }) {
                                 abmelden = true;
                             }
                         }
@@ -249,26 +282,26 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     |ui| match zeile.knopf {
                         logik::EinrichtKnopf::Keiner => {}
                         logik::EinrichtKnopf::Einrichten => {
-                            if bausteine::knopf(
-                                ui,
-                                &f,
-                                Icon::Einstellungen,
-                                &t(sprache, "einrichtung.einrichten"),
-                            )
-                            .clicked()
-                            {
+                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                                bausteine::knopf(
+                                    ui,
+                                    &f,
+                                    Icon::Einstellungen,
+                                    &t(sprache, "einrichtung.einrichten"),
+                                )
+                            }) {
                                 einrichten = true;
                             }
                         }
                         logik::EinrichtKnopf::Erneut => {
-                            if bausteine::knopf(
-                                ui,
-                                &f,
-                                Icon::Neuladen,
-                                &t(sprache, "einrichtung.erneut"),
-                            )
-                            .clicked()
-                            {
+                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                                bausteine::knopf(
+                                    ui,
+                                    &f,
+                                    Icon::Neuladen,
+                                    &t(sprache, "einrichtung.erneut"),
+                                )
+                            }) {
                                 einrichten = true;
                             }
                         }
@@ -408,6 +441,34 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     });
             }
         }
+
+        // Der Schalter „Auf diesem Gerät aktiv“ steht rechts in der Karte
+        // (Aufgabe 19). Standard an – auch für neu zugewiesene Einträge. Er
+        // schließt die Karte ab, damit die Zeilen darüber an ihrem Platz
+        // bleiben (Aufgabe 18: nichts verrutscht, wenn es enger wird).
+        if aus {
+            ui.add(
+                egui::Label::new(
+                    text(&f, t(sprache, "tools.abgeschaltet_hinweis"), Ton::Leise).small(),
+                )
+                .wrap(),
+            );
+        }
+        ui.add_space(thema::SPACE_2);
+        egui::Sides::new()
+            .height(thema::SIZE_CONTROL_SM)
+            .shrink_left()
+            .truncate()
+            .show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    let mut an = !aus;
+                    if bausteine::haken(ui, &mut an, &t(sprache, "tools.aktiv")).changed() {
+                        schalten = Some(an);
+                    }
+                },
+            );
     });
 
     if angaben || bearbeiten {
@@ -454,4 +515,23 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
             titel: eintrag.titel.clone(),
         };
     }
+    if let Some(an) = schalten {
+        aktionen.push(Aktion::EintragSchalten {
+            eintrag: eintrag.id.clone(),
+            an,
+        });
+    }
+}
+
+/// Einen Knopf der Karte zeichnen. Ist der Eintrag auf diesem Gerät
+/// abgeschaltet, bleibt der Knopf gesperrt und nennt am Zeiger den Grund
+/// (Aufgabe 19). `true` heißt: geklickt.
+fn kartenknopf(
+    ui: &mut egui::Ui,
+    aus: bool,
+    hinweis: &str,
+    knopf: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> bool {
+    let antwort = ui.add_enabled_ui(!aus, knopf).inner;
+    antwort.on_disabled_hover_text(hinweis).clicked()
 }

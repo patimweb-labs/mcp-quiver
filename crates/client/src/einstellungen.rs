@@ -30,7 +30,7 @@
 //! ([`crate::Kern`](crate::Kern)) holt die Werte aus seinem Stand und schreibt
 //! sie zurück.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -108,6 +108,9 @@ pub struct VorschauEintrag {
     pub geaenderte: usize,
     /// Zugänge in der Datei.
     pub zugaenge: usize,
+    /// Ist der Eintrag danach auf diesem Gerät abgeschaltet (Aufgabe 19)?
+    /// `true`, wenn die Datei „aus“ sagt oder das Gerät ihn schon aus hat.
+    pub am_geraet_aus: bool,
 }
 
 /// Was ein Import täte – je Eintrag und insgesamt.
@@ -145,6 +148,16 @@ pub struct EintragTeil {
     pub werte: Werte,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub zugaenge: BTreeMap<String, Werte>,
+    /// War der Eintrag auf dem sichernden Gerät abgeschaltet (Aufgabe 19)?
+    /// Die Wahl geht mit und wird beim Einspielen **nicht** aufgehoben: aus
+    /// bleibt aus.
+    #[serde(default, skip_serializing_if = "ist_falsch")]
+    pub am_geraet_aus: bool,
+}
+
+/// Nur schreiben, wenn die Wahl „abgeschaltet“ gilt.
+fn ist_falsch(wert: &bool) -> bool {
+    !*wert
 }
 
 /// Die Geheimnisse, wie sie (verschlüsselt) in der Datei stehen: die Werte der
@@ -301,6 +314,7 @@ pub fn vorschau(
     soll: &Soll,
     werte: &BTreeMap<EintragId, Werte>,
     zugaenge: &BTreeMap<EintragId, BTreeMap<String, Werte>>,
+    aus: &BTreeSet<EintragId>,
 ) -> Vorschau {
     let mut vorschau = Vorschau {
         eintraege: Vec::new(),
@@ -319,6 +333,7 @@ pub fn vorschau(
                 neue: 0,
                 geaenderte: 0,
                 zugaenge: 0,
+                am_geraet_aus: false,
             });
             continue;
         };
@@ -348,9 +363,18 @@ pub fn vorschau(
             neue,
             geaenderte,
             zugaenge: teil.zugaenge.len(),
+            am_geraet_aus: aus_mischen(aus.contains(eintrag_id), teil.am_geraet_aus),
         });
     }
     vorschau
+}
+
+/// Die Wahl „auf diesem Gerät abgeschaltet“ mischen: **aus bleibt aus**.
+/// Kein Weg – auch kein Import – schaltet einen abgeschalteten Eintrag wieder
+/// ein (Aufgabe 19).
+///
+pub fn aus_mischen(geraet: bool, datei: bool) -> bool {
+    geraet || datei
 }
 
 /// Werte mischen: was aus der Datei kommt, überschreibt gleichnamige Werte;
@@ -561,6 +585,7 @@ mod tests {
             EintragTeil {
                 werte: werte(&[("host", "web-01.example")]),
                 zugaenge: BTreeMap::from([("web-01".to_string(), werte(&[("port", "22")]))]),
+                ..EintragTeil::default()
             },
         )]);
         let geheimnisse = Geheimnisse {
@@ -707,13 +732,20 @@ mod tests {
             EintragTeil {
                 werte: werte(&[("host", "neu"), ("leer", "  ")]),
                 zugaenge: BTreeMap::from([("web-01".to_string(), werte(&[("port", "22")]))]),
+                ..EintragTeil::default()
             },
         )]);
         let gelesen = Gelesen {
             eintraege: datei.clone(),
             ..geleert()
         };
-        let vorschau = vorschau(&gelesen, &soll(&["ssh"]), &geraet, &BTreeMap::new());
+        let vorschau = vorschau(
+            &gelesen,
+            &soll(&["ssh"]),
+            &geraet,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        );
         assert_eq!(vorschau.eintraege.len(), 1);
         let zeile = &vorschau.eintraege[0];
         assert_eq!(zeile.art, VorschauArt::Aendert);
@@ -745,6 +777,7 @@ mod tests {
                 EintragTeil {
                     werte: werte(&[("host", "web-01")]),
                     zugaenge: BTreeMap::new(),
+                    ..EintragTeil::default()
                 },
             ),
             (
@@ -752,6 +785,7 @@ mod tests {
                 EintragTeil {
                     werte: werte(&[("host", "weg")]),
                     zugaenge: BTreeMap::new(),
+                    ..EintragTeil::default()
                 },
             ),
         ]);
@@ -764,6 +798,7 @@ mod tests {
             &soll(&["ssh"]),
             &BTreeMap::new(),
             &BTreeMap::new(),
+            &BTreeSet::new(),
         );
         assert_eq!(vorschau.uebernommen(), 1);
         assert_eq!(vorschau.uebersprungen(), 1);

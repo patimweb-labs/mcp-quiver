@@ -57,6 +57,21 @@ pub fn karte<R>(
     unter: Option<&str>,
     inhalt: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
+    karte_mit(ui, f, titel, unter, false, inhalt)
+}
+
+/// Wie [`karte`], aber `gedaempft`: Titel und Unterzeile stehen leiser. So
+/// zeigt die Seite Tools einen am Gerät abgeschalteten Eintrag (Aufgabe 19),
+/// ohne eine zweite Fläche zu erfinden (dieselben Token, dieselben Maße).
+pub fn karte_mit<R>(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    titel: &str,
+    unter: Option<&str>,
+    gedaempft: bool,
+    inhalt: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let titel_ton = if gedaempft { Ton::Leise } else { Ton::Normal };
     egui::Frame::new()
         .fill(f.bg_panel)
         .stroke(Stroke::new(thema::SIZE_BORDER, f.border_subtle))
@@ -67,7 +82,11 @@ pub fn karte<R>(
             // (`Karte.vue`).
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = thema::SPACE_1;
-                ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_LG, fett())));
+                ui.label(
+                    RichText::new(titel)
+                        .font(egui::FontId::new(thema::FONT_SIZE_LG, fett()))
+                        .color(thema::ton(f, titel_ton)),
+                );
                 if let Some(u) = unter {
                     ui.label(RichText::new(u).color(f.text_muted));
                 }

@@ -145,6 +145,25 @@ impl Endpunkt {
         self.innen.protokoll.aufruf_schreiben(aufzeichnung);
     }
 
+    /// Die Meldung für einen auf diesem Gerät abgeschalteten Eintrag
+    /// (Aufgabe 19) – `None`, wenn er laufen darf.
+    fn abgeschaltet_text(&self, eintrag: &EintragId) -> Option<String> {
+        let stand = self.innen.stand();
+        if !stand.am_geraet_aus.contains(eintrag) {
+            return None;
+        }
+        let titel = stand
+            .soll
+            .eintraege
+            .iter()
+            .find(|soll| &soll.eintrag.id == eintrag)
+            .map(|soll| soll.eintrag.titel.clone())
+            .unwrap_or_else(|| eintrag.als_str().to_string());
+        Some(format!(
+            "{titel} ist auf diesem Gerät abgeschaltet – im quiver-Fenster unter Tools einschalten."
+        ))
+    }
+
     /// Die eigenen Werkzeuge von quiver (Aufgabe 17) – lesend, ohne Eintrag.
     fn eigenes_werkzeug(
         &self,
@@ -445,6 +464,21 @@ impl ServerHandler for Endpunkt {
             .laeufer
             .get(&eintrag)
             .and_then(|laeufer| laeufer.peer.clone());
+        // Ein auf diesem Gerät abgeschalteter Eintrag ist **nicht** unbekannt:
+        // er existiert, der User will ihn nur nicht (Aufgabe 19).
+        if let Some(text) = self.abgeschaltet_text(&eintrag) {
+            self.aufzeichnen(Aufzeichnung {
+                eintrag: &eintrag,
+                tool: &name,
+                agent: &agent,
+                dauer: beginn.elapsed(),
+                status: Status::Abgelehnt,
+                fehler: Some(&text),
+                argumente: request.arguments.as_ref(),
+                antwort: None,
+            });
+            return Err(McpError::invalid_params(text, None));
+        }
         let Some(peer) = peer else {
             let text = format!("Werkzeug {name} läuft gerade nicht");
             self.aufzeichnen(Aufzeichnung {
@@ -481,7 +515,12 @@ impl ServerHandler for Endpunkt {
                 Ok(CallToolResponse::Complete(ergebnis))
             }
             Err(fehler) => {
-                let text = format!("Aufruf von {name}: {fehler}");
+                // Wurde der Eintrag während des Aufrufs abgeschaltet, endet er
+                // mit der klaren Meldung der Aufgabe – nicht mit „Prozess weg“.
+                let text = match self.abgeschaltet_text(&eintrag) {
+                    Some(text) => text,
+                    None => format!("Aufruf von {name}: {fehler}"),
+                };
                 self.aufzeichnen(Aufzeichnung {
                     eintrag: &eintrag,
                     tool: &name,

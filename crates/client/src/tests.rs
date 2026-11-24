@@ -64,7 +64,14 @@ fn lokales<'a>(
         geheim_gesetzt,
         zugaenge,
         zugang_geheim,
+        am_geraet_aus: laufend_aus(),
     }
+}
+
+/// Keine Einträge sind auf dem Gerät abgeschaltet.
+fn laufend_aus() -> &'static BTreeSet<EintragId> {
+    static LEER: std::sync::OnceLock<BTreeSet<EintragId>> = std::sync::OnceLock::new();
+    LEER.get_or_init(BTreeSet::new)
 }
 
 fn werkzeug(name: &str) -> Tool {
@@ -635,4 +642,88 @@ fn ein_schema_ohne_typ_wird_zum_objekt() {
     let werkzeug = werkzeug("lesen");
     let gleich = crate::schema_mit_typ(&werkzeug.input_schema);
     assert_eq!(*gleich, *werkzeug.input_schema);
+}
+
+/// Ein abgeschalteter Eintrag zeigt den eigenen Zustand, keine Werkzeuge und
+/// die Wahl am Gerät (Aufgabe 19).
+#[test]
+fn ein_abgeschalteter_eintrag_zeigt_abgeschaltet() {
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag: eintrag("echo"),
+        werte: Werte::new(),
+    }]);
+    let id = EintragId::neu("echo");
+    let laeufer = BTreeMap::from([(
+        id.clone(),
+        Laeufer {
+            generation: 1,
+            fingerabdruck: "abc".into(),
+            stand: LaeuferStand {
+                zustand: EintragZustand::Laeuft { tools: 1 },
+                fehlende: Vec::new(),
+                tools: vec![werkzeug("echo")],
+            },
+            peer: None,
+            abbruch: Abbruch::neu(),
+        },
+    )]);
+    let aus = BTreeSet::from([id.clone()]);
+    let sicht = eintraege_sicht(
+        &soll,
+        &Lokales {
+            werte: &BTreeMap::new(),
+            geheim_gesetzt: &BTreeMap::new(),
+            zugaenge: &BTreeMap::new(),
+            zugang_geheim: &BTreeMap::new(),
+            am_geraet_aus: &aus,
+        },
+        &laeufer,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    assert_eq!(sicht.len(), 1);
+    assert!(sicht[0].am_geraet_aus, "die Wahl steht im Modell");
+    assert_eq!(sicht[0].zustand, EintragZustand::AmGeraetAus);
+    assert!(
+        sicht[0].tools.is_empty(),
+        "abgeschaltet bietet keine Werkzeuge an: {:?}",
+        sicht[0].tools
+    );
+}
+
+/// Die Sicherung nimmt die Wahl „abgeschaltet“ mit (Aufgabe 19).
+#[test]
+fn die_sicherung_nimmt_die_abschaltung_mit() {
+    let id = EintragId::neu("echo");
+    let stand = Stand {
+        abgelehnt: false,
+        server_url: None,
+        geraet: None,
+        token: None,
+        lokale_werte: BTreeMap::new(),
+        geheim: BTreeMap::new(),
+        zugaenge: BTreeMap::new(),
+        zugang_geheim: BTreeMap::new(),
+        agenten: Vec::new(),
+        soll: Soll::neu(Vec::new()),
+        laeufer: BTreeMap::new(),
+        anmeldung: BTreeMap::new(),
+        einrichtung: BTreeMap::new(),
+        einrichtung_laufend: BTreeSet::new(),
+        am_geraet_aus: BTreeSet::from([id.clone()]),
+        angenommen: false,
+        protokoll_fuer_agenten: false,
+        verbindung: Verbindung::NichtEingebunden,
+        endpunkt: String::new(),
+    };
+    let (eintraege, geheim) = export_daten(&stand, false);
+    assert!(geheim.is_none());
+    let teil = eintraege
+        .get("echo")
+        .expect("der Eintrag steht in der Datei");
+    assert!(teil.am_geraet_aus, "die Wahl gehört in die Sicherung");
+    // Aus bleibt aus – auch gegen eine Datei, die „an“ sagt.
+    assert!(einstellungen::aus_mischen(true, false));
+    assert!(einstellungen::aus_mischen(false, true));
+    assert!(!einstellungen::aus_mischen(false, false));
 }

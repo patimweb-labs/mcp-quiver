@@ -9,7 +9,7 @@
 //!
 //! Geheimnisse stehen **nicht** hier, sondern im [`Tresor`](crate::Tresor).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use quiver_domain::{Geraet, Soll, Werte};
@@ -48,6 +48,12 @@ pub struct Profil {
     /// Dürfen Agenten Inhalte im Protokoll sehen (Aufgabe 17)? Standard: aus.
     #[serde(default, skip_serializing_if = "is_false")]
     pub protokoll_fuer_agenten: bool,
+    /// Einträge, die der User **auf diesem Gerät** abgeschaltet hat
+    /// (Aufgabe 19). Die Wahl überlebt Neustart, Abgleich und Import; nichts
+    /// startet einen Eintrag, der hier steht. `serde(default)` hält alte
+    /// Dateien lesbar.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub am_geraet_aus: BTreeSet<String>,
 }
 
 /// Nur schreiben, wenn der Schalter an ist.
@@ -132,6 +138,7 @@ mod tests {
             token_hash: "00".into(),
         });
         profil.protokoll_fuer_agenten = true;
+        profil.am_geraet_aus.insert("graph".into());
         profil.speichern(&ordner).expect("schreibbar");
 
         let zurueck = Profil::laden(&ordner).expect("lesbar");
@@ -140,6 +147,26 @@ mod tests {
         assert_eq!(zurueck.zugaenge, profil.zugaenge);
         assert_eq!(zurueck.agenten, profil.agenten);
         assert!(zurueck.protokoll_fuer_agenten, "der Schalter bleibt");
+        assert_eq!(
+            zurueck.am_geraet_aus, profil.am_geraet_aus,
+            "die Wahl am Gerät bleibt (Aufgabe 19)"
+        );
+        std::fs::remove_dir_all(&ordner).ok();
+    }
+
+    /// Eine Datei von vor Aufgabe 19 kennt `am_geraet_aus` nicht – sie muss
+    /// weiter lesbar sein.
+    #[test]
+    fn eine_alte_datei_ohne_abschaltung_ist_lesbar() {
+        let ordner = ordner();
+        std::fs::write(
+            ordner.join("zustand.json"),
+            r#"{"server_url":"http://127.0.0.1:8080","protokoll_fuer_agenten":true}"#,
+        )
+        .expect("schreibbar");
+        let profil = Profil::laden(&ordner).expect("lesbar");
+        assert_eq!(profil.server_url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert!(profil.am_geraet_aus.is_empty(), "nichts ist abgeschaltet");
         std::fs::remove_dir_all(&ordner).ok();
     }
 

@@ -130,6 +130,20 @@ an agent. In the admin interface the command sits in the *Einrichtung
 
 ![Setup on the tools card](docs/bilder/fenster-dark-einrichten-800.png)
 
+An entry can be **switched off on this device alone**: every card on the *Tools*
+page carries the switch *Active on this device* on the right, on by default.
+Switching it off ends the running process within a second, drops its tools from
+`tools/list` and tells every connected agent (`list_changed`). A call after that
+answers “<title> is switched off on this device — switch it on in the quiver
+window under Tools”, never “unknown”. Values, connections, secrets and the
+sign-in are kept — only *Sign in* and *Set up* are locked while it is off. The
+choice survives restarts, syncs, changes to the entry on the server and an
+import (**off stays off**; the backup carries it), and the admin interface shows
+“am Gerät abgeschaltet” as a neutral state, not a problem. Agents cannot switch
+anything; there is no tool for it.
+
+![Switched off on this device](docs/bilder/fenster-dark-abschaltung-800.png)
+
 Some tools need **several similar credentials** that the user adds one by one —
 SSH connections with a name, host, port and user, for instance. Such entries
 carry a *list of connections* (admin: *Mehrere Zugänge (optional)* with a
@@ -168,7 +182,9 @@ key derived with Argon2id (password of at least eight characters, file mode
 of it; they belong to the device and to the sign-in. An import first shows a
 preview (new, changes, skipped), then merges instead of replacing — what exists
 only on this device stays — and restarts the affected entries. Entries this
-device does not have are skipped; a wrong password changes nothing.
+device does not have are skipped; a wrong password changes nothing. The choice
+“switched off on this device” travels with the file and shows up in the
+preview — off stays off.
 
 Environment (all optional):
 

@@ -842,5 +842,37 @@
   "protokoll.stufe.fehler": {
     "de": "FEHLER",
     "en": "ERROR"
+  },
+  "tools.aktiv": {
+    "de": "Auf diesem Gerät aktiv",
+    "en": "Active on this device"
+  },
+  "tools.abgeschaltet": {
+    "de": "Abgeschaltet",
+    "en": "Switched off"
+  },
+  "tools.abgeschaltet_hinweis": {
+    "de": "Auf diesem Gerät abgeschaltet – einschalten, um es wieder zu starten.",
+    "en": "Switched off on this device – switch it on to start it again."
+  },
+  "tools.gesperrt_hinweis": {
+    "de": "Auf diesem Gerät abgeschaltet – zum Anmelden oder Einrichten erst einschalten.",
+    "en": "Switched off on this device – switch it on before signing in or setting it up."
+  },
+  "tools.nur_aktive": {
+    "de": "Nur aktive",
+    "en": "Only active"
+  },
+  "tools.unbekannt": {
+    "de": "Unbekannt",
+    "en": "Unknown"
+  },
+  "einstellungen.vorschau_aus": {
+    "de": "wird hier abgeschaltet",
+    "en": "switched off here"
+  },
+  "tools.leer_aus": {
+    "de": "Alle abgeschaltet",
+    "en": "All switched off"
   }
 }

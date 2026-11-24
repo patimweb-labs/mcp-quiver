@@ -263,6 +263,7 @@ fn eintrag(
         anmeldung: None,
         einrichtung: None,
         zugaenge: None,
+        am_geraet_aus: false,
     }
 }
 
@@ -1200,6 +1201,7 @@ fn sicherung_vorschau(hat_geheimnisse: bool) -> Vorschau {
                 neue: 2,
                 geaenderte: 0,
                 zugaenge: 0,
+                am_geraet_aus: false,
             },
             VorschauEintrag {
                 id: "dateien".into(),
@@ -1208,6 +1210,7 @@ fn sicherung_vorschau(hat_geheimnisse: bool) -> Vorschau {
                 neue: 1,
                 geaenderte: 2,
                 zugaenge: 1,
+                am_geraet_aus: false,
             },
             VorschauEintrag {
                 id: "weg".into(),
@@ -1216,6 +1219,7 @@ fn sicherung_vorschau(hat_geheimnisse: bool) -> Vorschau {
                 neue: 0,
                 geaenderte: 0,
                 zugaenge: 0,
+                am_geraet_aus: false,
             },
         ],
         hat_geheimnisse,
@@ -2508,8 +2512,10 @@ fn bildschirmfoto_der_zugaenge() {
             assert!(
                 h.query_by_label("Passwort der Anmeldung · Gesetzt – leer lassen behält es.")
                     .is_some(),
-                "{}: der Dialog zeigt den Geheimnis-Hinweis nicht",
-                thema.name()
+                "{}/{}: der Dialog zeigt den Geheimnis-Hinweis nicht: {:?}",
+                thema.name(),
+                groesse.px,
+                h.state().0.sicht.dialog
             );
             nichts_ragt_heraus(&h, groesse.masse.0, "zugaenge");
             foto(&mut h, &ziel, "zugaenge", thema, groesse.px);
@@ -2904,6 +2910,254 @@ fn bildschirmfoto_des_protokolls() {
             );
             nichts_ragt_heraus(&h, groesse.masse.0, "tool-logs");
             foto(&mut h, &ziel, "tool-logs", thema, groesse.px);
+        }
+    }
+}
+
+/// Ein am Gerät abgeschalteter Eintrag, wie ihn der Kern liefert (Aufgabe 19):
+/// Zustand `AmGeraetAus`, keine Werkzeuge, die Wahl im Modell.
+fn abgeschaltet(mut eintrag: EintragSicht) -> EintragSicht {
+    eintrag.am_geraet_aus = true;
+    eintrag.zustand = EintragZustand::AmGeraetAus;
+    eintrag.tools.clear();
+    eintrag
+}
+
+#[test]
+fn der_schalter_auf_der_karte_schaltet_ab_und_wieder_ein() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+
+    // Eine Karte je Eintrag, jede mit dem Schalter „Auf diesem Gerät aktiv“.
+    assert_eq!(
+        h.query_all_by_label("Auf diesem Gerät aktiv").count(),
+        3,
+        "je Karte ein Schalter"
+    );
+    // Standard an – auch für neu zugewiesene Einträge.
+    let schalter = h
+        .query_all(
+            By::new()
+                .role(Role::CheckBox)
+                .label("Auf diesem Gerät aktiv"),
+        )
+        .next()
+        .expect("der erste Schalter");
+    assert_eq!(
+        schalter.accesskit_node().toggled(),
+        Some(Toggled::True),
+        "der Schalter steht standardmäßig auf an"
+    );
+    // Hand-Cursor auf dem Schalter (AGENTS.md §2.12).
+    schalter.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf dem Schalter"
+    );
+
+    // Mit der Tastatur: Fokus auf den Schalter, Leertaste schaltet ihn (der
+    // Schalter ist keine reine Maus-Bedienung, AGENTS.md §5).
+    h.query_all(
+        By::new()
+            .role(Role::CheckBox)
+            .label("Auf diesem Gerät aktiv"),
+    )
+    .next()
+    .expect("der erste Schalter")
+    .focus();
+    h.run();
+    assert!(
+        h.get_all_by_role_and_label(Role::CheckBox, "Auf diesem Gerät aktiv")
+            .next()
+            .expect("der erste Schalter")
+            .is_focused(),
+        "der Fokus liegt auf dem Schalter"
+    );
+    h.key_press(egui::Key::Space);
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EintragSchalten {
+                eintrag: EintragId::neu("echo"),
+                an: false,
+            }),
+        "die Leertaste muss abschalten: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+
+    // Der erste Schalter gehört zur Karte „Echo“.
+    h.query_all(
+        By::new()
+            .role(Role::CheckBox)
+            .label("Auf diesem Gerät aktiv"),
+    )
+    .next()
+    .expect("der erste Schalter")
+    .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EintragSchalten {
+                eintrag: EintragId::neu("echo"),
+                an: false,
+            }),
+        "der Klick muss das Abschalten auslösen: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+}
+
+#[test]
+fn eine_abgeschaltete_karte_ist_gedaempft_und_gesperrt() {
+    let mut aus = abgeschaltet(anmelde_eintrag(
+        "postfach",
+        "Postfach",
+        AnmeldeZustand::Angemeldet {
+            konto: Some("test@beispiel.de".into()),
+        },
+    ));
+    aus.einrichtung = Some(EinrichtZustand::Bereit);
+    let mut h = fenster(
+        modell(verbunden(), vec![aus]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+
+    // Das Abzeichen sagt, was gilt – und der Schalter steht auf aus.
+    assert!(
+        h.query_by_label("Abgeschaltet").is_some(),
+        "Abzeichen fehlt"
+    );
+    let schalter = h.get_by_role_and_label(Role::CheckBox, "Auf diesem Gerät aktiv");
+    assert_eq!(schalter.accesskit_node().toggled(), Some(Toggled::False));
+    // Der Hinweis erklärt, was „aus“ bedeutet.
+    assert!(
+        h.query_by_label("Auf diesem Gerät abgeschaltet – einschalten, um es wieder zu starten.")
+            .is_some(),
+        "der Hinweis fehlt"
+    );
+
+    // Anmelden und Einrichten sind gesperrt, mit Hinweis am Zeiger.
+    for knopf in ["Abmelden", "Einrichten"] {
+        let knoten = h.get_by_role_and_label(Role::Button, knopf);
+        assert!(
+            knoten.accesskit_node().is_disabled(),
+            "„{knopf}“ muss gesperrt sein"
+        );
+        knoten.click();
+        h.run();
+        assert!(
+            !h.state().1.aktionen.borrow().iter().any(|aktion| matches!(
+                aktion,
+                Aktion::EintragAnmelden { .. }
+                    | Aktion::EintragAbmelden { .. }
+                    | Aktion::EintragEinrichten { .. }
+            )),
+            "ein gesperrter Knopf löst nichts aus: {:?}",
+            h.state().1.aktionen.borrow()
+        );
+    }
+
+    // Der Filter „nur aktive“ lässt die Karte verschwinden.
+    let mut liste = eintraege();
+    liste.push(abgeschaltet(anmelde_eintrag(
+        "postfach",
+        "Postfach",
+        AnmeldeZustand::Abgemeldet,
+    )));
+    let mut h = fenster(
+        modell(verbunden(), liste),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h.query_by_label("Postfach").is_some());
+    h.get_by_role_and_label(Role::CheckBox, "Nur aktive")
+        .click();
+    h.run();
+    assert!(
+        h.state().0.sicht.nur_aktive,
+        "der Filter ist an: {:?}",
+        h.state().0.sicht.nur_aktive
+    );
+    assert!(
+        h.query_by_label("Postfach").is_none(),
+        "die abgeschaltete Karte ist ausgeblendet"
+    );
+    assert!(h.query_by_label("Echo").is_some(), "die aktive bleibt");
+}
+
+/// Schmal (560 px): der Schalter, das Abzeichen und die gesperrten Knöpfe
+/// ragen nicht aus dem Fenster (Aufgabe 18 gilt weiter, Aufgabe 19).
+#[test]
+fn die_abschaltung_ragt_auch_schmal_nicht_heraus() {
+    let mut aus = abgeschaltet(anmelde_eintrag(
+        "postfach",
+        "Postfach",
+        AnmeldeZustand::Abgemeldet,
+    ));
+    aus.einrichtung = Some(EinrichtZustand::Bereit);
+    let mut liste = eintraege();
+    liste.push(aus);
+    for (breite, hoehe) in [(560.0, 460.0), (800.0, 600.0)] {
+        let mut h = fenster(
+            modell(verbunden(), liste.clone()),
+            Some(Seite::Tools),
+            Thema::Dunkel,
+            (breite, hoehe),
+        );
+        zur_ruhe(&mut h);
+        nichts_ragt_heraus(&h, breite, "tools-abgeschaltet");
+        assert!(h.query_by_label("Abgeschaltet").is_some());
+    }
+}
+
+/// Ein Bild der abgeschalteten Karte in beiden Themes und drei Größen.
+#[test]
+fn bildschirmfoto_der_abschaltung() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    let mut aus = abgeschaltet(anmelde_eintrag(
+        "postfach",
+        "Postfach",
+        AnmeldeZustand::Angemeldet {
+            konto: Some("test@beispiel.de".into()),
+        },
+    ));
+    aus.einrichtung = Some(EinrichtZustand::Bereit);
+    // Die abgeschaltete Karte steht vorn: so ist sie auch im schmalen Bild
+    // ganz zu sehen, und der Filter „nur aktive“ steht darüber.
+    let mut liste = vec![aus];
+    liste.extend(eintraege());
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut h = fenster(
+                modell(verbunden(), liste.clone()),
+                Some(Seite::Tools),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            assert!(h.query_by_label("Abgeschaltet").is_some());
+            nichts_ragt_heraus(&h, groesse.masse.0, "abschaltung");
+            foto(&mut h, &ziel, "abschaltung", thema, groesse.px);
         }
     }
 }

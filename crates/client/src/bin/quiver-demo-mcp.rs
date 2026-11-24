@@ -17,6 +17,9 @@
 //! - `QUIVER_DEMO_WARTE_AUF` + `QUIVER_DEMO_FREIGABE`: Testhilfe. Existiert die
 //!   erste Datei beim Start, wird auf die zweite gewartet, bevor der Dienst
 //!   antwortet – so lässt sich ein Start anhalten (Aufgabe 12: Doppelstart).
+//! - `QUIVER_DEMO_PID`: optional, ein Ordner. Jeder Start legt dort eine Datei
+//!   mit seiner PID ab und entfernt sie beim Beenden wieder – so zählt ein
+//!   Test, wie viele Demo-Prozesse wirklich laufen (Aufgabe 19).
 //!
 //! Jede Zeile geht nach stderr (landet im Protokoll des Clients) und ggf. in die Datei.
 
@@ -157,9 +160,41 @@ async fn main() -> anyhow::Result<()> {
         "gestartet, Werkzeuge: {}; {geheim}",
         namen.join(", ")
     ));
+    let _pid = PidDatei::neu();
     let dienst = demo.serve(rmcp::transport::stdio_pipes()).await?;
     dienst.waiting().await?;
     Ok(())
+}
+
+/// Legt beim Start `<QUIVER_DEMO_PID>/<pid>` an und entfernt die Datei beim
+/// Beenden. Ein Test zählt damit die wirklich laufenden Demo-Prozesse
+/// (Aufgabe 19: „genau ein Prozess“).
+struct PidDatei {
+    pfad: Option<std::path::PathBuf>,
+}
+
+impl PidDatei {
+    fn neu() -> Self {
+        let pfad = std::env::var("QUIVER_DEMO_PID")
+            .ok()
+            .filter(|wert| !wert.trim().is_empty())
+            .map(|ordner| std::path::PathBuf::from(ordner).join(std::process::id().to_string()));
+        if let Some(pfad) = &pfad {
+            if let Some(ordner) = pfad.parent() {
+                let _ = std::fs::create_dir_all(ordner);
+            }
+            let _ = std::fs::write(pfad, b"");
+        }
+        Self { pfad }
+    }
+}
+
+impl Drop for PidDatei {
+    fn drop(&mut self) {
+        if let Some(pfad) = &self.pfad {
+            let _ = std::fs::remove_file(pfad);
+        }
+    }
 }
 
 /// Testhilfe: erst auf die Freigabedatei warten, dann den Dienst anbieten.

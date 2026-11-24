@@ -34,6 +34,16 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       Eintrag; über alle Einträge zu suchen gibt es nicht.
 - [ ] Protokoll: `quiver__protokoll` und `quiver__tool_log` filtern nicht nach
       Agent — jeder Agent mit gültigem Token sieht, was alle Agenten aufriefen.
+- [ ] Am Gerät abschalten (Aufgabe 19): die Wahl gilt nur auf diesem Gerät; wer
+      sie auf allen Geräten will, schaltet jedes einzeln ab (der Admin-Schalter
+      *Aktiv* bleibt die zentrale Steuerung).
+- [ ] Am Gerät abschalten: der Schalter steht im Fenster, nicht im Tray und
+      nicht auf der Verbindungsseite; aus einem Kopfstand lässt sich ein
+      Eintrag also nur im Fenster wieder einschalten.
+- [ ] Am Gerät abschalten: ein abgeschalteter Eintrag, den der Server später
+      wieder zuweist, startet nicht — das ist gewollt, aber es gibt keinen
+      Hinweis in der Verwaltung, *warum* er auf dem Gerät nicht läuft (nur der
+      Zustand „am Gerät abgeschaltet“).
 
 ## Oberfläche
 - [ ] Hilfe-Link: Platzhalter auf reine Server-Felder bleiben gesperrt (`EintragSicht` kennt keine Server-Werte).

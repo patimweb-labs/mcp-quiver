@@ -153,6 +153,11 @@ pub struct EintragSicht {
     /// Die Zugänge des Eintrags (Aufgabe 14) — `None`, wenn er keine
     /// Zugangsliste führt. Geheimes steht auch hier nie im Modell.
     pub zugaenge: Option<ZugaengeSicht>,
+    /// Hat der User diesen Eintrag **auf diesem Gerät** abgeschaltet
+    /// (Aufgabe 19)? Dann steht `zustand` auf
+    /// [`EintragZustand::AmGeraetAus`] und nichts startet ihn.
+    #[serde(default)]
+    pub am_geraet_aus: bool,
 }
 
 /// Ein Zugang eines Eintrags mit `mehrfach`, wie ihn das Fenster zeigt:
@@ -263,6 +268,12 @@ struct Stand {
     einrichtung: BTreeMap<EintragId, EinrichtZustand>,
     /// Einträge, deren Einrichtung gerade läuft (höchstens einer je Eintrag).
     einrichtung_laufend: BTreeSet<EintragId>,
+    /// Einträge, die der User auf diesem Gerät abgeschaltet hat (Aufgabe 19).
+    am_geraet_aus: BTreeSet<EintragId>,
+    /// Hat der Server dieses Gerät in **diesem** Lauf angenommen (erster
+    /// erfolgreicher Abgleich)? Erst dann startet ein Wiedereinschalten etwas
+    /// (Aufgabe 19, SPEC §0).
+    angenommen: bool,
     /// Dürfen Agenten Inhalte des Protokolls sehen (Aufgabe 17)?
     protokoll_fuer_agenten: bool,
     verbindung: Verbindung,
@@ -285,6 +296,7 @@ impl Stand {
                     geheim_gesetzt: &geheim_gesetzt,
                     zugaenge: &self.zugaenge,
                     zugang_geheim: &self.zugang_geheim,
+                    am_geraet_aus: &self.am_geraet_aus,
                 },
                 &self.laeufer,
                 &self.anmeldung,
@@ -322,6 +334,11 @@ impl Stand {
             agenten: self.agenten.clone(),
             soll: Some(self.soll.clone()),
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
+            am_geraet_aus: self
+                .am_geraet_aus
+                .iter()
+                .map(|id| id.als_str().to_string())
+                .collect(),
         }
     }
 }
@@ -334,6 +351,8 @@ struct Lokales<'a> {
     geheim_gesetzt: &'a BTreeMap<EintragId, BTreeSet<String>>,
     zugaenge: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
     zugang_geheim: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
+    /// Auf diesem Gerät abgeschaltete Einträge (Aufgabe 19).
+    am_geraet_aus: &'a BTreeSet<EintragId>,
 }
 
 /// Die Sicht auf die Einträge: Soll + lokale Werte → was das Fenster zeigt.
@@ -349,6 +368,7 @@ fn eintraege_sicht(
         geheim_gesetzt,
         zugaenge,
         zugang_geheim,
+        am_geraet_aus,
     } = lokal;
     soll.eintraege
         .iter()
@@ -372,13 +392,20 @@ fn eintraege_sicht(
                 })
                 .unwrap_or_default();
             let zustand = laeufer.get(id);
+            // Abgeschaltet ist ein eigener Zustand: kein Fehler, sondern die
+            // Wahl des Users (Aufgabe 19). Seine Werkzeuge gibt es nicht.
+            let aus = am_geraet_aus.contains(id);
             EintragSicht {
                 id: id.clone(),
                 titel: eintrag.eintrag.titel.clone(),
                 beschreibung: eintrag.eintrag.beschreibung.clone(),
-                zustand: zustand
-                    .map(|l| l.stand.zustand.clone())
-                    .unwrap_or(EintragZustand::Startet),
+                zustand: if aus {
+                    EintragZustand::AmGeraetAus
+                } else {
+                    zustand
+                        .map(|l| l.stand.zustand.clone())
+                        .unwrap_or(EintragZustand::Startet)
+                },
                 fehlende: zustand
                     .map(|l| l.stand.fehlende.clone())
                     .unwrap_or_default(),
@@ -394,15 +421,19 @@ fn eintraege_sicht(
                     .get(id)
                     .map(|namen| namen.iter().cloned().collect())
                     .unwrap_or_default(),
-                tools: zustand
-                    .map(|l| {
-                        l.stand
-                            .tools
-                            .iter()
-                            .map(|tool| tool.name.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                tools: if aus {
+                    Vec::new()
+                } else {
+                    zustand
+                        .map(|l| {
+                            l.stand
+                                .tools
+                                .iter()
+                                .map(|tool| tool.name.to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                },
                 anmeldung: eintrag.eintrag.anmeldung.as_ref().map(|_| {
                     anmeldung
                         .get(id)
@@ -418,6 +449,7 @@ fn eintraege_sicht(
                 zugaenge: eintrag.eintrag.mehrfach.as_ref().map(|mehrfach| {
                     zugaenge_sicht(mehrfach, zugaenge.get(id), zugang_geheim.get(id))
                 }),
+                am_geraet_aus: aus,
             }
         })
         .collect()
@@ -508,6 +540,14 @@ fn export_daten(
         .map(|id| id.als_str().to_string())
         .collect();
     ids.extend(stand.zugaenge.keys().map(|id| id.als_str().to_string()));
+    // Die Wahl „auf diesem Gerät abgeschaltet“ gehört in die Sicherung,
+    // auch wenn der Eintrag sonst nichts Offenes hat (Aufgabe 19).
+    ids.extend(
+        stand
+            .am_geraet_aus
+            .iter()
+            .map(|id| id.als_str().to_string()),
+    );
     if mit_geheimnissen {
         // Geheimnisse gehören zu einem Eintrag – auch wenn er sonst nichts
         // Offenes hat, soll er in der Datei stehen.
@@ -536,6 +576,7 @@ fn export_daten(
         if let Some(liste) = stand.zugaenge.get(&eintrag_id) {
             teil.zugaenge = liste.clone();
         }
+        teil.am_geraet_aus = stand.am_geraet_aus.contains(&eintrag_id);
         eintraege.insert(id.clone(), teil);
     }
     if !mit_geheimnissen {
@@ -588,6 +629,13 @@ pub(crate) struct Innen {
     pub(crate) ende: Abbruch,
     pub(crate) erneut: Notify,
     pub(crate) aufgaben: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Nur **ein** Schreibvorgang auf `zustand.json` zur Zeit. Zwei Aufgaben
+    /// (Abgleich, Schalten, Meldung) schreiben sonst gleichzeitig dieselbe
+    /// Zwischendatei, und einer von beiden fehlt sie beim Umbenennen
+    /// (Aufgabe 19: gleichzeitiges Schalten und Abgleichen).
+    pub(crate) speicher_wache: Mutex<()>,
+    /// Hält gleichzeitige Schaltungen auseinander (Lesen, Schreiben, Wirken).
+    pub(crate) schalt_wache: tokio::sync::Mutex<()>,
     /// Aufrufe und Prozesszeilen (Aufgabe 17).
     pub(crate) protokoll: Arc<protokoll::Protokoll>,
 }
@@ -614,12 +662,37 @@ impl Innen {
     }
 
     pub(crate) fn speichern(&self) {
-        let profil = self.stand().profil();
-        if let Err(fehler) = profil.speichern(&self.konfig.profil) {
+        if let Err(fehler) = self.speichern_ergebnis() {
             tracing::warn!("Zustand lässt sich nicht speichern: {fehler}");
         }
+    }
+
+    /// Wie [`Innen::speichern`], aber mit Ergebnis. Das Schalten eines
+    /// Eintrags am Gerät braucht das: scheitert das Speichern, wird **nichts**
+    /// geschaltet (Aufgabe 19).
+    pub(crate) fn speichern_ergebnis(&self) -> anyhow::Result<()> {
+        let _wache = self
+            .speicher_wache
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+        let profil = self.stand().profil();
+        profil.speichern(&self.konfig.profil)?;
         // Die Maske des Protokolls folgt dem Tresor (Aufgabe 17).
         self.protokoll.geheimnisse_setzen(self.geheimnisse());
+        Ok(())
+    }
+
+    /// Den Stand mit einer **anderen** Menge abgeschalteter Einträge
+    /// schreiben, ohne ihn zu übernehmen. So prüft das Schalten erst die
+    /// Platte und ändert danach den Speicher (Aufgabe 19).
+    pub(crate) fn speichern_mit_aus(&self, aus: &BTreeSet<EintragId>) -> anyhow::Result<()> {
+        let _wache = self
+            .speicher_wache
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+        let mut profil = self.stand().profil();
+        profil.am_geraet_aus = aus.iter().map(|id| id.als_str().to_string()).collect();
+        profil.speichern(&self.konfig.profil)
     }
 
     /// Alle Geheimwerte, die gerade im Speicher stehen – die Maske des
@@ -678,6 +751,9 @@ impl Innen {
             stand.anmeldung.clear();
             stand.einrichtung.clear();
             stand.einrichtung_laufend.clear();
+            // Ohne Gerät nimmt der Server nichts mehr an – ein abgeschalteter
+            // Eintrag bleibt aber abgeschaltet (Aufgabe 19).
+            stand.angenommen = false;
             stand.verbindung = Verbindung::NichtEingebunden;
         }
         self.speichern();
@@ -693,6 +769,9 @@ impl Innen {
             .as_ref()
             .map(|geraet| geraet.name.clone())
             .unwrap_or_default();
+        // Ab hier hat der Server dieses Gerät in diesem Lauf angenommen –
+        // erst jetzt darf ein Wiedereinschalten etwas starten (Aufgabe 19).
+        self.stand().angenommen = true;
         self.verbindung_setzen(Verbindung::Verbunden {
             server: server.to_string(),
             geraet,
@@ -972,12 +1051,20 @@ impl Innen {
                     .eintraege
                     .iter()
                     .map(|eintrag| {
-                        let zustand = stand
-                            .laeufer
-                            .get(&eintrag.eintrag.id)
-                            .map(|l| l.stand.zustand.clone())
-                            .unwrap_or(EintragZustand::Startet);
-                        (eintrag.eintrag.id.clone(), zustand)
+                        let id = &eintrag.eintrag.id;
+                        // Die Wahl „am Gerät abgeschaltet“ geht als eigener
+                        // Zustand an den Server (Aufgabe 19) – sie ist kein
+                        // Fehler und zählt dort nicht als Problem.
+                        let zustand = if stand.am_geraet_aus.contains(id) {
+                            EintragZustand::AmGeraetAus
+                        } else {
+                            stand
+                                .laeufer
+                                .get(id)
+                                .map(|l| l.stand.zustand.clone())
+                                .unwrap_or(EintragZustand::Startet)
+                        };
+                        (id.clone(), zustand)
                     })
                     .collect(),
             }
@@ -1085,14 +1172,21 @@ async fn anmeldung_lauf(innen: Arc<Innen>) {
             _ = innen.ende.warten() => return,
             _ = tokio::time::sleep(STATUS_ABSTAND) => {}
         }
-        let ids: Vec<EintragId> = innen
-            .stand()
-            .soll
-            .eintraege
-            .iter()
-            .filter(|eintrag| eintrag.eintrag.anmeldung.is_some())
-            .map(|eintrag| eintrag.eintrag.id.clone())
-            .collect();
+        let ids: Vec<EintragId> = {
+            let stand = innen.stand();
+            stand
+                .soll
+                .eintraege
+                .iter()
+                // Ein abgeschalteter Eintrag wird nicht geprüft: kein Befehl
+                // darf ihn anfassen (Aufgabe 19).
+                .filter(|eintrag| {
+                    eintrag.eintrag.anmeldung.is_some()
+                        && !stand.am_geraet_aus.contains(&eintrag.eintrag.id)
+                })
+                .map(|eintrag| eintrag.eintrag.id.clone())
+                .collect()
+        };
         for id in ids {
             if innen.ende.ist_abgebrochen() {
                 return;
@@ -1119,6 +1213,13 @@ async fn protokoll_aufraeumen(innen: Arc<Innen>) {
     }
 }
 
+/// Die **eine** Stelle, die entscheidet, ob ein Eintrag laufen darf: der User
+/// hat ihn auf diesem Gerät nicht abgeschaltet (Aufgabe 19). Alle Start-Wege
+/// gehen durch [`starte_in`].
+fn darf_laufen(stand: &Stand, id: &EintragId) -> bool {
+    !stand.am_geraet_aus.contains(id)
+}
+
 /// Der Eintrag startet: Zustand merken und die Aufsicht starten.
 ///
 /// Je Eintrag gibt es genau **einen** Läufer und damit genau eine wirksame
@@ -1126,8 +1227,15 @@ async fn protokoll_aufraeumen(innen: Arc<Innen>) {
 /// wird verworfen und seine Aufgabe über ihr Abbruchsignal beendet. Die alte
 /// Aufgabe wird nicht abgebrochen, sondern lässt ihren Aufbau los – sonst
 /// bliebe ein Kindprozess zurück, dessen Dienst in einer eigenen Aufgabe lebt.
+///
+/// Ein abgeschalteter Eintrag startet hier **nie** – egal, wer ihn starten will
+/// (Abgleich, Wiedereinschalten, Import, Werte, Anmeldung, Einrichtung).
 async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
     let id = eintrag.eintrag.id.clone();
+    if !darf_laufen(&innen.stand(), &id) {
+        tracing::info!(eintrag = %id, "am Gerät abgeschaltet, wird nicht gestartet");
+        return;
+    }
     let generation = innen
         .generation
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -1135,6 +1243,11 @@ async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
     let abbruch = Abbruch::neu();
     let vorheriger = {
         let mut stand = innen.stand();
+        // Noch einmal unter derselben Sperre wie das Eintragen: dazwischen kann
+        // der User abgeschaltet haben.
+        if !darf_laufen(&stand, &id) {
+            return;
+        }
         stand.laeufer.insert(
             id.clone(),
             Laeufer {
@@ -1496,6 +1609,13 @@ impl Kern {
             anmeldung: BTreeMap::new(),
             einrichtung: BTreeMap::new(),
             einrichtung_laufend: BTreeSet::new(),
+            am_geraet_aus: gespeichert
+                .am_geraet_aus
+                .iter()
+                .map(|id| EintragId::neu(id.clone()))
+                .collect(),
+            // Der gespeicherte Stand läuft nicht an; er ist nicht angenommen.
+            angenommen: false,
             protokoll_fuer_agenten: gespeichert.protokoll_fuer_agenten,
             verbindung,
             endpunkt: endpunkt.clone(),
@@ -1511,6 +1631,8 @@ impl Kern {
             ende: Abbruch::neu(),
             erneut: Notify::new(),
             aufgaben: Mutex::new(Vec::new()),
+            speicher_wache: Mutex::new(()),
+            schalt_wache: tokio::sync::Mutex::new(()),
             generation: AtomicU64::new(0),
             protokoll: Arc::new(protokoll::Protokoll::neu(&konfig.profil)),
         });
@@ -1642,6 +1764,9 @@ impl Kern {
     /// wird der Status geprüft und der Eintrag **neu gestartet**, damit der
     /// laufende MCP-Prozess das neue Token sieht.
     pub async fn anmelden(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        if self.aus_am_geraet(eintrag) {
+            return Err(self.abgeschaltet(eintrag));
+        }
         self.innen.anmeldung_setzen(eintrag, AnmeldeZustand::Laeuft);
         self.anmelde_befehl(eintrag, anmeldung::Anmeldebefehl::Anmelden)
             .await?;
@@ -1653,6 +1778,9 @@ impl Kern {
     /// Die Anmeldung eines Eintrags beenden: `abmelden`-Befehl, Status
     /// prüfen, Eintrag neu starten.
     pub async fn abmelden_eintrag(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        if self.aus_am_geraet(eintrag) {
+            return Err(self.abgeschaltet(eintrag));
+        }
         self.anmelde_befehl(eintrag, anmeldung::Anmeldebefehl::Abmelden)
             .await?;
         status_pruefen(&self.innen, eintrag).await;
@@ -1670,6 +1798,9 @@ impl Kern {
     ///
     /// Höchstens eine Einrichtung je Eintrag: ein zweiter Klick tut nichts.
     pub async fn einrichten(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        if self.aus_am_geraet(eintrag) {
+            return Err(self.abgeschaltet(eintrag));
+        }
         let soll = self.innen.soll_eintrag(eintrag).ok_or_else(|| {
             anyhow::anyhow!("Eintrag {eintrag} ist diesem Gerät nicht zugewiesen")
         })?;
@@ -1752,6 +1883,87 @@ impl Kern {
         anyhow::bail!(text)
     }
 
+    /// Ein Eintrag auf **diesem** Gerät abschalten oder wieder einschalten
+    /// (Aufgabe 19).
+    ///
+    /// **Aus:** Der laufende Prozess wird beendet, seine Werkzeuge verschwinden
+    /// sofort aus `tools/list`, alle Agenten bekommen `list_changed`, und der
+    /// Zustand `abgeschaltet` geht an den Server. **An:** startet sofort mit den
+    /// aktuellen Werten – aber nur, wenn der Server das Gerät in diesem Lauf
+    /// angenommen hat.
+    ///
+    /// Gespeichert wird **vor** dem Schalten: scheitert das Schreiben, ist
+    /// nichts geschaltet und der Aufruf endet mit einem Fehler.
+    pub async fn eintrag_schalten(&self, eintrag: &EintragId, an: bool) -> anyhow::Result<()> {
+        // Immer nur eine Schaltung: sonst überschreibt eine die andere.
+        let _schaltung = self.innen.schalt_wache.lock().await;
+        let neu = {
+            let stand = self.innen.stand();
+            if !stand
+                .soll
+                .eintraege
+                .iter()
+                .any(|e| &e.eintrag.id == eintrag)
+            {
+                anyhow::bail!("Eintrag {eintrag} ist diesem Gerät nicht zugewiesen");
+            }
+            let mut neu = stand.am_geraet_aus.clone();
+            let geaendert = if an {
+                neu.remove(eintrag)
+            } else {
+                neu.insert(eintrag.clone())
+            };
+            if !geaendert {
+                return Ok(());
+            }
+            neu
+        };
+        // Erst die Platte, dann der Speicher: ein Fehler lässt alles, wie es
+        // war.
+        self.innen.speichern_mit_aus(&neu)?;
+        {
+            let mut stand = self.innen.stand();
+            stand.am_geraet_aus = neu;
+        }
+        if an {
+            // Wie nach einer Zuweisung – aber nur, wenn der Server das Gerät in
+            // diesem Lauf angenommen hat. Sonst wartet der nächste Abgleich.
+            let startbar = {
+                let stand = self.innen.stand();
+                stand.angenommen && !stand.abgelehnt
+            };
+            if startbar {
+                if let Some(soll) = self.innen.soll_eintrag(eintrag) {
+                    starte_in(&self.innen, &soll).await;
+                }
+            }
+        } else {
+            stoppe_in(&self.innen, eintrag);
+        }
+        self.innen.modell_schicken();
+        self.innen.liste_geaendert().await;
+        self.innen.melde().await;
+        Ok(())
+    }
+
+    /// Ist der Eintrag auf diesem Gerät abgeschaltet (Aufgabe 19)?
+    fn aus_am_geraet(&self, eintrag: &EintragId) -> bool {
+        self.innen.stand().am_geraet_aus.contains(eintrag)
+    }
+
+    /// Der Eintrag ist abgeschaltet – Meldung für Befehle, die ihn anfassen
+    /// würden.
+    fn abgeschaltet(&self, eintrag: &EintragId) -> anyhow::Error {
+        let titel = self
+            .innen
+            .soll_eintrag(eintrag)
+            .map(|soll| soll.eintrag.titel)
+            .unwrap_or_else(|| eintrag.als_str().to_string());
+        anyhow::anyhow!(
+            "{titel} ist auf diesem Gerät abgeschaltet – im quiver-Fenster unter Tools einschalten."
+        )
+    }
+
     /// Werte eines Eintrags setzen. Geheimes landet im Tresor, nie im Profil.
     pub async fn werte_setzen(
         &self,
@@ -1824,6 +2036,7 @@ impl Kern {
             &stand.soll,
             &stand.lokale_werte,
             &stand.zugaenge,
+            &stand.am_geraet_aus,
         ))
     }
 
@@ -1845,10 +2058,13 @@ impl Kern {
         if gelesen.hat_geheimnisse && gelesen.geheimnisse.is_none() {
             anyhow::bail!("Die Sicherung enthält Geheimnisse – dafür wird das Passwort gebraucht");
         }
+        // Der Import kann abschalten, also nie neben einer Schaltung.
+        let _schaltung = self.innen.schalt_wache.lock().await;
         let mut zusammenfassung = Zusammenfassung::default();
         let mut betroffen: Vec<EintragId> = Vec::new();
         let mut neue_werte: Vec<(EintragId, Werte)> = Vec::new();
         let mut neue_zugaenge: Vec<(EintragId, BTreeMap<String, Werte>)> = Vec::new();
+        let mut neue_aus: Vec<EintragId> = Vec::new();
         let mut schreibungen: Vec<(String, String)> = Vec::new();
         let bekannt: BTreeMap<String, EintragId> = {
             let stand = self.innen.stand();
@@ -1881,6 +2097,13 @@ impl Kern {
                     .count();
                 zusammenfassung.zugaenge += teil.zugaenge.len();
                 zusammenfassung.eintraege += 1;
+                // Aus bleibt aus: die Wahl der Datei schaltet nur aus, nie ein.
+                if einstellungen::aus_mischen(
+                    stand.am_geraet_aus.contains(eintrag),
+                    teil.am_geraet_aus,
+                ) {
+                    neue_aus.push(eintrag.clone());
+                }
                 neue_werte.push((
                     eintrag.clone(),
                     einstellungen::werte_mischen(&vorher, &teil.werte),
@@ -1942,6 +2165,9 @@ impl Kern {
                 } else {
                     stand.zugaenge.insert(eintrag, liste);
                 }
+            }
+            for eintrag in &neue_aus {
+                stand.am_geraet_aus.insert(eintrag.clone());
             }
             if let Some(geheimnisse) = &gelesen.geheimnisse {
                 for (id, werte) in &geheimnisse.eintraege {

@@ -127,7 +127,9 @@ Tresor, verschlüsselt mit XChaCha20-Poly1305 unter einem Schlüssel aus Argon2i
 Datei wird mit den Rechten 0600 geschrieben. Geräte-Token, Agent-Tokens und die
 Anmeldungen der Tools selbst sind nie enthalten — sie gehören zum Gerät bzw. zur
 Anmeldung. Der Import mischt statt zu ersetzen, überspringt Einträge, die das
-Gerät nicht kennt, und startet die betroffenen Einträge neu.
+Gerät nicht kennt, und startet die betroffenen Einträge neu. Die Wahl „auf
+diesem Gerät abgeschaltet“ (`am_geraet_aus`, Abschnitt 9) steht mit in der Datei
+und in der Vorschau; ein Import schaltet damit aus, aber nie ein.
 
 *Preis:* eine zusätzliche Abhängigkeit (`argon2`) und ein Dateiformat, das
 versioniert bleibt. Wer das Passwort vergisst, kommt an die Geheimnisse der
@@ -185,6 +187,30 @@ Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
   *Preis:* Die Grenzen sind fest und nicht einstellbar; zwischen 700 und 760 px
   ist die Seitenleiste breit, obwohl der Inhalt schon knapp ist. Die Stufe einer
   Tool-Log-Zeile wird aus dem Text geraten, weil die Zeile kein Feld dafür hat.
+- **Festlegung: Einträge lassen sich am Gerät abschalten** (Aufgabe 19). Jede
+  Tools-Karte trägt rechts den Schalter *Auf diesem Gerät aktiv*, Standard an.
+  Aus beendet den Prozess, nimmt die Werkzeuge aus `tools/list`, meldet allen
+  Agenten `list_changed` und sagt dem nächsten Aufruf, dass der Eintrag
+  abgeschaltet ist – nie „unbekannt“. Angaben, Zugänge, Geheimnisse und
+  Anmeldung bleiben erhalten; nur *Anmelden* und *Einrichten* sind gesperrt,
+  solange er aus ist.
+
+  Die Wahl steht als Menge von Kennungen in `zustand.json`
+  (`am_geraet_aus`, `serde(default)`) und geht als neuer Zustand
+  `EintragZustand::AmGeraetAus` an den Server, der sie neutral zeigt. Eine
+  einzige Stelle (`darf_laufen`) entscheidet, ob ein Eintrag starten darf; alle
+  Start-Wege gehen hindurch, auch Abgleich, `werte_setzen`, Anmeldung,
+  Einrichtung und Import. Gespeichert wird **vor** dem Schalten: scheitert das
+  Schreiben, ist nichts geschaltet. *Aus* bleibt aus, auch über Neustart,
+  Serveränderung und Import; eine Sicherung nimmt die Wahl mit und hebt sie nie
+  auf. Agenten können nicht schalten; ein MCP-Werkzeug dafür gibt es nicht.
+  Der Server-Vorrang bleibt: was am Server entfernt oder deaktiviert wird,
+  verschwindet; kommt der Eintrag zurück, gilt die alte Wahl.
+
+  *Preis:* Ein zweiter Zustand neben dem Laufzustand — Modell, Meldung und
+  Verwaltung müssen beide lesen (unbekannte Zustände gelten als neutral). Wer
+  einen Eintrag auf vielen Geräten abschalten will, muss es auf jedem Gerät tun;
+  der Admin-Schalter (*Aktiv*) bleibt die einzige zentrale Steuerung.
 
 ## 10. Protokoll und Datenschutz
 

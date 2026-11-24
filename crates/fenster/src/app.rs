@@ -118,6 +118,9 @@ pub enum Aktion {
         pfad: PathBuf,
         passwort: Option<String>,
     },
+    /// Einen Eintrag auf **diesem** Gerät abschalten oder wieder einschalten
+    /// (Aufgabe 19). Aus beendet den Prozess, an startet ihn sofort.
+    EintragSchalten { eintrag: EintragId, an: bool },
     /// Das Protokoll leeren — Speicher und Dateien (Aufgabe 17).
     ProtokollLeeren,
     /// Dürfen Agenten Inhalte im Protokoll sehen? Wird in `zustand.json`

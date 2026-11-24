@@ -208,6 +208,11 @@ impl KernZugang for EchterKern {
                     kern.protokoll_fuer_agenten_setzen(an).await;
                     Ok(())
                 }
+                // Am Gerät abschalten (Aufgabe 19): speichert vor dem Schalten;
+                // scheitert das Speichern, bleibt alles, wie es war.
+                Aktion::EintragSchalten { eintrag, an } => {
+                    kern.eintrag_schalten(&eintrag, an).await
+                }
             };
             if let Err(fehler) = ergebnis {
                 meldungen

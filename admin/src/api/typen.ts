@@ -196,7 +196,9 @@ export type EintragZustand =
   | { zustand: "laeuft"; tools: number }
   | { zustand: "wartet-auf-werte"; felder: string[] }
   | { zustand: "startet" }
-  | { zustand: "fehler"; text: string };
+  | { zustand: "am-geraet-aus" }
+  | { zustand: "fehler"; text: string }
+  | { zustand: "unbekannt" };
 
 /** Was der Client nach jedem Abgleich meldet. */
 export interface Meldung {

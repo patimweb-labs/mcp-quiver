@@ -954,3 +954,54 @@ fn testdaten_sind_gueltig() {
     assert!(soll.eintraege.is_empty());
     assert_eq!(soll.revision, Soll::neu(Vec::new()).revision);
 }
+
+/// **Vertrag (Aufgabe 19):** Ein Client, der einen Zustand meldet, den dieser
+/// Server nicht kennt, wird nicht abgewiesen. Die Meldung wird gelesen und der
+/// fremde Wert neutral abgelegt – die Verwaltung zeigt ihn als „unbekannt“.
+#[tokio::test]
+async fn ein_fremder_zustand_wird_nicht_abgelehnt() {
+    let p = Pruefung::neu().await;
+    let antwort = p.aufbau().await;
+    let soll = p.soll(&antwort.token).await;
+
+    // Von Hand, wie ein neuerer Client es schicken würde: `am-geraet-aus` kennt
+    // der Vertrag, `von-morgen` nicht.
+    let rumpf = json!({
+        "revision": soll.revision,
+        "client_version": "0.9.0",
+        "eintraege": [
+            ["wetter", { "zustand": "von-morgen", "was": 1 }],
+            ["anderer", { "zustand": "am-geraet-aus" }],
+        ],
+    });
+    let (status, _) = p
+        .anfrage("POST", "/geraet/meldung", Some(&antwort.token), Some(rumpf))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "ein unbekannter Zustand darf die Meldung nicht scheitern lassen"
+    );
+
+    let (_, geraete) = p.admin("GET", "/admin/geraete", None).await;
+    let gemeldet = &geraete[0]["meldung"]["eintraege"];
+    assert_eq!(
+        gemeldet[0][1]["zustand"], "unbekannt",
+        "der fremde Wert wird neutral abgelegt: {gemeldet}"
+    );
+    assert_eq!(
+        gemeldet[1][1]["zustand"], "am-geraet-aus",
+        "der neue Wert wird gelesen: {gemeldet}"
+    );
+
+    // Und andersherum: was der Server ausliefert, kann der Client lesen.
+    let staende: Vec<GeraetStand> = als(&geraete);
+    assert_eq!(
+        staende[0].meldung.as_ref().expect("Meldung").eintraege[0].1,
+        EintragZustand::Unbekannt
+    );
+    assert_eq!(
+        staende[0].meldung.as_ref().expect("Meldung").eintraege[1].1,
+        EintragZustand::AmGeraetAus
+    );
+}

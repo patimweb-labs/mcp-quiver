@@ -58,6 +58,37 @@ describe("Eintrag-Zustand", () => {
       expect(zustand_text(zustand)).toBe(text);
     }
   });
+
+  it("zeigt „am Gerät abgeschaltet“ neutral, nicht als Problem", () => {
+    const aus: EintragZustand = { zustand: "am-geraet-aus" };
+    expect(zustand_ton(aus)).toBe("leise");
+    expect(zustand_text(aus)).toBe("am Gerät abgeschaltet");
+    const still = stand({
+      meldung: {
+        revision: "aaaa",
+        client_version: "0.1.0",
+        eintraege: [["mail", aus]],
+      },
+    });
+    expect(hat_problem(still)).toBe(false);
+    expect(problem_texte(still, (id) => id)).toEqual([]);
+  });
+
+  it("liest einen fremden Zustand als neutralen Wert", () => {
+    // Ein neuerer Client meldet etwas, das diese Fassung nicht kennt: die
+    // Meldung wird nicht abgelehnt, sie ist nur unbekannt (Aufgabe 19).
+    const fremd = { zustand: "von-morgen" } as unknown as EintragZustand;
+    expect(zustand_ton(fremd)).toBe("leise");
+    expect(zustand_text(fremd)).toBe("Unbekannt");
+    const still = stand({
+      meldung: {
+        revision: "aaaa",
+        client_version: "0.1.0",
+        eintraege: [["mail", fremd]],
+      },
+    });
+    expect(hat_problem(still)).toBe(false);
+  });
 });
 
 describe("wird_aktualisiert", () => {

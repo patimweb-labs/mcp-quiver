@@ -78,6 +78,11 @@ pub struct GeraetAendern {
 }
 
 /// Zustand eines Eintrags auf dem Gerät, wie der Client ihn meldet.
+///
+/// **Verträglichkeit (Aufgabe 19):** Beide Seiten lesen einen Zustand, den sie
+/// nicht kennen, als [`EintragZustand::Unbekannt`] – einen neutralen Wert. Ein
+/// älterer Server lehnt die Meldung eines neueren Clients deshalb nicht ab, und
+/// ein älterer Client versteht die Meldung eines neueren Servers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "zustand", rename_all = "kebab-case")]
 pub enum EintragZustand {
@@ -89,9 +94,16 @@ pub enum EintragZustand {
         felder: Vec<String>,
     },
     Startet,
+    /// Der User hat den Eintrag auf **diesem** Gerät abgeschaltet
+    /// (Aufgabe 19). Kein Fehler: es ist seine Wahl.
+    AmGeraetAus,
     Fehler {
         text: String,
     },
+    /// Ein Zustand, den diese Fassung nicht kennt. Neutral: kein Fehler, kein
+    /// Problem, nur „unbekannt“.
+    #[serde(other)]
+    Unbekannt,
 }
 
 /// Was der Client nach jedem Abgleich meldet.
@@ -142,6 +154,10 @@ mod tests {
             serde_json::to_string(&z).unwrap(),
             r#"{"zustand":"laeuft","tools":3}"#
         );
+        assert_eq!(
+            serde_json::to_string(&EintragZustand::AmGeraetAus).unwrap(),
+            r#"{"zustand":"am-geraet-aus"}"#
+        );
         let z: EintragZustand =
             serde_json::from_str(r#"{"zustand":"wartet-auf-werte","felder":["pfad"]}"#).unwrap();
         assert_eq!(
@@ -150,5 +166,28 @@ mod tests {
                 felder: vec!["pfad".into()]
             }
         );
+    }
+
+    /// Ein Wert, den diese Fassung nicht kennt, wird **nicht** abgelehnt: die
+    /// andere Seite ist neuer und darf melden, was sie will (Aufgabe 19).
+    #[test]
+    fn ein_fremder_zustand_ist_neutral() {
+        for fremd in [
+            r#"{"zustand":"am-geraet-aus"}"#,
+            r#"{"zustand":"erfunden","was":1}"#,
+            r#"{"zustand":"ausser-betrieb"}"#,
+        ] {
+            let z: EintragZustand = serde_json::from_str(fremd).expect("wird gelesen");
+            assert!(
+                matches!(z, EintragZustand::AmGeraetAus | EintragZustand::Unbekannt),
+                "{fremd} → {z:?}"
+            );
+        }
+        // Eine Meldung mit fremdem Zustand lässt sich lesen (der Vertrag).
+        let meldung: Meldung = serde_json::from_str(
+            r#"{"revision":"r1","client_version":"0.1.0","eintraege":[["echo",{"zustand":"von-morgen"}]]}"#,
+        )
+        .expect("Meldung wird gelesen");
+        assert_eq!(meldung.eintraege[0].1, EintragZustand::Unbekannt);
     }
 }
