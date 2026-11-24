@@ -4,8 +4,13 @@ Nach 22 und 24. Für autonome Agenten und Server. Noch offen, was unten unter �
 
 ## Aufbau
 
-- Neues Crate `crates/konsole`, Programm `quiver-cli`: derselbe Kern (`crates/client`, heute schon ohne egui), keine Grafikbibliotheken. `--headless` im Fenster-Programm bleibt als Verweis darauf.
-- Gleiches Profil und gleicher Tresor wie das Fenster; die Ein-Instanz-Sperre gilt über beide. Läuft schon ein Client, sprechen die Befehle mit ihm, statt einen zweiten zu starten.
+Entscheidung des Nutzers (2026-11-24): Der Fenster-Client wird **nicht** geteilt oder umgebaut. Es kommt ein **zusätzlicher, eigenständiger Konsolen-Client** dazu.
+
+- Neues Crate `crates/konsole`, Programm `quiver-cli`, vollwertig: Verbindung, Tools, Angaben und Zugänge, an/aus, Agenten, Protokoll, Export/Import. Keine Grafikbibliotheken.
+- Beide nutzen `crates/client` (den Kern, heute schon ohne egui) unverändert als Bibliothek. Logik, die heute nur im Fenster steckt und beide brauchen (Prüfung der Felder, Texte), wandert dorthin statt doppelt zu entstehen; das Fenster verhält sich danach genau gleich (Tests und Bilder unverändert).
+- Zwei Bedienarten: **interaktive Oberfläche im Terminal** (`quiver-cli`, gleiche Seiten und Begriffe wie das Fenster, Tastatur, schmale Terminals, ohne Farbe lesbar) und **einzelne Befehle** für Skripte.
+- Auf einem Rechner läuft immer nur ein Client mit einem Profil: Läuft das Fenster, bedient `quiver-cli` den laufenden Client über einen geschützten lokalen Kanal (nur derselbe Benutzer), statt einen zweiten zu starten.
+- `--headless` am Fenster-Programm bleibt vorerst bestehen.
 
 ## Geführte Einrichtung
 
