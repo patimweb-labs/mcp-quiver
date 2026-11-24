@@ -159,6 +159,13 @@ Standardbrowser — sonst nichts, keine Anmeldung, kein Lauscher.
 
 ![Angaben-Dialog mit Hilfe-Link](docs/bilder/fenster-dark-angaben.png)
 
+Felder tragen eine **Art** (Verwaltung: *Art* und *Titel*): Text, Passwort,
+Zahl, Schalter (Häkchen), Adresse (mit `http(s)://`-Prüfung) oder Auswahl mit
+festen Optionen. Ein *Titel* ersetzt den Feldnamen im Dialog — so steht
+„SAP-Benutzer“ statt `benutzer`. Die Feldliste scrollt mit immer sichtbarer
+Leiste; solange „Speichern“ gesperrt ist, steht der Grund daneben („Es fehlt:
+SAP-Benutzer, ADT-Adresse“). Leere, nicht verpflichtende Felder sind erlaubt.
+
 Die Angaben eines Geräts lassen sich **sichern und auf einem anderen Gerät
 wieder einspielen**: Auf der Tools-Seite stehen dafür *Exportieren* und
 *Importieren* in der Kopfzeile. Die Datei `quiver-einstellungen-<datum>.json`

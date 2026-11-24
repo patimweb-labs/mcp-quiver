@@ -1,24 +1,32 @@
 <script setup lang="ts">
-// Eine Feldkarte im Eintrag-Formular: Name, Beschreibung, Quelle, Pflicht,
-// Standard und der Hilfe-Link (Aufgabe 13). Dieselbe Karte trägt die normalen
-// Felder und die Felder einer Zugangsliste (Aufgabe 14) – nur die erlaubten
-// Quellen unterscheiden sich.
+// Eine Feldkarte im Eintrag-Formular: Name, Beschreibung, Art, Titel, Quelle,
+// Pflicht, Standard und der Hilfe-Link (Aufgaben 13 und 16). Dieselbe Karte
+// trägt die normalen Felder und die Felder einer Zugangsliste (Aufgabe 14) –
+// nur die erlaubten Quellen unterscheiden sich.
 import { Trash2 } from "lucide-vue-next";
-import { WpCheckbox, WpIconButton, WpInput, WpSelect } from "@weppelmann/components";
+import {
+  WpCheckbox,
+  WpIconButton,
+  WpInput,
+  WpSelect,
+  WpTextarea,
+} from "@weppelmann/components";
 
-import type { Quelle } from "../api/typen";
+import type { Feld as FeldDaten, Quelle } from "../api/typen";
+import {
+  FELD_ARTEN,
+  feld_art_aus_name,
+  feld_art_name,
+  feld_art_text,
+  feld_optionen,
+  optionen_als_text,
+  optionen_aus_text,
+} from "../logik/feld";
 import Feld from "./Feld.vue";
 
 const props = defineProps<{
   /** Das Feld selbst; die Karte schreibt direkt hinein. */
-  feld: {
-    name: string;
-    beschreibung: string;
-    quelle: Quelle;
-    pflicht: boolean;
-    standard: string | null;
-    link: { text: string; url: string } | null;
-  };
+  feld: FeldDaten;
   /** Nummer für die Überschrift (1-basiert). */
   nummer: number;
   /** Präfix der Fehlerschlüssel, z. B. `feld` oder `mehrfach.feld`. */
@@ -52,13 +60,26 @@ function linkSetzen(teil: "text" | "url", wert: string): void {
   const link = props.feld.link ?? { text: "", url: "" };
   props.feld.link = teil === "text" ? { ...link, text: wert } : { ...link, url: wert };
 }
+
+/** Die Art wechseln (Aufgabe 16); vorhandene Optionen bleiben erhalten. */
+function artSetzen(wert: string | null): void {
+  if (!wert) return;
+  props.feld.art = feld_art_aus_name(wert, props.feld.art ?? "text");
+}
+
+/** Die Optionen einer Auswahl als Text setzen. */
+function optionenSetzen(text: string): void {
+  props.feld.art = { auswahl: { optionen: optionen_aus_text(text) } };
+}
 </script>
 
 <template>
   <fieldset class="feldkarte">
     <legend class="feldkarte__titel">Feld {{ nummer }}</legend>
     <div class="feldkarte__kopf">
-      <span class="blass">{{ untertitel }}</span>
+      <span class="blass">
+        {{ untertitel }} · {{ feld_art_text(feld.art ?? "text") }}
+      </span>
       <WpIconButton
         :icon="Trash2"
         label="Feld entfernen"
@@ -92,6 +113,12 @@ function linkSetzen(teil: "text" | "url", wert: string): void {
 
     <div class="feldkarte__zeile">
       <WpSelect
+        :model-value="feld.art ? feld_art_name(feld.art) : 'text'"
+        :options="FELD_ARTEN"
+        label="Art"
+        @update:model-value="artSetzen"
+      />
+      <WpSelect
         :model-value="feld.quelle"
         :options="quellen"
         label="Quelle"
@@ -103,6 +130,38 @@ function linkSetzen(teil: "text" | "url", wert: string): void {
         @update:model-value="(wert) => (feld.pflicht = wert)"
       />
     </div>
+
+    <Feld
+      beschriftung="Titel"
+      hinweis="Leer heißt: der Feldname steht im Dialog."
+    >
+      <template #default="{ id }">
+        <WpInput
+          :id="id"
+          :model-value="feld.titel ?? ''"
+          placeholder="SAP-Benutzer"
+          @update:model-value="
+            (wert) => (feld.titel = wert.length > 0 ? wert : null)
+          "
+        />
+      </template>
+    </Feld>
+
+    <Feld
+      v-if="feld_art_name(feld.art ?? 'text') === 'auswahl'"
+      beschriftung="Optionen"
+      hinweis="Eine je Zeile: wert | Anzeige."
+    >
+      <template #default="{ id }">
+        <WpTextarea
+          :id="id"
+          :rows="4"
+          :model-value="optionen_als_text(feld_optionen(feld))"
+          placeholder="rot | Rot"
+          @update:model-value="optionenSetzen"
+        />
+      </template>
+    </Feld>
 
     <Feld beschriftung="Standard" hinweis="Leer heißt: kein Standardwert.">
       <template #default="{ id }">

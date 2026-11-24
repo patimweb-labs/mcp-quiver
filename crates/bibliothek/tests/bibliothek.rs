@@ -72,6 +72,7 @@ fn npm_mit_geheimer_variable_und_argumenten() {
             pflicht: true,
             standard: None,
             link: None,
+            ..Default::default()
         }]
     );
 }
@@ -143,6 +144,7 @@ fn nur_remote_mit_header() {
             pflicht: true,
             standard: None,
             link: None,
+            ..Default::default()
         }]
     );
 }
@@ -190,6 +192,7 @@ fn rundlauf_importieren_exportieren() {
                 pflicht: true,
                 standard: None,
                 link: None,
+                ..Default::default()
             },
             Feld {
                 name: "STADT".into(),
@@ -198,6 +201,7 @@ fn rundlauf_importieren_exportieren() {
                 pflicht: false,
                 standard: Some("Berlin".into()),
                 link: None,
+                ..Default::default()
             },
         ],
     };

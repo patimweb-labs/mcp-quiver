@@ -6,6 +6,7 @@ import type {
   Eintrag,
   Einrichtung,
   Feld,
+  FeldArt,
   FeldLink,
   Laufzeit,
   Mehrfach,
@@ -45,6 +46,8 @@ export function neues_feld(): Feld {
     pflicht: true,
     standard: null,
     link: null,
+    art: "text",
+    titel: null,
   };
 }
 
@@ -298,15 +301,37 @@ export function laufzeit_text(laufzeit: Laufzeit): string {
     : "Remote";
 }
 
+/** Eine Feldart für den Versand vorbereiten: Optionen ohne Ränder, leere weg. */
+function feldart_saeubern(art: FeldArt): FeldArt {
+  if (typeof art === "string") return art;
+  return {
+    auswahl: {
+      optionen: art.auswahl.optionen
+        .map((option) => ({
+          wert: option.wert.trim(),
+          anzeige: option.anzeige.trim(),
+        }))
+        .filter((option) => option.wert.length > 0)
+        .map((option) => ({
+          ...option,
+          anzeige: option.anzeige.length > 0 ? option.anzeige : option.wert,
+        })),
+    },
+  };
+}
+
 /** Ein Feld für den Versand vorbereiten: Ränder weg, leerer Standard `null`. */
 function feld_saeubern(feld: Feld): Feld {
   const standard = feld.standard?.trim() ?? "";
+  const titel = feld.titel?.trim() ?? "";
   return {
     ...feld,
     name: feld.name.trim(),
     beschreibung: feld.beschreibung.trim(),
     standard: standard.length > 0 ? standard : null,
     link: link_saeubern(feld.link),
+    art: feldart_saeubern(feld.art ?? "text"),
+    titel: titel.length > 0 ? titel : null,
   };
 }
 

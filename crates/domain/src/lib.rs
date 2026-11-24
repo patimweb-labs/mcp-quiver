@@ -92,6 +92,38 @@ pub enum Quelle {
     Geheim,
 }
 
+/// Wie ein Feld im Dialog dargestellt wird (Aufgabe 16).
+///
+/// Die JSON-Form ist extern getaggt: `"text"`, `"zahl"` … und für die
+/// Auswahl `{"auswahl":{"optionen":[{"wert":"a","anzeige":"A"}]}}`.
+/// Alte Daten ohne `art` gelten als [`FeldArt::Text`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FeldArt {
+    /// Freie Texteingabe (Standard).
+    #[default]
+    Text,
+    /// Wie Text, aber als Passwortfeld eingegeben.
+    Passwort,
+    /// Nur Ziffern; die Prüfung geschieht beim Speichern.
+    Zahl,
+    /// Ein Häkchen: Wert `an` oder `aus`.
+    Schalter,
+    /// Eine Adresse, geprüft auf `http(s)://`.
+    Url,
+    /// Eine Auswahlliste aus festen Optionen.
+    Auswahl { optionen: Vec<FeldOption> },
+}
+
+/// Eine Option einer [`FeldArt::Auswahl`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeldOption {
+    /// Der gespeicherte Wert.
+    pub wert: String,
+    /// Was der User in der Liste sieht.
+    pub anzeige: String,
+}
+
 /// Ein Konfigurationsfeld eines Eintrags.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Feld {
@@ -106,6 +138,27 @@ pub struct Feld {
     /// Optionaler Hilfe-Link neben dem Feld, z. B. „Token in Outline erstellen“.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<FeldLink>,
+    /// Wie das Feld dargestellt wird; fehlt der Wert in alten Daten, gilt Text.
+    #[serde(default)]
+    pub art: FeldArt,
+    /// Anzeige statt des Feldnamens, z. B. „SAP-Benutzer“.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub titel: Option<String>,
+}
+
+impl Default for Feld {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            beschreibung: String::new(),
+            quelle: Quelle::Server,
+            pflicht: true,
+            standard: None,
+            link: None,
+            art: FeldArt::Text,
+            titel: None,
+        }
+    }
 }
 
 /// Ein Link, den das Fenster neben einem Feld als Knopf zeigt und im Browser öffnet.

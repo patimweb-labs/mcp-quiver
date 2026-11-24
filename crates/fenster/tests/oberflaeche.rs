@@ -18,9 +18,9 @@ use quiver_client::{
     AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, Vorschau,
     VorschauArt, VorschauEintrag, Zusammenfassung,
 };
-use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldLink, Quelle, Werte};
+use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, FeldOption, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
-use quiver_fenster::egui::accesskit::Role;
+use quiver_fenster::egui::accesskit::{Role, Toggled};
 use quiver_fenster::egui::{CursorIcon, OutputCommand};
 use quiver_fenster::modell::{Dialog, Meldung, Seite, Sicht};
 use quiver_fenster::profil::Einstellungen;
@@ -112,7 +112,16 @@ fn feld(name: &str, quelle: Quelle, beschreibung: &str) -> Feld {
         pflicht: true,
         standard: None,
         link: None,
+        ..Default::default()
     }
+}
+
+/// Ein Feld mit Art und Titel (Aufgabe 16).
+fn feld_mit(name: &str, quelle: Quelle, art: FeldArt, titel: &str) -> Feld {
+    let mut feld = feld(name, quelle, "");
+    feld.art = art;
+    feld.titel = Some(titel.to_string());
+    feld
 }
 
 fn eintrag(
@@ -483,6 +492,222 @@ fn braucht_angaben_oeffnet_die_eingaben() {
     );
     assert!(geheim.is_empty(), "leeres Geheimnis überschreibt nichts");
     assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+/// Ein Schalter-Feld wie `zertifikat_pruefen` im ABAP-Dialog.
+fn schalter_eintrag() -> EintragSicht {
+    let mut schalter = feld_mit(
+        "zertifikat_pruefen",
+        Quelle::Client,
+        FeldArt::Schalter,
+        "Zertifikat prüfen",
+    );
+    schalter.pflicht = false;
+    schalter.standard = Some("an".into());
+    eintrag(
+        "abap",
+        "ABAP",
+        "SAP-System anbinden.",
+        EintragZustand::Laeuft { tools: 1 },
+        vec![schalter],
+    )
+}
+
+#[test]
+fn ein_schalter_ist_eine_checkbox_mit_hand_cursor() {
+    let mut h = fenster(
+        modell(verbunden(), vec![schalter_eintrag()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
+        .click();
+    h.run();
+
+    // Der Standard `an` ist vorgehakt.
+    let haken = h.get_by_role_and_label(Role::CheckBox, "Zertifikat prüfen");
+    assert_eq!(
+        haken.accesskit_node().toggled(),
+        Some(Toggled::True),
+        "der Standard an ist nicht vorgehakt"
+    );
+    haken.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf dem Schalter"
+    );
+
+    // Ein Klick setzt `aus`, ein zweiter wieder `an`.
+    h.get_by_role_and_label(Role::CheckBox, "Zertifikat prüfen")
+        .click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Werte { eingaben, .. } => assert_eq!(eingaben[0].wert, "aus"),
+        anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+    }
+    h.get_by_role_and_label(Role::CheckBox, "Zertifikat prüfen")
+        .click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Werte { eingaben, .. } => assert_eq!(eingaben[0].wert, "an"),
+        anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+    }
+}
+
+#[test]
+fn eine_auswahl_hat_hand_cursor_und_setzt_den_wert() {
+    let mut auswahl = feld_mit("farbe", Quelle::Client, FeldArt::Text, "Farbe");
+    auswahl.art = FeldArt::Auswahl {
+        optionen: vec![
+            FeldOption {
+                wert: "rot".into(),
+                anzeige: "Rot".into(),
+            },
+            FeldOption {
+                wert: "blau".into(),
+                anzeige: "Blau".into(),
+            },
+        ],
+    };
+    auswahl.pflicht = false;
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![eintrag(
+                "farben",
+                "Farben",
+                "Wählt eine Farbe.",
+                EintragZustand::Laeuft { tools: 1 },
+                vec![auswahl],
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
+        .click();
+    h.run();
+
+    h.get_by_role_and_label(Role::ComboBox, "Farbe").hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf der Auswahl"
+    );
+    h.get_by_role_and_label(Role::ComboBox, "Farbe").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Rot").click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Werte { eingaben, .. } => assert_eq!(eingaben[0].wert, "rot"),
+        anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+    }
+}
+
+/// Der ABAP-Fall: zwei Pflichtfelder ohne Wert, „Speichern“ bleibt zu und
+/// nennt die Titel der fehlenden Felder.
+fn pflicht_eintrag() -> EintragSicht {
+    let benutzer = feld_mit("benutzer", Quelle::Client, FeldArt::Text, "SAP-Benutzer");
+    let adresse = feld_mit("url", Quelle::Client, FeldArt::Url, "ADT-Adresse");
+    eintrag(
+        "abap",
+        "ABAP",
+        "SAP-System anbinden.",
+        EintragZustand::WartetAufWerte {
+            felder: vec!["benutzer".into(), "url".into()],
+        },
+        vec![benutzer, adresse],
+    )
+}
+
+#[test]
+fn fehlende_pflichtfelder_stehen_neben_speichern() {
+    let mut h = fenster(
+        modell(verbunden(), vec![pflicht_eintrag()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+        .click();
+    h.run();
+
+    assert!(
+        h.query_by_label("Es fehlt: SAP-Benutzer, ADT-Adresse")
+            .is_some(),
+        "der Grund fehlt neben Speichern"
+    );
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Speichern")
+            .accesskit_node()
+            .is_disabled(),
+        "ohne Pflichtfelder muss Speichern gesperrt sein"
+    );
+
+    // Ausfüllen: der Grund verschwindet, Speichern geht.
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        eingaben[0].wert = "SAPUSER".into();
+        eingaben[1].wert = "https://sap.example".into();
+    }
+    h.run();
+    assert!(
+        h.query_by_label("Es fehlt: SAP-Benutzer, ADT-Adresse")
+            .is_none(),
+        "mit Werten ist der Grund weg"
+    );
+    assert!(!h
+        .get_by_role_and_label(Role::Button, "Speichern")
+        .accesskit_node()
+        .is_disabled());
+
+    // Eine ungültige Zahl wird beim Speichern genannt.
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        eingaben[0].wert = "12a".into();
+        eingaben[0].art = FeldArt::Zahl;
+    }
+    h.run();
+    assert!(
+        h.query_by_label("Ungültige Zahl: SAP-Benutzer").is_some(),
+        "die ungültige Zahl wird nicht genannt"
+    );
+}
+
+#[test]
+fn die_feldliste_hat_eine_sichtbare_scrollleiste() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+        .click();
+    h.run();
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        let vorlage = eingaben[0].clone();
+        for i in 0..12 {
+            let mut feld = vorlage.clone();
+            feld.name = format!("FELD_{i}");
+            eingaben.push(feld);
+        }
+    } else {
+        panic!("kein Angaben-Dialog");
+    }
+    h.run();
+    h.run();
+    assert!(
+        h.query_all(By::new().role(Role::ScrollBar)).count() >= 1,
+        "die Scrollleiste der Feldliste ist nicht sichtbar"
+    );
 }
 
 #[test]

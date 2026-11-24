@@ -50,6 +50,29 @@ export interface FeldLink {
   url: string;
 }
 
+/** Eine Option einer Auswahl (Aufgabe 16; in Rust `FeldOption`). */
+export interface FeldOption {
+  /** Der gespeicherte Wert. */
+  wert: string;
+  /** Was der User in der Liste sieht. */
+  anzeige: string;
+}
+
+/**
+ * Wie ein Feld dargestellt wird (Aufgabe 16; in Rust `FeldArt`).
+ *
+ * Die Form folgt serde: die einfachen Arten sind Zeichenketten, die Auswahl
+ * ist extern getaggt (`{ auswahl: { optionen: [...] } }`). Daten ohne `art`
+ * gelten als `"text"`.
+ */
+export type FeldArt =
+  | "text"
+  | "passwort"
+  | "zahl"
+  | "schalter"
+  | "url"
+  | { auswahl: { optionen: FeldOption[] } };
+
 /** Ein Konfigurationsfeld eines Eintrags. */
 export interface Feld {
   name: string;
@@ -59,6 +82,10 @@ export interface Feld {
   standard: string | null;
   /** Hilfe-Link neben dem Feld; `null` heißt: keiner. */
   link: FeldLink | null;
+  /** Wie das Feld dargestellt wird; fehlt der Wert, gilt `"text"`. */
+  art?: FeldArt;
+  /** Anzeige statt des Feldnamens, z. B. „SAP-Benutzer“. */
+  titel?: string | null;
 }
 
 /**

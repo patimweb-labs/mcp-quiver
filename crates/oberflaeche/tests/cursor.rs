@@ -24,6 +24,11 @@ fn zeiger_ueber(harness: &mut Harness<'_>, name: &str) -> CursorIcon {
 #[test]
 fn hand_ueber_allem_klickbaren() {
     let mut haken = false;
+    let mut wahl = String::from("rot");
+    let optionen = [
+        ("rot".to_string(), "Rot".to_string()),
+        ("blau".to_string(), "Blau".to_string()),
+    ];
     let mut thema = Thema::Dunkel;
     let farbschemen: Vec<(Thema, String)> = Thema::ALLE
         .iter()
@@ -58,6 +63,7 @@ fn hand_ueber_allem_klickbaren() {
             bausteine::knopf(ui, f, Icon::Kopieren, "Kopieren");
             bausteine::icon_knopf(ui, f, Icon::Schluessel, "Geheimnis", false);
             bausteine::haken(ui, &mut haken, "Merken");
+            bausteine::auswahl(ui, f, &mut wahl, &optionen, "Auswählen");
             bausteine::segmentauswahl(ui, f, &mut thema, &farbschemen);
             bausteine::seitenleiste(ui, f, "Verwaltung", &eintraege);
         });
@@ -68,6 +74,8 @@ fn hand_ueber_allem_klickbaren() {
         "Kopieren",
         "Geheimnis",
         "Merken",
+        // Auswahl
+        "Rot",
         // Segmentauswahl
         "Dunkel",
         "Hell",

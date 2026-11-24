@@ -8,6 +8,7 @@ fn feld(name: &str, quelle: Quelle) -> Feld {
         pflicht: true,
         standard: None,
         link: None,
+        ..Default::default()
     }
 }
 
@@ -262,4 +263,35 @@ fn zugaenge_json_form() {
         serde_json::to_string(&z).unwrap(),
         r#"[{"name":"web-01","werte":{"host":"10.0.0.1"}}]"#
     );
+}
+
+#[test]
+fn feldart_und_titel_gehen_durch_json() {
+    let mut schalter = feld("pruefen", Quelle::Client);
+    schalter.art = FeldArt::Schalter;
+    schalter.titel = Some("Zertifikat prüfen".into());
+    let json = serde_json::to_string(&schalter).unwrap();
+    assert_eq!(serde_json::from_str::<Feld>(&json).unwrap(), schalter);
+
+    let auswahl = Feld {
+        name: "farbe".into(),
+        art: FeldArt::Auswahl {
+            optionen: vec![FeldOption {
+                wert: "rot".into(),
+                anzeige: "Rot".into(),
+            }],
+        },
+        ..Default::default()
+    };
+    let json = serde_json::to_string(&auswahl).unwrap();
+    assert!(json.contains(r#""auswahl""#), "{json}");
+    assert_eq!(serde_json::from_str::<Feld>(&json).unwrap(), auswahl);
+}
+
+#[test]
+fn altes_feld_ohne_art_und_titel_ist_text() {
+    let json = r#"{"name":"pfad","beschreibung":"Ordner","quelle":"client","pflicht":true}"#;
+    let feld: Feld = serde_json::from_str(json).unwrap();
+    assert_eq!(feld.art, FeldArt::Text);
+    assert_eq!(feld.titel, None);
 }

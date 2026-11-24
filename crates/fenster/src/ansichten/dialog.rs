@@ -5,7 +5,7 @@
 //! welchen Text er trägt, aus den Texten.
 
 use eframe::egui::{self, RichText};
-use quiver_domain::Werte;
+use quiver_domain::{FeldArt, Werte};
 
 use crate::ansichten::{agenten, fett, text};
 use crate::app::Aktion;
@@ -109,16 +109,20 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                     ui.add_space(thema::SPACE_3);
                     egui::ScrollArea::vertical()
                         .id_salt("dialog-werte")
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                        )
                         .max_height(felder_hoehe)
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
                             for i in 0..eingaben.len() {
-                                let name = eingaben[i].name.clone();
-                                let geheim = eingaben[i].geheim;
+                                let anzeige = eingaben[i].anzeige.clone();
                                 let gesetzt = eingaben[i].gesetzt;
                                 let link = eingaben[i].link.clone();
+                                let art = eingaben[i].art.clone();
+                                let schalter = art == FeldArt::Schalter;
                                 let hinweis = (!eingaben[i].beschreibung.is_empty()).then(|| {
-                                    if eingaben[i].pflicht {
+                                    if eingaben[i].pflicht && !schalter {
                                         format!(
                                             "{} · {}",
                                             eingaben[i].beschreibung,
@@ -128,19 +132,68 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                         eingaben[i].beschreibung.clone()
                                     }
                                 });
-                                bausteine::feld(ui, &f, &name, hinweis.as_deref(), |ui| {
-                                    let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
-                                        .desired_width(bausteine::feldbreite(ui));
-                                    if geheim {
-                                        feld = feld.password(true);
-                                        if gesetzt {
-                                            // Gesetzt heißt: das Feld bleibt leer, der
-                                            // Hinweis sagt, dass schon etwas da ist.
-                                            feld = feld.hint_text("••••");
-                                        }
+                                // Ein Schalter ist eine Checkbox mit dem Titel
+                                // daneben, keine Formularzeile (Aufgabe 16).
+                                if schalter {
+                                    let mut an = logik::schalter_an(&eingaben[i].wert);
+                                    ui.add_space(thema::SPACE_1);
+                                    if bausteine::haken(ui, &mut an, &anzeige).changed() {
+                                        eingaben[i].wert =
+                                            if an { "an".into() } else { "aus".into() };
                                     }
-                                    ui.add(feld)
-                                });
+                                    if let Some(hinweis) = &hinweis {
+                                        ui.add(
+                                            egui::Label::new(text(&f, hinweis, Ton::Blass).small())
+                                                .wrap(),
+                                        );
+                                    }
+                                    ui.add_space(thema::SPACE_1);
+                                } else {
+                                    bausteine::feld(ui, &f, &anzeige, hinweis.as_deref(), |ui| {
+                                        match &art {
+                                            FeldArt::Auswahl { optionen } => {
+                                                let liste: Vec<(String, String)> = optionen
+                                                    .iter()
+                                                    .map(|option| {
+                                                        (
+                                                            option.wert.clone(),
+                                                            option.anzeige.clone(),
+                                                        )
+                                                    })
+                                                    .collect();
+                                                bausteine::auswahl(
+                                                    ui,
+                                                    &f,
+                                                    &mut eingaben[i].wert,
+                                                    &liste,
+                                                    &t(sprache, "tools.auswaehlen"),
+                                                )
+                                            }
+                                            _ => {
+                                                let mut feld =
+                                                    bausteine::eingabefeld(&mut eingaben[i].wert)
+                                                        .desired_width(bausteine::feldbreite(ui));
+                                                if art == FeldArt::Passwort {
+                                                    feld = feld.password(true);
+                                                    if gesetzt {
+                                                        // Gesetzt heißt: das Feld bleibt leer,
+                                                        // der Hinweis sagt, dass schon etwas da ist.
+                                                        feld = feld.hint_text("••••");
+                                                    }
+                                                }
+                                                let antwort = ui.add(feld);
+                                                // Eine Zahl nimmt nur Ziffern an; die
+                                                // Prüfung bleibt beim Speichern.
+                                                if art == FeldArt::Zahl && antwort.changed() {
+                                                    eingaben[i]
+                                                        .wert
+                                                        .retain(|zeichen| zeichen.is_ascii_digit());
+                                                }
+                                                antwort
+                                            }
+                                        }
+                                    });
+                                }
                                 // Hilfe-Link neben dem Feld: nur aktiv, wenn die
                                 // **aktuellen** Eingaben eine Adresse ergeben; sonst
                                 // gesperrt mit dem Hinweis, was noch fehlt.
@@ -168,17 +221,25 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                 }
                             }
                         });
+                    let grund = logik::sperrgrund(sprache, eingaben);
                     ui.add_space(thema::SPACE_3);
                     ui.horizontal(|ui| {
-                        if bausteine::hauptknopf_mit(
-                            ui,
-                            &f,
-                            Icon::Haken,
-                            &t(sprache, "tools.speichern"),
-                        )
-                        .clicked()
-                        {
+                        let klick = ui
+                            .add_enabled_ui(grund.is_none(), |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Haken,
+                                    &t(sprache, "tools.speichern"),
+                                )
+                            })
+                            .inner
+                            .clicked();
+                        if klick {
                             bestaetigen = true;
+                        }
+                        if let Some(grund) = &grund {
+                            ui.add(egui::Label::new(text(&f, grund, Ton::Fehler)).wrap());
                         }
                         if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
                             .clicked()
@@ -396,37 +457,90 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                     ui.add_space(thema::SPACE_2);
                     egui::ScrollArea::vertical()
                         .id_salt("dialog-zugang")
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                        )
                         .max_height(felder_hoehe)
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
                             for i in 0..eingaben.len() {
                                 let feldname = eingaben[i].name.clone();
+                                let anzeige = eingaben[i].anzeige.clone();
                                 let geheim = eingaben[i].geheim;
                                 let gesetzt = eingaben[i].gesetzt;
                                 let link = eingaben[i].link.clone();
+                                let art = eingaben[i].art.clone();
+                                let schalter = art == FeldArt::Schalter;
                                 let mut teile = Vec::new();
                                 if !eingaben[i].beschreibung.is_empty() {
                                     teile.push(eingaben[i].beschreibung.clone());
                                 }
-                                if eingaben[i].pflicht {
+                                if eingaben[i].pflicht && !schalter {
                                     teile.push(t(sprache, "tools.pflicht"));
                                 }
                                 if geheim && gesetzt {
                                     teile.push(t(sprache, "zugaenge.geheim_gesetzt"));
                                 }
                                 let hinweis = (!teile.is_empty()).then(|| teile.join(" · "));
-                                bausteine::feld(ui, &f, &feldname, hinweis.as_deref(), |ui| {
-                                    let mut feld = bausteine::eingabefeld(&mut eingaben[i].wert)
-                                        .desired_width(bausteine::feldbreite(ui));
-                                    if geheim {
-                                        feld = feld.password(true);
-                                        if gesetzt {
-                                            // Gesetzt heißt: leer lassen behält es.
-                                            feld = feld.hint_text("••••");
-                                        }
+                                if schalter {
+                                    let mut an = logik::schalter_an(&eingaben[i].wert);
+                                    ui.add_space(thema::SPACE_1);
+                                    if bausteine::haken(ui, &mut an, &anzeige).changed() {
+                                        eingaben[i].wert =
+                                            if an { "an".into() } else { "aus".into() };
                                     }
-                                    ui.add(feld)
-                                });
+                                    if let Some(hinweis) = &hinweis {
+                                        ui.add(
+                                            egui::Label::new(text(&f, hinweis, Ton::Blass).small())
+                                                .wrap(),
+                                        );
+                                    }
+                                    ui.add_space(thema::SPACE_1);
+                                } else {
+                                    bausteine::feld(ui, &f, &anzeige, hinweis.as_deref(), |ui| {
+                                        match &art {
+                                            FeldArt::Auswahl { optionen } => {
+                                                let liste: Vec<(String, String)> = optionen
+                                                    .iter()
+                                                    .map(|option| {
+                                                        (
+                                                            option.wert.clone(),
+                                                            option.anzeige.clone(),
+                                                        )
+                                                    })
+                                                    .collect();
+                                                bausteine::auswahl(
+                                                    ui,
+                                                    &f,
+                                                    &mut eingaben[i].wert,
+                                                    &liste,
+                                                    &t(sprache, "tools.auswaehlen"),
+                                                )
+                                            }
+                                            _ => {
+                                                let mut feld =
+                                                    bausteine::eingabefeld(&mut eingaben[i].wert)
+                                                        .desired_width(bausteine::feldbreite(ui));
+                                                if art == FeldArt::Passwort {
+                                                    feld = feld.password(true);
+                                                    if gesetzt {
+                                                        // Gesetzt heißt: leer lassen behält es.
+                                                        feld = feld.hint_text("••••");
+                                                    }
+                                                }
+                                                let antwort = ui.add(feld);
+                                                // Eine Zahl nimmt nur Ziffern an; die
+                                                // Prüfung bleibt beim Speichern.
+                                                if art == FeldArt::Zahl && antwort.changed() {
+                                                    eingaben[i]
+                                                        .wert
+                                                        .retain(|zeichen| zeichen.is_ascii_digit());
+                                                }
+                                                antwort
+                                            }
+                                        }
+                                    });
+                                }
                                 // Ein gesetztes Geheimnis lässt sich einzeln entfernen –
                                 // etwa das Anmelde-Passwort, nachdem der Schlüssel steht.
                                 // Den Knopf gibt es nur, wo ein Geheimnis gesetzt ist –
@@ -473,10 +587,12 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                 }
                             }
                         });
+                    let grund = logik::sperrgrund(sprache, eingaben);
                     ui.add_space(thema::SPACE_3);
                     ui.horizontal(|ui| {
+                        let bereit = name_fehler.is_none() && grund.is_none();
                         let geklickt = ui
-                            .add_enabled_ui(name_fehler.is_none(), |ui| {
+                            .add_enabled_ui(bereit, |ui| {
                                 bausteine::hauptknopf_mit(
                                     ui,
                                     &f,
@@ -488,6 +604,9 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                             .clicked();
                         if geklickt {
                             bestaetigen = true;
+                        }
+                        if let Some(grund) = &grund {
+                            ui.add(egui::Label::new(text(&f, grund, Ton::Fehler)).wrap());
                         }
                         if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
                             .clicked()

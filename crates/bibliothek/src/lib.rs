@@ -308,6 +308,7 @@ fn felder_aus_variablen(variablen: Vec<&Value>) -> (Vec<Feld>, Werte) {
             pflicht: v.get("isRequired").and_then(Value::as_bool).unwrap_or(true),
             standard: text(v.get("default")),
             link: None,
+            ..Default::default()
         });
         werte.insert(name.to_string(), format!("${{{name}}}"));
     }

@@ -111,6 +111,7 @@ mod tests {
             pflicht: true,
             standard: None,
             link: None,
+            ..Default::default()
         }
     }
 

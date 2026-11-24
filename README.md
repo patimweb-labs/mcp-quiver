@@ -152,6 +152,13 @@ address in the default browser — nothing else, no login, no listener.
 
 ![Settings dialog with a help link](docs/bilder/fenster-dark-angaben.png)
 
+Fields carry a **kind** (admin: *Art* and *Titel*): text, password, number,
+switch (checkbox), address (checked for `http(s)://`) or a choice list with
+fixed options. A *title* replaces the field name in the dialog — “SAP-Benutzer”
+instead of `benutzer`. The field list scrolls with an always visible bar; while
+“Speichern” is disabled, the reason stands next to it (“Es fehlt: SAP-Benutzer,
+ADT-Adresse”). Empty, non-required fields are always allowed.
+
 The settings of a device can be **backed up and restored on another device**:
 the tools page carries *Exportieren* and *Importieren* in its header. The file
 `quiver-einstellungen-<date>.json` holds the values and connection lists of all

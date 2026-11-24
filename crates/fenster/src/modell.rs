@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use quiver_client::{EintragSicht, Modell, Vorschau, Zusammenfassung};
-use quiver_domain::{EintragId, FeldLink};
+use quiver_domain::{EintragId, FeldArt, FeldLink};
 
 use crate::app::Aktion;
 use crate::bausteine::Icon;
@@ -64,6 +64,8 @@ impl Seite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feldeingabe {
     pub name: String,
+    /// Beschriftung im Dialog: `titel`, sonst der Name.
+    pub anzeige: String,
     pub beschreibung: String,
     pub geheim: bool,
     pub pflicht: bool,
@@ -74,6 +76,9 @@ pub struct Feldeingabe {
     /// Hilfe-Link neben dem Feld (Aufgabe 13), z. B. „Token in Outline
     /// erstellen". Er darf die Eingaben des Dialogs als Platzhalter nutzen.
     pub link: Option<FeldLink>,
+    /// Wie das Feld dargestellt wird (Aufgabe 16). Bei Geheimnissen steht
+    /// hier immer [`FeldArt::Passwort`].
+    pub art: FeldArt,
 }
 
 /// Der offene Dialog — höchstens einer.
@@ -326,6 +331,11 @@ impl Sicht {
             Dialog::Werte {
                 eintrag, eingaben, ..
             } => {
+                // Der Knopf ist schon gesperrt; hier steht die Prüfung noch
+                // einmal, damit nichts Halbes hinausgeht (Aufgabe 16).
+                if logik::sperrgrund(self.sprache, &eingaben).is_some() {
+                    return None;
+                }
                 let (lokal, geheim) = logik::werte_splitten(&eingaben);
                 return Some(Aktion::WerteSetzen {
                     eintrag,
@@ -353,7 +363,7 @@ impl Sicht {
                 ..
             } => {
                 let name = name.trim().to_string();
-                if name.is_empty() {
+                if name.is_empty() || logik::sperrgrund(self.sprache, &eingaben).is_some() {
                     return None;
                 }
                 let (lokal, geheim) = logik::werte_splitten(&eingaben);

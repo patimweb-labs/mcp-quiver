@@ -626,5 +626,21 @@
   "einstellungen.uebersprungen": {
     "de": "{} übersprungen",
     "en": "{} skipped"
+  },
+  "tools.es_fehlt": {
+    "de": "Es fehlt: {}",
+    "en": "Missing: {}"
+  },
+  "tools.ungueltige_zahl": {
+    "de": "Ungültige Zahl: {}",
+    "en": "Invalid number: {}"
+  },
+  "tools.ungueltige_adresse": {
+    "de": "Ungültige Adresse: {}",
+    "en": "Invalid address: {}"
+  },
+  "tools.auswaehlen": {
+    "de": "Auswählen …",
+    "en": "Select …"
   }
 }

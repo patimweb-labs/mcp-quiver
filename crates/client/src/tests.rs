@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quiver_domain::{
-    Aktion, Eintrag, EintragId, Feld, Herkunft, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag,
-    Werte, Zugang,
+    Aktion, Eintrag, EintragId, Feld, FeldArt, Herkunft, Laufzeit, Mehrfach, Quelle, Soll,
+    SollEintrag, Werte, Zugang,
 };
 use quiver_protocol::EintragZustand;
 use rmcp::model::{JsonObject, Tool};
@@ -23,6 +23,7 @@ fn feld(name: &str, quelle: Quelle, pflicht: bool) -> Feld {
         pflicht,
         standard: None,
         link: None,
+        ..Default::default()
     }
 }
 
@@ -77,6 +78,36 @@ fn werkzeug(name: &str) -> Tool {
         "Ein Testwerkzeug",
         std::sync::Arc::new(schema),
     )
+}
+
+#[test]
+fn sicht_reicht_art_und_titel_durch() {
+    let mut eintrag = eintrag("echo");
+    eintrag.felder[1].art = FeldArt::Schalter;
+    eintrag.felder[1].titel = Some("Pfad prüfen".into());
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag,
+        werte: Werte::new(),
+    }]);
+    let sicht = eintraege_sicht(
+        &soll,
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let feld = sicht[0]
+        .felder
+        .iter()
+        .find(|feld| feld.name == "PFAD")
+        .expect("PFAD");
+    assert_eq!(feld.art, FeldArt::Schalter);
+    assert_eq!(feld.titel.as_deref(), Some("Pfad prüfen"));
 }
 
 #[test]

@@ -9,7 +9,9 @@ use quiver_client::{
     AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, VorschauArt,
     VorschauEintrag, ZugaengeSicht, ZugangSicht, Zusammenfassung,
 };
-use quiver_domain::{link_aufloesen, zugangsname_gueltig, FehlendesFeld, FeldLink, Quelle, Werte};
+use quiver_domain::{
+    link_aufloesen, zugangsname_gueltig, FehlendesFeld, Feld, FeldArt, FeldLink, Quelle, Werte,
+};
 use quiver_protocol::EintragZustand;
 
 use crate::modell::{Feldeingabe, Seite};
@@ -283,6 +285,110 @@ pub fn fehlende_texte(fehlende: &[FehlendesFeld]) -> String {
         .join(" · ")
 }
 
+/// Die Beschriftung eines Felds: `titel`, sonst der Name (Aufgabe 16).
+pub fn feld_anzeige(feld: &Feld) -> String {
+    feld.titel
+        .as_deref()
+        .map(str::trim)
+        .filter(|titel| !titel.is_empty())
+        .unwrap_or(&feld.name)
+        .to_string()
+}
+
+/// Die dargestellte Art eines Felds. Ein Geheimnis bleibt ein Geheimnis,
+/// egal welche Art gespeichert ist (Aufgabe 16).
+pub fn feld_art(feld: &Feld) -> FeldArt {
+    if feld.quelle == Quelle::Geheim {
+        FeldArt::Passwort
+    } else {
+        feld.art.clone()
+    }
+}
+
+/// Ist ein Schalterwert „an“? Die gespeicherten Werte sind `an` und `aus`;
+/// ältere oder handgeschriebene Daten dürfen auch `true`, `1` oder `ja` sein.
+pub fn schalter_an(wert: &str) -> bool {
+    matches!(
+        wert.trim().to_ascii_lowercase().as_str(),
+        "an" | "true" | "1" | "ja" | "yes"
+    )
+}
+
+/// Der Wert eines Schalters: gespeichert, sonst der Standard, sonst `aus`.
+pub fn schalter_wert(gespeichert: &str, standard: Option<&str>) -> String {
+    if !gespeichert.trim().is_empty() {
+        if schalter_an(gespeichert) {
+            "an".to_string()
+        } else {
+            "aus".to_string()
+        }
+    } else if standard.is_some_and(schalter_an) {
+        "an".to_string()
+    } else {
+        "aus".to_string()
+    }
+}
+
+/// Was an einem eingegebenen Wert nicht stimmt (Aufgabe 16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WertFehler {
+    Zahl,
+    Adresse,
+}
+
+/// Prüft einen nicht-leeren Wert gegen seine Art. Leere Werte sind Sache der
+/// Pflichtprüfung in [`sperrgrund`].
+pub fn wert_fehler(art: &FeldArt, wert: &str) -> Option<WertFehler> {
+    match art {
+        FeldArt::Zahl if !wert.chars().all(|zeichen| zeichen.is_ascii_digit()) => {
+            Some(WertFehler::Zahl)
+        }
+        FeldArt::Url if !(wert.starts_with("http://") || wert.starts_with("https://")) => {
+            Some(WertFehler::Adresse)
+        }
+        _ => None,
+    }
+}
+
+/// Warum „Speichern“ gesperrt ist: fehlende Pflichtfelder und ungültige Werte.
+/// `None` heißt: alles in Ordnung.
+pub fn sperrgrund(sprache: Sprache, eingaben: &[Feldeingabe]) -> Option<String> {
+    let mut fehlend = Vec::new();
+    let mut zahlen = Vec::new();
+    let mut adressen = Vec::new();
+    for eingabe in eingaben {
+        let wert = eingabe.wert.trim();
+        let leer = wert.is_empty() && !(eingabe.geheim && eingabe.gesetzt);
+        if eingabe.pflicht && leer {
+            fehlend.push(eingabe.anzeige.clone());
+            continue;
+        }
+        if wert.is_empty() {
+            continue;
+        }
+        match wert_fehler(&eingabe.art, wert) {
+            Some(WertFehler::Zahl) => zahlen.push(eingabe.anzeige.clone()),
+            Some(WertFehler::Adresse) => adressen.push(eingabe.anzeige.clone()),
+            None => {}
+        }
+    }
+    let mut teile = Vec::new();
+    if !fehlend.is_empty() {
+        teile.push(tf(sprache, "tools.es_fehlt", &[&fehlend.join(", ")]));
+    }
+    if !zahlen.is_empty() {
+        teile.push(tf(sprache, "tools.ungueltige_zahl", &[&zahlen.join(", ")]));
+    }
+    if !adressen.is_empty() {
+        teile.push(tf(
+            sprache,
+            "tools.ungueltige_adresse",
+            &[&adressen.join(", ")],
+        ));
+    }
+    (!teile.is_empty()).then(|| teile.join(" · "))
+}
+
 /// Die Felder eines Eintrags als Eingaben: lokale Werte vorbelegt, Geheimnisse
 /// leer (gesetzte zeigen „••••" nur als Hinweis).
 pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
@@ -291,22 +397,29 @@ pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
         .iter()
         .map(|feld| {
             let geheim = feld.quelle == Quelle::Geheim;
+            let art = feld_art(feld);
+            let gespeichert = eintrag
+                .lokale_werte
+                .get(&feld.name)
+                .map(String::as_str)
+                .unwrap_or_default();
+            let wert = if geheim {
+                String::new()
+            } else if art == FeldArt::Schalter {
+                schalter_wert(gespeichert, feld.standard.as_deref())
+            } else {
+                gespeichert.to_string()
+            };
             Feldeingabe {
                 name: feld.name.clone(),
+                anzeige: feld_anzeige(feld),
                 beschreibung: feld.beschreibung.clone(),
                 geheim,
                 pflicht: feld.pflicht,
                 gesetzt: geheim && eintrag.geheim_gesetzt.contains(&feld.name),
-                wert: if geheim {
-                    String::new()
-                } else {
-                    eintrag
-                        .lokale_werte
-                        .get(&feld.name)
-                        .cloned()
-                        .unwrap_or_default()
-                },
+                wert,
                 link: feld.link.clone(),
+                art,
             }
         })
         .collect()
@@ -414,22 +527,29 @@ pub fn zugang_eingaben(zugaenge: &ZugaengeSicht, name: Option<&str>) -> Vec<Feld
         .iter()
         .map(|feld| {
             let geheim = feld.quelle == Quelle::Geheim;
+            let art = feld_art(feld);
+            let gespeichert = zugang
+                .and_then(|zugang| zugang.werte.get(&feld.name))
+                .map(String::as_str)
+                .unwrap_or_default();
+            let wert = if geheim {
+                String::new()
+            } else if art == FeldArt::Schalter {
+                schalter_wert(gespeichert, feld.standard.as_deref())
+            } else {
+                gespeichert.to_string()
+            };
             Feldeingabe {
                 name: feld.name.clone(),
+                anzeige: feld_anzeige(feld),
                 beschreibung: feld.beschreibung.clone(),
                 geheim,
                 pflicht: feld.pflicht,
                 gesetzt: geheim
                     && zugang.is_some_and(|zugang| zugang.geheim_gesetzt.contains(&feld.name)),
-                wert: if geheim {
-                    String::new()
-                } else {
-                    zugang
-                        .and_then(|zugang| zugang.werte.get(&feld.name))
-                        .cloned()
-                        .unwrap_or_default()
-                },
+                wert,
                 link: feld.link.clone(),
+                art,
             }
         })
         .collect()
@@ -861,6 +981,7 @@ mod tests {
                     pflicht: true,
                     standard: None,
                     link: None,
+                    ..Default::default()
                 },
                 Feld {
                     name: "SCHLUESSEL".into(),
@@ -869,6 +990,7 @@ mod tests {
                     pflicht: false,
                     standard: None,
                     link: None,
+                    ..Default::default()
                 },
             ],
             lokale_werte: Werte::from([("PFAD".to_string(), "/tmp".to_string())]),
@@ -1098,6 +1220,7 @@ mod tests {
                 pflicht: true,
                 standard: None,
                 link: None,
+                ..Default::default()
             },
             Feld {
                 name: "api_key".into(),
@@ -1109,6 +1232,7 @@ mod tests {
                     text: "Token in Outline erstellen".into(),
                     url: "${url}/settings/api-and-access".into(),
                 }),
+                ..Default::default()
             },
         ];
         eintrag.lokale_werte = Werte::new();
@@ -1301,6 +1425,7 @@ mod tests {
             pflicht: false,
             standard: None,
             link: None,
+            ..Default::default()
         };
         port.standard = Some("22".into());
         let mut eintrag = eintrag();
@@ -1315,6 +1440,7 @@ mod tests {
                     pflicht: true,
                     standard: None,
                     link: None,
+                    ..Default::default()
                 },
                 Feld {
                     name: "host".into(),
@@ -1323,6 +1449,7 @@ mod tests {
                     pflicht: true,
                     standard: None,
                     link: None,
+                    ..Default::default()
                 },
                 port,
                 Feld {
@@ -1332,6 +1459,7 @@ mod tests {
                     pflicht: false,
                     standard: None,
                     link: None,
+                    ..Default::default()
                 },
             ],
             liste: vec![

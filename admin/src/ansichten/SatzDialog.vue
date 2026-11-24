@@ -16,10 +16,17 @@ import { tief_kopie } from "../logik/kopie";
 import { fehlertext, type Client } from "../api/client";
 import type { Eintrag, Satz, SatzEintrag } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import Feldwert from "../bausteine/Feldwert.vue";
 import {
   server_felder,
   sortiert_nach_titel,
 } from "../logik/eintrag";
+import {
+  feld_sperrgrund,
+  feld_titel,
+  feld_wert,
+  ist_schalter,
+} from "../logik/feld";
 import {
   neuer_satz,
   satz_eintrag_entfernen,
@@ -106,7 +113,21 @@ function wertSetzen(eintrag: string, feld: string, wert: string): void {
   entwurf.value = satz_wert_setzen(entwurf.value, eintrag, feld, wert);
 }
 
+/**
+ * Warum „Speichern“ gesperrt ist: leere Pflichtfelder und ungültige Werte.
+ * Server-Felder kann nur der Admin füllen – fehlt ein Pflichtwert im Satz,
+ * bliebe der Eintrag am Gerät stehen.
+ */
+const sperrgrund = computed(() => {
+  for (const zeile of zeilen.value) {
+    const grund = feld_sperrgrund(server_felder(zeile.eintrag), zeile.zeile.werte);
+    if (grund) return grund;
+  }
+  return null;
+});
+
 async function speichern(): Promise<void> {
+  if (sperrgrund.value) return;
   const sauber = satz_saeubern(entwurf.value);
   fehler.value = satz_pruefen(sauber);
   if (Object.keys(fehler.value).length > 0) return;
@@ -208,23 +229,33 @@ async function speichern(): Promise<void> {
             Dieser Eintrag hat keine Server-Felder.
           </p>
 
-          <Feld
-            v-for="feld in server_felder(z.eintrag)"
-            :key="feld.name"
-            :beschriftung="feld.name"
-            :hinweis="feld.beschreibung || undefined"
-          >
-            <template #default="{ id }">
-              <WpInput
-                :id="id"
-                :model-value="z.zeile.werte[feld.name] ?? ''"
-                :placeholder="feld.standard ?? ''"
-                @update:model-value="
-                  (wert) => wertSetzen(z.zeile.eintrag, feld.name, wert)
-                "
-              />
-            </template>
-          </Feld>
+          <template v-for="feld in server_felder(z.eintrag)" :key="feld.name">
+            <Feldwert
+              v-if="ist_schalter(feld)"
+              :feld="feld"
+              :model-value="feld_wert(feld, z.zeile.werte)"
+              @update:model-value="
+                (wert) => wertSetzen(z.zeile.eintrag, feld.name, wert)
+              "
+            />
+            <Feld
+              v-else
+              :beschriftung="feld_titel(feld)"
+              :hinweis="feld.beschreibung || undefined"
+            >
+              <template #default="{ id }">
+                <Feldwert
+                  :id="id"
+                  :feld="feld"
+                  :model-value="feld_wert(feld, z.zeile.werte)"
+                  :placeholder="feld.standard ?? ''"
+                  @update:model-value="
+                    (wert) => wertSetzen(z.zeile.eintrag, feld.name, wert)
+                  "
+                />
+              </template>
+            </Feld>
+          </template>
         </fieldset>
 
         <WpSelect
@@ -240,11 +271,14 @@ async function speichern(): Promise<void> {
     </div>
 
     <template #actions>
+      <span v-if="sperrgrund" class="sperrgrund" role="status">
+        {{ sperrgrund }}
+      </span>
       <WpButton label="Abbrechen" @press="emit('update:offen', false)" />
       <WpButton
         label="Speichern"
         variant="primary"
-        :state="speichert ? 'busy' : 'default'"
+        :state="sperrgrund ? 'disabled' : speichert ? 'busy' : 'default'"
         @press="speichern"
       />
     </template>
@@ -257,8 +291,16 @@ async function speichern(): Promise<void> {
   flex-direction: column;
   gap: var(--wp-space-1);
   max-height: calc(var(--wp-space-8) * 9);
-  overflow-y: auto;
+  /* Immer sichtbar, sobald sie überläuft – wie die Feldliste im Fenster. */
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
   padding-right: var(--wp-space-1);
+}
+
+.sperrgrund {
+  margin-right: auto;
+  color: var(--wp-color-status-error);
+  font-size: var(--wp-font-size-sm);
 }
 
 .eintraege {

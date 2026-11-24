@@ -680,6 +680,74 @@ pub fn haken(ui: &mut egui::Ui, an: &mut bool, beschriftung: &str) -> egui::Resp
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Eine Auswahlliste im Maß eines Eingabefelds (Aufgabe 16). Der Auslöser
+/// trägt den Hand-Cursor, die Einträge ebenso.
+pub fn auswahl(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    wert: &mut String,
+    optionen: &[(String, String)],
+    platzhalter: &str,
+) -> egui::Response {
+    let breite = feldbreite(ui);
+    let anzeige = optionen
+        .iter()
+        .find(|(option, _)| option == wert)
+        .map(|(_, anzeige)| anzeige.clone())
+        .unwrap_or_else(|| platzhalter.to_string());
+    let mut antwort = ui
+        .add(
+            egui::Button::new(RichText::new(anzeige.clone()).color(f.text_default))
+                .fill(f.bg_input)
+                .stroke(Stroke::new(thema::SIZE_BORDER, f.border_subtle))
+                .min_size(egui::vec2(breite, thema::SIZE_CONTROL_MD)),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    // Das Zeichen fürs Aufklappen malen statt schreiben: die Schrift im
+    // Fenster führt kein „▾“.
+    if ui.is_rect_visible(antwort.rect) {
+        let mitte = egui::pos2(
+            antwort.rect.right() - thema::SPACE_2,
+            antwort.rect.center().y,
+        );
+        let strich = Stroke::new(thema::SIZE_BORDER, f.text_faint);
+        ui.painter().line_segment(
+            [
+                mitte + egui::vec2(-thema::SPACE_1, -thema::SPACE_1 / 2.0),
+                mitte + egui::vec2(0.0, thema::SPACE_1 / 2.0),
+            ],
+            strich,
+        );
+        ui.painter().line_segment(
+            [
+                mitte + egui::vec2(0.0, thema::SPACE_1 / 2.0),
+                mitte + egui::vec2(thema::SPACE_1, -thema::SPACE_1 / 2.0),
+            ],
+            strich,
+        );
+    }
+    let mut gewaehlt = None;
+    egui::Popup::menu(&antwort).show(|ui| {
+        ui.set_min_width(breite);
+        for (option, anzeige) in optionen {
+            let klick = ui
+                .selectable_label(option == wert, anzeige)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked();
+            if klick {
+                gewaehlt = Some(option.clone());
+            }
+        }
+    });
+    if let Some(option) = gewaehlt {
+        *wert = option;
+        antwort.mark_changed();
+    }
+    let name = anzeige;
+    antwort.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &name));
+    antwort
+}
+
 /// Eine Zeile einer Auswahl (Radio): Punkt, Name und optional ein Hinweis
 /// rechts. `waehlbar == false` graut die Zeile aus — sie ist dann nicht zu
 /// klicken und trägt den Hinweis als Text. Hand-Cursor und Name für den

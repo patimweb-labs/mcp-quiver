@@ -253,6 +253,21 @@ describe("eintrag_saeubern", () => {
     expect(sauber.felder[0].name).toBe("konto");
     expect(sauber.felder[0].standard).toBeNull();
   });
+
+  it("nimmt Art und Titel mit und leert leere Titel", () => {
+    const eintrag = beispiel();
+    eintrag.felder[0].art = {
+      auswahl: { optionen: [{ wert: " rot ", anzeige: "  " }] },
+    };
+    eintrag.felder[0].titel = "  Konto  ";
+    eintrag.felder[1].titel = "   ";
+    const sauber = eintrag_saeubern(eintrag);
+    expect(sauber.felder[0].art).toEqual({
+      auswahl: { optionen: [{ wert: "rot", anzeige: "rot" }] },
+    });
+    expect(sauber.felder[0].titel).toBe("Konto");
+    expect(sauber.felder[1].titel).toBeNull();
+  });
 });
 
 describe("Listen", () => {

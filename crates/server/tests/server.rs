@@ -14,8 +14,8 @@ use axum::response::Response;
 use axum::Router;
 use http_body_util::BodyExt;
 use quiver_domain::{
-    Eintrag, EintragId, Feld, Geraet, GeraetId, Gruppe, GruppeId, Herkunft, Laufzeit, Quelle, Satz,
-    SatzEintrag, SatzId, Soll, Werte,
+    Eintrag, EintragId, Feld, FeldArt, FeldOption, Geraet, GeraetId, Gruppe, GruppeId, Herkunft,
+    Laufzeit, Quelle, Satz, SatzEintrag, SatzId, Soll, Werte,
 };
 use quiver_protocol::{
     Anmelden, AnmeldenAntwort, Code, CodeAnlegen, EintragZustand, GeraetAendern, GeraetStand,
@@ -268,6 +268,7 @@ fn eintrag(id: &str) -> Eintrag {
             pflicht: true,
             standard: None,
             link: None,
+            ..Default::default()
         }],
     }
 }
@@ -609,6 +610,52 @@ async fn gesperrtes_geraet_bekommt_403() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn eintrag_behaelt_art_und_titel() {
+    let p = Pruefung::neu().await;
+    let mut eintrag = eintrag("abap");
+    eintrag.felder = vec![
+        Feld {
+            name: "zertifikat_pruefen".into(),
+            beschreibung: "Prüft das Zertifikat".into(),
+            quelle: Quelle::Client,
+            pflicht: false,
+            art: FeldArt::Schalter,
+            titel: Some("Zertifikat prüfen".into()),
+            ..Default::default()
+        },
+        Feld {
+            name: "mandant".into(),
+            beschreibung: "SAP-Mandant".into(),
+            quelle: Quelle::Server,
+            art: FeldArt::Auswahl {
+                optionen: vec![
+                    FeldOption {
+                        wert: "100".into(),
+                        anzeige: "Entwicklung".into(),
+                    },
+                    FeldOption {
+                        wert: "200".into(),
+                        anzeige: "Test".into(),
+                    },
+                ],
+            },
+            titel: Some("Mandant".into()),
+            ..Default::default()
+        },
+    ];
+
+    let (status, rumpf) = p.put_eintrag(&eintrag).await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let (status, rumpf) = p.admin("GET", "/admin/eintraege/abap", None).await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let gelesen: Eintrag = als(&rumpf);
+    assert_eq!(
+        gelesen.felder, eintrag.felder,
+        "art und titel gehen unverändert durch den Server"
+    );
 }
 
 #[tokio::test]

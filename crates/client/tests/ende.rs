@@ -216,6 +216,7 @@ fn feld(name: &str, quelle: Quelle, pflicht: bool) -> Feld {
         pflicht,
         standard: None,
         link: None,
+        ..Default::default()
     }
 }
 
