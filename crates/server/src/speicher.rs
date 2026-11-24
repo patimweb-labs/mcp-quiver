@@ -576,6 +576,14 @@ const BENUTZER_SPALTEN: &str =
     "oid, tid, email, name, rolle, gesperrt, entra_json, token, token_erneuert, token_stand, \
      erstellt, zuletzt";
 
+impl Benutzer {
+    /// Darf dieser Benutzer noch durch? Nachprüfen kann `neu_anmelden` setzen
+    /// oder sperren; Sitzungen enden dann sofort (Aufgabe 26, Punkt 1).
+    pub fn anmeldung_gueltig(&self) -> bool {
+        !self.gesperrt && self.token_stand == "gueltig"
+    }
+}
+
 fn benutzer_aus(zeile: &rusqlite::Row<'_>) -> rusqlite::Result<Benutzer> {
     let rolle: String = zeile.get(4)?;
     let entra_json: String = zeile.get(6)?;
@@ -711,6 +719,46 @@ pub const ROOT_OID: &str = "root";
 
 pub fn root_holen(conn: &Connection) -> anyhow::Result<Option<Benutzer>> {
     benutzer_holen(conn, ROOT_OID)
+}
+
+/// Den Root **einmalig** anlegen (Ersteinrichtung, Aufgabe 25).
+///
+/// Prüfung „kein Root“ und Einfügen liegen in **einer** Transaktion
+/// (`BEGIN IMMEDIATE`): bei gleichzeitigen Aufrufen gewinnt genau einer; die
+/// anderen bekommen `false`.
+pub fn root_einrichten(
+    conn: &mut Connection,
+    email: &str,
+    passwort_hash: &str,
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<bool> {
+    let transaktion = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let vorhanden: bool = transaktion
+        .query_row(
+            "SELECT 1 FROM benutzer WHERE oid = ?1",
+            params![ROOT_OID],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if vorhanden {
+        // Rollback beim Fallenlassen der Transaktion.
+        return Ok(false);
+    }
+    let jetzt_text = hilfen::als_text(jetzt);
+    transaktion.execute(
+        "INSERT INTO benutzer (oid, tid, email, name, rolle, gesperrt, entra_json, token, \
+         passwort, token_erneuert, token_stand, erstellt, zuletzt) \
+         VALUES (?1, 'root', ?2, 'Root', 'root', 0, '[]', NULL, ?3, NULL, 'neu_anmelden', ?4, ?4)",
+        params![ROOT_OID, email, passwort_hash, jetzt_text],
+    )?;
+    transaktion.commit()?;
+    Ok(true)
+}
+
+/// Alle Sitzungen eines Benutzers beenden (Sperre, Rollenentzug, Löschung).
+pub fn sitzungen_von_user_loeschen(conn: &Connection, oid: &str) -> anyhow::Result<usize> {
+    Ok(conn.execute("DELETE FROM sitzungen WHERE oid = ?1", params![oid])?)
 }
 
 /// Root setzen oder ändern; alle Root-Sitzungen enden dabei.

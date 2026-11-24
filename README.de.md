@@ -54,17 +54,45 @@ Vue und sieht genauso aus wie der Client.
 
 ```bash
 docker build -t mcp-quiver-server .
-docker run -d --name quiver -p 8740:8740 \
+docker run -d --name quiver -p 127.0.0.1:8740:8740 \
   -e QUIVER_OEFFENTLICH=http://localhost:8740 \
   -v quiver-daten:/daten mcp-quiver-server
-docker exec -it quiver quiver-server root-setzen admin@example.test
 ```
 
-`root-setzen` fragt das Passwort zweimal ab (12 bis 256 Zeichen). Danach
-`http://localhost:8740` öffnen und mit dieser E-Mail und dem Passwort anmelden.
-Einen Admin-Token gibt es nicht mehr; `QUIVER_ADMIN_TOKEN` wird ignoriert und
+Danach `http://localhost:8740` öffnen. Die erste Seite ist die
+**Ersteinrichtung**: sie fragt E-Mail und Passwort des einen Root-Benutzers ab
+(12 bis 256 Zeichen, Argon2id) und meldet ihn gleich an. Die Einrichtung ist
+nur 15 Minuten nach dem Start des Servers offen und – außer auf Loopback – nur
+mit einem Einmal-Code, den der Server beim Start genau einmal ins Log schreibt:
+
+```
+INFO quiver_server::einrichtung: Ersteinrichtung: Code für diesen Start: …
+```
+
+Das Fenster hängt an der Laufzeit des Servers, nicht an der Wanduhr; danach
+hilft nur ein Neustart. `docker exec -it quiver quiver-server root-setzen
+admin@example.test` bleibt der Weg für ein vergessenes Passwort. Einen
+Admin-Token gibt es nicht mehr; `QUIVER_ADMIN_TOKEN` wird ignoriert und
 `daten/admin-token` verschwindet, sobald ein Root-Benutzer gesetzt ist. Ohne
 Docker-Hub-Login mit `--build-arg BASIS=public.ecr.aws/docker/library` bauen.
+
+Der Container lauscht immer auf allen Adressen; das Veröffentlichen oben hält
+ihn auf `127.0.0.1`. Deshalb darf die Basis-URL blankes `http` sein: mit einer
+Basis-URL, die kein https ist, startet der Server nur, wenn der Host Loopback
+ist. **Dabei bleibt es besser.** Eine Loopback-Basis-URL heißt: die
+Ersteinrichtung braucht keinen Einmal-Code (den verlangt nur eine
+Nicht-Loopback-Basis-URL) – wer den Port in den ersten 15 Minuten erreicht,
+könnte den Root anlegen. Also auf `127.0.0.1` veröffentlichen (wie oben) oder
+eine `https`-Basis-URL verwenden.
+
+| Ersteinrichtung (dunkel) | Anmelden (hell) | Fenster zu (dunkel) |
+| --- | --- | --- |
+| ![Ersteinrichtung](docs/bilder/admin-dark-einrichtung.png) | ![Anmelden](docs/bilder/admin-light-anmeldung.png) | ![Geschlossen](docs/bilder/admin-dark-geschlossen.png) |
+
+Die Anmeldung selbst: E-Mail und Passwort des Root und, sobald Entra
+eingerichtet ist, **Mit Microsoft anmelden**. Die Sitzung liegt in einem
+HttpOnly-Cookie (`SameSite=Lax`, `Secure` und `__Host-` bei https, 12 h
+absolut, 60 min ohne Nutzung); im Speicher des Browsers steht nichts.
 
 ### Anmeldung über Entra ID (optional)
 
@@ -97,7 +125,7 @@ Geräte bei der nächsten Prüfung ihre Tools.
 
 | Variable | Bedeutung |
 | --- | --- |
-| `QUIVER_OEFFENTLICH` | Basis-URL (Pflicht; `https`, `http` nur auf Loopback) |
+| `QUIVER_OEFFENTLICH` | Basis-URL (`https`, `http` nur auf Loopback; Standard `http://localhost:<Port aus QUIVER_ADRESSE>`) |
 | `QUIVER_ADRESSE` | Adresse zum Lauschen (Standard `0.0.0.0:8740`) |
 | `QUIVER_DATEN` | Datenordner (Standard `./daten`) |
 | `QUIVER_ADMIN_DIST` | Gebaute Verwaltung (Standard `./admin/dist`) |
@@ -122,6 +150,9 @@ geändert:
 
 ```bash
 cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
+# die Seiten, die der Server selbst ausliefert (Bestätigung, Fehler): dunkel
+# als Vorgabe, hell über `prefers-color-scheme`
+cargo run -p quiver-oberflaeche --bin tokens_seite_css > crates/server/seiten/system.css
 ```
 
 ### Admin-Oberfläche
@@ -134,6 +165,20 @@ npm run dev     # Vite auf 5173, /api → 127.0.0.1:8740
 npm run build   # nach admin/dist; der Server liefert sie unter / aus
 npm run typecheck
 npm test
+```
+
+Zwei Browser-Prüfungen laufen gegen den echten Server (gebautes `admin/dist`,
+die CSP des Servers, Chrome headless mit eigenem temporären Profil, Loopback,
+temporärer Datenordner – kein echter Mandant, kein echter Tresor):
+
+```bash
+cargo build -p quiver-server
+npm run pruefung            # Einrichten → Abmelden → Anmelden → falsches
+                            # Passwort → Übersicht → einen Satz ändern:
+                            # 0 CSP-Verstöße, 0 Konsolenfehler
+npm run pruefung:anmeldung  # Geräteanmeldung → Bestätigen → Rücksprung auf
+                            # 127.0.0.1:<Port>/quiver mit Code, gegen einen
+                            # Entra-Nachbau auf Loopback
 ```
 
 Aufbau, Bausteine und Bildschirmfotos: [admin/README.md](admin/README.md).

@@ -13,6 +13,7 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex, Semaphore};
 
 use crate::benutzer::ARGON2_GLEICHZEITIG;
 use crate::drossel::Drossel;
+use crate::einrichtung::Einrichtung;
 use crate::krypto::Schluessel;
 use crate::oidc::Oidc;
 use crate::Konfig;
@@ -29,6 +30,10 @@ pub(crate) struct Zustand {
     pub(crate) oidc: Option<Arc<Oidc>>,
     pub(crate) schluessel: Schluessel,
     pub(crate) drossel: Drossel,
+    /// Argon2-Hash für unbekannte E-Mails, beim Start erzeugt (Aufgabe 26.4).
+    pub(crate) dummy: String,
+    /// Der Stand der Ersteinrichtung (Aufgabe 25).
+    pub(crate) einrichtung: Einrichtung,
     /// Höchstens zwei Argon2-Prüfungen gleichzeitig.
     pub(crate) argon: Semaphore,
     /// Ein Einlösen je Benutzer; verhindert doppelte Refresh-Aufrufe.
@@ -42,9 +47,11 @@ impl Zustand {
         konfig: Konfig,
         schluessel: Schluessel,
         oidc: Option<Arc<Oidc>>,
+        dummy: String,
     ) -> Self {
         let (geaendert, _) = broadcast::channel(64);
         let uhr = konfig.uhr.clone();
+        let einrichtung = Einrichtung::neu(&konfig.oeffentlich);
         Self {
             db: Mutex::new(conn),
             geaendert,
@@ -53,6 +60,8 @@ impl Zustand {
             oidc,
             schluessel,
             drossel: Drossel::neu(),
+            dummy,
+            einrichtung,
             argon: Semaphore::new(ARGON2_GLEICHZEITIG),
             refresh: Mutex::new(HashMap::new()),
             uhr,

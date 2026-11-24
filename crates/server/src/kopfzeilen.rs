@@ -2,8 +2,13 @@
 // Copyright (C) 2026 Patrick Weppelmann
 
 //! Sicherheits-Köpfe überall (Aufgabe 20): CSP ohne Inline, kein Einbetten,
-//! kein MIME-Raten, kein Referrer, HSTS bei https, kein Zwischenspeicher für
-//! `/auth` und `/api`.
+//! kein MIME-Raten, HSTS bei https, kein Zwischenspeicher für `/auth` und
+//! `/api`.
+//!
+//! `Referrer-Policy: same-origin` (Aufgabe 26, Punkt 2): mit `no-referrer`
+//! schickt der Browser bei einem Formular `Origin: null`, und die Bestätigung
+//! scheitert an der Origin-Prüfung. `same-origin` schickt den Referrer nur an
+//! uns selbst – nach außen bleibt es bei „nichts“.
 
 use axum::extract::Request;
 use axum::http::header::{self, HeaderName, HeaderValue};
@@ -11,8 +16,12 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 /// Die CSP für alle Antworten. Skripte und Stile nur aus eigener Quelle – die
-/// Verwaltung liefert ihre Dateien selbst, die Anmeldeseiten brauchen beides
-/// nicht.
+/// Verwaltung liefert ihre Dateien selbst, die Seiten des Servers holen ihr
+/// Stylesheet unter `/auth/stil.css` (Aufgabe 26, Punkt 5).
+///
+/// Eine Ansicht darf die CSP dieser Antwort ersetzen (die Bestätigungsseite
+/// braucht `form-action` für genau den Port des Vorgangs, Aufgabe 26, Punkt 3):
+/// steht schon eine CSP in der Antwort, bleibt sie stehen.
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
      img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; \
      frame-ancestors 'none'; base-uri 'none'";
@@ -23,15 +32,21 @@ pub const HSTS: &str = "max-age=31536000";
 pub async fn sicherheits_kopfzeilen(ist_https: bool, req: Request, next: Next) -> Response {
     let pfad = req.uri().path().to_string();
     let mut antwort = next.run(req).await;
+    // Hat die Ansicht selbst eine CSP gesetzt, gilt ihre (genauere).
+    let eigene_csp = antwort
+        .headers()
+        .contains_key(header::CONTENT_SECURITY_POLICY);
     let kopf = antwort.headers_mut();
     let setzen = |kopf: &mut header::HeaderMap, name: HeaderName, wert: &'static str| {
         if let Ok(wert) = HeaderValue::from_str(wert) {
             kopf.insert(name, wert);
         }
     };
-    setzen(kopf, header::CONTENT_SECURITY_POLICY, CSP);
+    if !eigene_csp {
+        setzen(kopf, header::CONTENT_SECURITY_POLICY, CSP);
+    }
     setzen(kopf, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
-    setzen(kopf, header::REFERRER_POLICY, "no-referrer");
+    setzen(kopf, header::REFERRER_POLICY, "same-origin");
     setzen(kopf, header::X_FRAME_OPTIONS, "DENY");
     if ist_https {
         setzen(kopf, header::STRICT_TRANSPORT_SECURITY, HSTS);
@@ -45,6 +60,12 @@ pub async fn sicherheits_kopfzeilen(ist_https: bool, req: Request, next: Next) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Die CSP der Bestätigungsseite: dieselbe, nur mit `form-action` für genau
+    /// den Loopback-Port des Vorgangs (Aufgabe 26, Punkt 3).
+    const CSP_MIT_PORT: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+         img-src 'self' data:; font-src 'self'; connect-src 'self'; \
+         form-action 'self' http://127.0.0.1:51234; frame-ancestors 'none'; base-uri 'none'";
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
     use axum::routing::get;
@@ -89,7 +110,8 @@ mod tests {
         );
         assert_eq!(
             antwort.headers().get(header::REFERRER_POLICY).unwrap(),
-            "no-referrer"
+            "same-origin",
+            "sonst schickt der Browser beim Formular Origin: null"
         );
         assert_eq!(
             antwort
@@ -104,6 +126,35 @@ mod tests {
         );
         assert!(!CSP.contains("unsafe-inline"));
         assert!(CSP.contains("frame-ancestors 'none'"));
+    }
+
+    #[tokio::test]
+    async fn eigene_csp_bleibt_stehen() {
+        let app = Router::new()
+            .route(
+                "/auth/seite",
+                get(|| async { ([(header::CONTENT_SECURITY_POLICY, CSP_MIT_PORT)], "ok") }),
+            )
+            .layer(axum::middleware::from_fn(|req: Request, next: Next| {
+                sicherheits_kopfzeilen(false, req, next)
+            }));
+        let antwort = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/auth/seite")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            antwort
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .unwrap(),
+            CSP_MIT_PORT
+        );
+        assert!(CSP_MIT_PORT.contains("form-action 'self' http://127.0.0.1:51234"));
     }
 
     #[tokio::test]

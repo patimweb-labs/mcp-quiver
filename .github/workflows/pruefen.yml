@@ -41,3 +41,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Die beiden Browser-Prüfungen gegen den echten Server (Aufgabe 26,
+      # Punkte 2 und 10). Chrome headless mit eigenem temporären Profil,
+      # Loopback, temporärer Datenordner; kein echter Mandant.
+      - run: npx playwright install --with-deps chromium
+      - run: cargo build -p quiver-server
+        working-directory: .
+      - run: npm run pruefung
+      - run: npm run pruefung:anmeldung

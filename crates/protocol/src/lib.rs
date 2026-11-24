@@ -23,6 +23,9 @@
 //! | POST | `/admin/codes` | Admin | [`CodeAnlegen`] → [`Code`] |
 //! | GET | `/admin/ueberblick` | Admin | → [`Ueberblick`] |
 //!
+//! Ohne `/api/v1` liegen die offenen Wege der Anmeldung: `/auth/stand` →
+//! [`AuthStand`] und `/auth/einrichten` → [`Ich`] (Aufgabe 25).
+//!
 //! PUT legt an oder ersetzt (die Kennung steht im Pfad und im Rumpf, beide
 //! müssen gleich sein). Fehler kommen als [`Fehler`] mit passendem Status.
 
@@ -234,6 +237,42 @@ pub struct BenutzerAendern {
 pub struct RootAnmelden {
     pub email: String,
     pub passwort: String,
+}
+
+/// Ist das Zeitfenster der Ersteinrichtung offen oder zu? (Aufgabe 25)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Einrichtungslage {
+    /// Offen: es gibt noch keinen Root, und die 15 Minuten laufen.
+    Offen,
+    /// Zu: die 15 Minuten nach dem Start sind vorbei (oder zehn Codes falsch).
+    Geschlossen,
+}
+
+/// `GET /auth/stand` (offen, Aufgabe 25): mehr sagt der Server vor der
+/// Anmeldung nicht. `einrichtung` ist `None`, wenn die Frage nicht anwendbar
+/// ist – es gibt bereits einen Root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthStand {
+    /// Gibt es einen Root-Benutzer?
+    pub eingerichtet: bool,
+    /// Nur ohne Root gesetzt.
+    pub einrichtung: Option<Einrichtungslage>,
+    /// Braucht die Einrichtung den Einmal-Code aus dem Server-Log?
+    pub code_noetig: bool,
+    /// Ist Entra eingerichtet („Mit Microsoft anmelden“)?
+    pub entra: bool,
+}
+
+/// `POST /auth/einrichten` (Aufgabe 25): den einen Root anlegen. Der Server
+/// meldet ihn danach gleich an.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Einrichten {
+    pub email: String,
+    pub passwort: String,
+    /// Nur nötig, wenn [`AuthStand::code_noetig`] gilt.
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 /// Ein Eintrag der Prüfspur (ohne Geheimnisse).

@@ -30,6 +30,7 @@ mod auth;
 pub mod benutzer;
 mod config;
 mod drossel;
+mod einrichtung;
 mod fehler;
 mod geraet;
 mod hilfen;
@@ -37,6 +38,7 @@ mod kopfzeilen;
 mod krypto;
 mod oidc;
 mod refresh;
+mod seiten;
 mod sitzung;
 mod speicher;
 pub mod unterbefehl;
@@ -96,7 +98,13 @@ async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
         }
         da
     });
-    let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc));
+    // Der Dummy-Hash für unbekannte E-Mails entsteht **beim Start** und auf
+    // einer blockierenden Aufgabe (Aufgabe 26, Punkt 4) – nicht beim ersten
+    // Rateversuch und nicht im Async-Faden.
+    let dummy = tokio::task::spawn_blocking(benutzer::dummy_hash_erzeugen)
+        .await
+        .map_err(|fehler| anyhow::anyhow!("Dummy-Hash nicht baubar: {fehler}"))??;
+    let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc, dummy));
     let router = router(zustand.clone(), dist).layer(middleware::from_fn(move |req, next| {
         kopfzeilen::sicherheits_kopfzeilen(ist_https, req, next)
     }));
@@ -107,6 +115,14 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
     // Der Browser-Weg der Anmeldung (kein /api: der Browser folgt den
     // Weiterleitungen von Entra).
     let browser = Router::new()
+        // Offen und ohne /api/v1, genau wie die Verwaltung sie aufruft
+        // (Aufgabe 25/26): Stand der Einrichtung und das Einrichten selbst.
+        .route("/auth/stand", get(einrichtung::stand))
+        .route("/auth/einrichten", post(einrichtung::einrichten))
+        // Stylesheet und Zeichen der Seiten (Aufgabe 26, Punkt 5).
+        .route("/auth/stil.css", get(seiten::stil))
+        .route("/auth/marke-dunkel.png", get(seiten::marke_dunkel))
+        .route("/auth/marke-hell.png", get(seiten::marke_hell))
         .route("/auth/geraet/start", get(anmeldung::geraet_start))
         .route("/auth/admin/start", get(anmeldung::admin_start))
         .route("/auth/callback", get(anmeldung::callback))

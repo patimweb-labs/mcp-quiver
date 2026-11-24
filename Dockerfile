@@ -23,6 +23,8 @@ WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY tokens tokens
+# Die Marke der Seiten (das Original liegt in `assets/marke`).
+COPY assets assets
 RUN cargo build --release --locked -p quiver-server \
  && cp target/release/quiver-server /quiver-server
 

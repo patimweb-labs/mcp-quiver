@@ -46,7 +46,8 @@ async fn main() -> anyhow::Result<()> {
     // in der Umgebung steht.
     benutzer::admin_token_ignorieren();
 
-    let konfig = Konfig::aus_umgebung(daten)?.mit_admin_dist(Some(admin_dist));
+    let konfig =
+        Konfig::aus_umgebung_mit_port(daten, adresse.port())?.mit_admin_dist(Some(admin_dist));
     tracing::info!("Basis-URL: {}", konfig.oeffentlich);
     if let Some(entra) = &konfig.entra {
         tracing::info!(

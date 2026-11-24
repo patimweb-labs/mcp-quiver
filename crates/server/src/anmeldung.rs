@@ -32,6 +32,7 @@ use crate::fehler::{Ergebnis, FehlerAntwort, Koerper};
 use crate::hilfen;
 use crate::krypto;
 use crate::oidc::Identitaet;
+use crate::seiten::{self, Paar, SeitenFehler, Sprache};
 use crate::sitzung;
 use crate::speicher::{self, Bestaetigung, GeraeteCode, OidcZustand};
 use crate::zustand::Zustand;
@@ -49,86 +50,7 @@ const NAME_MAX: usize = 80;
 /// Längster Fehlertext von Entra, der angezeigt wird.
 const FEHLERTEXT_MAX: usize = 200;
 
-// ------------------------------------------------------------------ Seiten
-
-struct SeitenFehler {
-    status: StatusCode,
-    titel: &'static str,
-    text: String,
-}
-
-impl SeitenFehler {
-    fn ungueltig(text: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            titel: "Anmeldung nicht möglich",
-            text: text.into(),
-        }
-    }
-
-    fn verboten(text: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            titel: "Kein Zugriff",
-            text: text.into(),
-        }
-    }
-
-    fn intern(text: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::BAD_GATEWAY,
-            titel: "Anmeldung gescheitert",
-            text: text.into(),
-        }
-    }
-
-    fn nicht_gefunden(text: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            titel: "Nicht verfügbar",
-            text: text.into(),
-        }
-    }
-
-    fn seite(self) -> Response {
-        seite(
-            self.status,
-            self.titel,
-            &format!("<p>{}</p>", html(&self.text)),
-        )
-    }
-}
-
-fn html(wert: &str) -> String {
-    let mut aus = String::with_capacity(wert.len());
-    for zeichen in wert.chars() {
-        match zeichen {
-            '&' => aus.push_str("&amp;"),
-            '<' => aus.push_str("&lt;"),
-            '>' => aus.push_str("&gt;"),
-            '"' => aus.push_str("&quot;"),
-            '\'' => aus.push_str("&#39;"),
-            c => aus.push(c),
-        }
-    }
-    aus
-}
-
-fn seite(status: StatusCode, titel: &str, inhalt: &str) -> Response {
-    let rumpf = format!(
-        "<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{titel}</title></head><body><main><h1>{titel}</h1>{inhalt}</main></body></html>",
-        titel = html(titel)
-    );
-    (
-        status,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        rumpf,
-    )
-        .into_response()
-}
-
+/// Eine Weiterleitung, wahlweise mit einem Cookie (Set-Cookie).
 fn weiter(status: StatusCode, ziel: &str, cookie: Option<String>) -> Response {
     let mut antwort = Response::builder()
         .status(status)
@@ -194,10 +116,12 @@ fn kurz(text: &str) -> String {
 pub(crate) async fn geraet_start(
     State(zustand): State<Arc<Zustand>>,
     Query(abfrage): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
+    let sprache = seiten::sprache(&headers);
     match start(&zustand, &abfrage).await {
         Ok(antwort) => antwort,
-        Err(fehler) => fehler.seite(),
+        Err(fehler) => fehler.seite(sprache),
     }
 }
 
@@ -207,31 +131,42 @@ async fn start(
 ) -> Result<Response, SeitenFehler> {
     if zustand.oidc.is_none() {
         return Err(SeitenFehler::nicht_gefunden(
-            "Dieser Server nutzt Einmal-Codes statt Entra; /auth/geraet/start gibt es hier nicht.",
+            Paar::neu(
+                "Dieser Server nutzt Einmal-Codes statt Entra; /auth/geraet/start gibt es hier nicht.",
+                "This server uses one-time codes instead of Entra; /auth/geraet/start does not exist here.",
+            ),
         ));
     }
 
     let challenge = abfrage.get("challenge").cloned().unwrap_or_default();
     if !pkce_gueltig(&challenge) {
-        return Err(SeitenFehler::ungueltig(
+        return Err(SeitenFehler::ungueltig(Paar::neu(
             "challenge muss ein S256-Wert sein (43 Zeichen base64url).",
-        ));
+            "challenge must be an S256 value (43 base64url characters).",
+        )));
     }
     let port = abfrage
         .get("port")
         .and_then(|wert| port_gueltig(wert))
-        .ok_or_else(|| SeitenFehler::ungueltig("port muss zwischen 1024 und 65535 liegen."))?;
+        .ok_or_else(|| {
+            SeitenFehler::ungueltig(Paar::neu(
+                "port muss zwischen 1024 und 65535 liegen.",
+                "port must be between 1024 and 65535.",
+            ))
+        })?;
     let geraetezustand = abfrage.get("zustand").cloned().unwrap_or_default();
     if !geraetezustand_gueltig(&geraetezustand) {
-        return Err(SeitenFehler::ungueltig(
+        return Err(SeitenFehler::ungueltig(Paar::neu(
             "zustand fehlt oder enthält unerlaubte Zeichen (höchstens 128).",
-        ));
+            "zustand is missing or contains characters that are not allowed (at most 128).",
+        )));
     }
     let name = abfrage.get("name").cloned().unwrap_or_default();
     if !name_gueltig(&name) {
-        return Err(SeitenFehler::ungueltig(
+        return Err(SeitenFehler::ungueltig(Paar::neu(
             "name fehlt oder ist länger als 80 Zeichen.",
-        ));
+            "name is missing or longer than 80 characters.",
+        )));
     }
 
     starte(zustand, "geraet", &challenge, port, &geraetezustand, &name).await
@@ -247,9 +182,10 @@ async fn starte(
     name: &str,
 ) -> Result<Response, SeitenFehler> {
     let Some(oidc) = zustand.oidc.as_ref() else {
-        return Err(SeitenFehler::nicht_gefunden(
+        return Err(SeitenFehler::nicht_gefunden(Paar::neu(
             "Entra ist auf diesem Server nicht eingerichtet.",
-        ));
+            "Entra is not configured on this server.",
+        )));
     };
     let jetzt = zustand.uhr.jetzt();
     let state = krypto::zufall_b64(32);
@@ -292,12 +228,17 @@ async fn starte(
         }
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
 
     let ziel = oidc
-        .anmelde_url(&state, &nonce, &server_challenge)
+        .anmelde_url(&state, &nonce, &server_challenge, jetzt)
         .await
-        .map_err(|fehler| SeitenFehler::intern(format!("Entra nicht erreichbar: {fehler}")))?;
+        .map_err(|fehler| {
+            SeitenFehler::intern(Paar::neu(
+                format!("Entra nicht erreichbar: {fehler}"),
+                format!("Entra is not reachable: {fehler}"),
+            ))
+        })?;
     Ok(weiter(
         StatusCode::SEE_OTHER,
         &ziel,
@@ -311,10 +252,14 @@ async fn starte(
 }
 
 /// `GET /auth/admin/start`: Anmeldung der Verwaltung über Entra.
-pub(crate) async fn admin_start(State(zustand): State<Arc<Zustand>>) -> Response {
+pub(crate) async fn admin_start(
+    State(zustand): State<Arc<Zustand>>,
+    headers: HeaderMap,
+) -> Response {
+    let sprache = seiten::sprache(&headers);
     match starte(&zustand, "admin", "", 0, "", "").await {
         Ok(antwort) => antwort,
-        Err(fehler) => fehler.seite(),
+        Err(fehler) => fehler.seite(sprache),
     }
 }
 
@@ -326,9 +271,10 @@ pub(crate) async fn callback(
     Query(abfrage): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
+    let sprache = seiten::sprache(&headers);
     match callback_intern(&zustand, &abfrage, &headers).await {
         Ok(antwort) => antwort,
-        Err(fehler) => fehler.seite(),
+        Err(fehler) => fehler.seite(sprache),
     }
 }
 
@@ -343,55 +289,73 @@ async fn callback_intern(
             .get("error_description")
             .map(String::as_str)
             .unwrap_or_default();
-        return Err(SeitenFehler::ungueltig(format!(
-            "Entra meldet: {} {}",
-            kurz(fehler),
-            kurz(text)
+        return Err(SeitenFehler::ungueltig(Paar::neu(
+            format!("Entra meldet: {} {}", kurz(fehler), kurz(text)),
+            format!("Entra reports: {} {}", kurz(fehler), kurz(text)),
         )));
     }
 
     let state = abfrage.get("state").cloned().unwrap_or_default();
     if state.is_empty() {
-        return Err(SeitenFehler::ungueltig("state fehlt."));
+        return Err(SeitenFehler::ungueltig(Paar::neu(
+            "state fehlt.",
+            "state is missing.",
+        )));
     }
     let cookie = sitzung::cookies_aus(headers)
         .remove(sitzung::OIDC_COOKIE)
-        .ok_or_else(|| SeitenFehler::ungueltig("Anmeldecookie fehlt (anderer Browser?)."))?;
+        .ok_or_else(|| {
+            SeitenFehler::ungueltig(Paar::neu(
+                "Anmeldecookie fehlt (anderer Browser?).",
+                "the sign-in cookie is missing (a different browser?).",
+            ))
+        })?;
     let jetzt = zustand.uhr.jetzt();
     let genommen = db(zustand, {
         let hash = hilfen::hash(&state);
         move |conn| speicher::oidc_nehmen(conn, &hash, jetzt)
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?
     .ok_or_else(|| {
-        SeitenFehler::ungueltig("state ist unbekannt, abgelaufen oder schon benutzt.")
+        SeitenFehler::ungueltig(Paar::neu(
+            "state ist unbekannt, abgelaufen oder schon benutzt.",
+            "state is unknown, expired or already used.",
+        ))
     })?;
     let (zustand_row, gueltig) = genommen;
     if !gueltig {
-        return Err(SeitenFehler::ungueltig(
+        return Err(SeitenFehler::ungueltig(Paar::neu(
             "Der Anmeldevorgang ist abgelaufen.",
-        ));
+            "The sign-in attempt has expired.",
+        )));
     }
     if !hilfen::gleich_konstant(&zustand_row.cookie_hash, &hilfen::hash(&cookie)) {
-        return Err(SeitenFehler::ungueltig(
+        return Err(SeitenFehler::ungueltig(Paar::neu(
             "state gehört nicht zu diesem Browser.",
-        ));
+            "state does not belong to this browser.",
+        )));
     }
 
     let code = abfrage
         .get("code")
         .filter(|wert| !wert.is_empty())
-        .ok_or_else(|| SeitenFehler::ungueltig("code fehlt."))?;
+        .ok_or_else(|| SeitenFehler::ungueltig(Paar::neu("code fehlt.", "code is missing.")))?;
     let Some(oidc) = zustand.oidc.as_ref() else {
-        return Err(SeitenFehler::nicht_gefunden(
+        return Err(SeitenFehler::nicht_gefunden(Paar::neu(
             "Entra ist nicht konfiguriert.",
-        ));
+            "Entra is not configured.",
+        )));
     };
     let (identitaet, tokens) = oidc
         .code_einloesen(code, &zustand_row.verifier, &zustand_row.nonce, jetzt)
         .await
-        .map_err(|fehler| SeitenFehler::intern(format!("Anmeldung abgelehnt: {fehler}")))?;
+        .map_err(|fehler| {
+            SeitenFehler::intern(Paar::neu(
+                format!("Anmeldung abgelehnt: {fehler}"),
+                format!("Sign-in rejected: {fehler}"),
+            ))
+        })?;
 
     // Refresh-Token verschlüsselt ablegen; AAD bindet es an (tid, oid).
     let token_verschluesselt = match tokens.refresh_token.as_deref() {
@@ -401,7 +365,12 @@ async fn callback_intern(
                 &krypto::aad(&identitaet.tid, &identitaet.oid),
                 refresh.as_bytes(),
             )
-            .map_err(|fehler| SeitenFehler::intern(format!("Token nicht speicherbar: {fehler}")))?,
+            .map_err(|fehler| {
+                SeitenFehler::intern(Paar::neu(
+                    format!("Token nicht speicherbar: {fehler}"),
+                    format!("token cannot be stored: {fehler}"),
+                ))
+            })?,
         ),
         None => None,
     };
@@ -432,12 +401,19 @@ async fn callback_intern(
         }
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
 
     if zustand_row.modus == "admin" {
         return verwaltungs_sitzung(zustand, &identitaet, jetzt).await;
     }
-    bestaetigungsseite(zustand, &identitaet, &zustand_row, jetzt).await
+    bestaetigungsseite(
+        zustand,
+        &identitaet,
+        &zustand_row,
+        jetzt,
+        seiten::sprache(headers),
+    )
+    .await
 }
 
 /// Nach der Entra-Anmeldung: Sitzung für die Verwaltung anlegen.
@@ -449,15 +425,24 @@ async fn verwaltungs_sitzung(
     let oid = identitaet.oid.clone();
     let benutzer = db(zustand, move |conn| speicher::benutzer_holen(conn, &oid))
         .await
-        .map_err(|fehler| SeitenFehler::intern(fehler.text))?
-        .ok_or_else(|| SeitenFehler::intern("Benutzer ist nach der Anmeldung verschwunden"))?;
+        .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?
+        .ok_or_else(|| {
+            SeitenFehler::intern(Paar::neu(
+                "Benutzer ist nach der Anmeldung verschwunden",
+                "the user vanished after sign-in",
+            ))
+        })?;
     if benutzer.gesperrt {
-        return Err(SeitenFehler::verboten("Dieses Konto ist gesperrt."));
+        return Err(SeitenFehler::verboten(Paar::neu(
+            "Dieses Konto ist gesperrt.",
+            "This account is blocked.",
+        )));
     }
     if !benutzer.rolle.darf_verwalten() {
-        return Err(SeitenFehler::verboten(
+        return Err(SeitenFehler::verboten(Paar::neu(
             "Dieses Konto hat keine Verwaltungsrolle (admin oder root).",
-        ));
+            "This account has no administration role (admin or root).",
+        )));
     }
     let kennung = identitaet.oid.clone();
     let token = db(zustand, move |conn| {
@@ -466,7 +451,7 @@ async fn verwaltungs_sitzung(
         Ok(token)
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
 
     let mut antwort = weiter(
         StatusCode::SEE_OTHER,
@@ -488,6 +473,7 @@ async fn bestaetigungsseite(
     identitaet: &Identitaet,
     zustand_row: &OidcZustand,
     jetzt: OffsetDateTime,
+    sprache: Sprache,
 ) -> Result<Response, SeitenFehler> {
     let token = krypto::zufall_b64(32);
     let csrf = krypto::zufall_b64(32);
@@ -523,33 +509,66 @@ async fn bestaetigungsseite(
         }
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
 
     let konto = identitaet
         .email
         .clone()
         .or_else(|| identitaet.name.clone())
-        .unwrap_or_else(|| String::from("unbekanntes Konto"));
+        .unwrap_or_else(|| String::from(sprache.waehle("unbekanntes Konto", "unknown account")));
+    let (titel, text, konto_wort, geraet_wort, server_wort, anmelden, abbrechen) = match sprache {
+        Sprache::De => (
+            "Gerät anmelden",
+            "Bitte bestätigen: dieses Gerät für dieses Konto an diesem Server anmelden.",
+            "Konto",
+            "Gerät",
+            "Server",
+            "Gerät anmelden",
+            "Abbrechen",
+        ),
+        Sprache::En => (
+            "Sign in this device",
+            "Please confirm: sign this device in for this account on this server.",
+            "Account",
+            "Device",
+            "Server",
+            "Sign in device",
+            "Cancel",
+        ),
+    };
     let inhalt = format!(
-        "<p>Bitte bestätigen: dieses Gerät für dieses Konto an diesem Server anmelden.</p>\
-         <dl><dt>Konto</dt><dd>{konto}</dd>\
-         <dt>Gerät</dt><dd>{geraet}</dd>\
-         <dt>Server</dt><dd>{server}</dd></dl>\
+        "<p>{text}</p>\
+         <div class=\"seite__karte\">\
+         <dl><dt>{konto_wort}</dt><dd>{konto}</dd>\
+         <dt>{geraet_wort}</dt><dd>{geraet}</dd>\
+         <dt>{server_wort}</dt><dd>{server}</dd></dl>\
          <form method=\"post\" action=\"/auth/geraet/bestaetigen\">\
          <input type=\"hidden\" name=\"token\" value=\"{token}\">\
          <input type=\"hidden\" name=\"csrf\" value=\"{csrf}\">\
-         <button type=\"submit\">Gerät anmelden</button></form>\
+         <button type=\"submit\">{anmelden}</button></form>\
          <form method=\"post\" action=\"/auth/geraet/abbrechen\">\
          <input type=\"hidden\" name=\"token\" value=\"{token}\">\
          <input type=\"hidden\" name=\"csrf\" value=\"{csrf}\">\
-         <button type=\"submit\">Abbrechen</button></form>",
-        konto = html(&konto),
-        geraet = html(&zustand_row.name),
-        server = html(&zustand.konfig.oeffentlich),
-        token = html(&token),
-        csrf = html(&csrf),
+         <button type=\"submit\" data-ruhig>{abbrechen}</button></form>\
+         </div>",
+        text = seiten::html(text),
+        konto_wort = seiten::html(konto_wort),
+        geraet_wort = seiten::html(geraet_wort),
+        server_wort = seiten::html(server_wort),
+        konto = seiten::html(&konto),
+        geraet = seiten::html(&zustand_row.name),
+        server = seiten::html(&zustand.konfig.oeffentlich),
+        token = seiten::html(&token),
+        csrf = seiten::html(&csrf),
+        anmelden = seiten::html(anmelden),
+        abbrechen = seiten::html(abbrechen),
     );
-    let mut antwort = seite(StatusCode::OK, "Gerät anmelden", &inhalt);
+    // Nur diese Seite darf ein Formular an genau diesen Loopback-Port schicken
+    // (Aufgabe 26, Punkt 3): Chrome prüft auch die Weiterleitung nach dem
+    // Absenden gegen `form-action`.
+    let ziel = format!("http://127.0.0.1:{}", zustand_row.port);
+    let csp = seiten::csp_mit_form_action(&[ziel]);
+    let mut antwort = seiten::seite(StatusCode::OK, sprache, titel, &inhalt, Some(&csp));
     let set = sitzung::kurz_cookie(
         sitzung::BESTAETIGUNG_COOKIE,
         &cookie,
@@ -569,14 +588,22 @@ async fn bestaetigung_nehmen(
     abfrage: &HashMap<String, String>,
 ) -> Result<Bestaetigung, SeitenFehler> {
     sitzung::origin_pruefen(headers, &zustand.konfig.oeffentlich)
-        .map_err(|fehler| SeitenFehler::verboten(fehler.text))?;
+        .map_err(|fehler| SeitenFehler::verboten(Paar::technisch(fehler.text)))?;
     let token = abfrage.get("token").cloned().unwrap_or_default();
     let csrf = abfrage.get("csrf").cloned().unwrap_or_default();
     let cookie = sitzung::cookies_aus(headers)
         .remove(sitzung::BESTAETIGUNG_COOKIE)
-        .ok_or_else(|| SeitenFehler::ungueltig("Bestätigungscookie fehlt."))?;
+        .ok_or_else(|| {
+            SeitenFehler::ungueltig(Paar::neu(
+                "Bestätigungscookie fehlt.",
+                "the confirmation cookie is missing.",
+            ))
+        })?;
     if token.is_empty() || csrf.is_empty() {
-        return Err(SeitenFehler::ungueltig("CSRF-Token fehlt."));
+        return Err(SeitenFehler::ungueltig(Paar::neu(
+            "CSRF-Token fehlt.",
+            "the CSRF token is missing.",
+        )));
     }
     let jetzt = zustand.uhr.jetzt();
     let genommen = db(zustand, {
@@ -584,15 +611,24 @@ async fn bestaetigung_nehmen(
         move |conn| speicher::bestaetigung_nehmen(conn, &hash, jetzt)
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?
-    .ok_or_else(|| SeitenFehler::ungueltig("Bestätigung abgelaufen oder schon benutzt."))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?
+    .ok_or_else(|| {
+        SeitenFehler::ungueltig(Paar::neu(
+            "Bestätigung abgelaufen oder schon benutzt.",
+            "The confirmation has expired or was already used.",
+        ))
+    })?;
     if !hilfen::gleich_konstant(&genommen.cookie_hash, &hilfen::hash(&cookie)) {
-        return Err(SeitenFehler::ungueltig(
+        return Err(SeitenFehler::ungueltig(Paar::neu(
             "Bestätigung gehört nicht zu diesem Browser.",
-        ));
+            "The confirmation does not belong to this browser.",
+        )));
     }
     if !hilfen::gleich_konstant(&genommen.csrf, &csrf) {
-        return Err(SeitenFehler::verboten("CSRF-Token passt nicht."));
+        return Err(SeitenFehler::verboten(Paar::neu(
+            "CSRF-Token passt nicht.",
+            "the CSRF token does not match.",
+        )));
     }
     Ok(genommen)
 }
@@ -603,10 +639,11 @@ pub(crate) async fn geraet_bestaetigen(
     headers: HeaderMap,
     rumpf: axum::body::Bytes,
 ) -> Response {
+    let sprache = seiten::sprache(&headers);
     let abfrage = formular(&rumpf);
     match bestaetigen(&zustand, &headers, &abfrage).await {
         Ok(antwort) => antwort,
-        Err(fehler) => fehler.seite(),
+        Err(fehler) => fehler.seite(sprache),
     }
 }
 
@@ -640,19 +677,26 @@ async fn bestaetigen(
         }
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
     match stand {
         Stand::Erlaubt => {}
-        Stand::Gesperrt => return Err(SeitenFehler::verboten("Dieses Konto ist gesperrt.")),
+        Stand::Gesperrt => {
+            return Err(SeitenFehler::verboten(Paar::neu(
+                "Dieses Konto ist gesperrt.",
+                "This account is blocked.",
+            )))
+        }
         Stand::NeuAnmelden => {
-            return Err(SeitenFehler::verboten(
+            return Err(SeitenFehler::verboten(Paar::neu(
                 "Die Anmeldung gilt nicht mehr; bitte neu anmelden.",
-            ))
+                "The sign-in is no longer valid; please sign in again.",
+            )))
         }
         Stand::KeinZugriff => {
-            return Err(SeitenFehler::verboten(
+            return Err(SeitenFehler::verboten(Paar::neu(
                 "Diesem Konto ist keine Gruppe zugeordnet; es gibt daher keine Tools.",
-            ))
+                "No group is assigned to this account; there are no tools for it.",
+            )))
         }
     }
 
@@ -684,7 +728,7 @@ async fn bestaetigen(
         }
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(fehler.text))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
 
     let ziel = ziel_url(b.port, Some(&code), None, &b.geraetezustand);
     Ok(weiter(
@@ -704,10 +748,11 @@ pub(crate) async fn geraet_abbrechen(
     headers: HeaderMap,
     rumpf: axum::body::Bytes,
 ) -> Response {
+    let sprache = seiten::sprache(&headers);
     let abfrage = formular(&rumpf);
     match abbrechen(&zustand, &headers, &abfrage).await {
         Ok(antwort) => antwort,
-        Err(fehler) => fehler.seite(),
+        Err(fehler) => fehler.seite(sprache),
     }
 }
 
@@ -924,14 +969,6 @@ mod tests {
         assert!(geraetezustand_gueltig("abc-123_~."));
         assert!(!geraetezustand_gueltig("mit leer"));
         assert!(!geraetezustand_gueltig(""));
-    }
-
-    #[test]
-    fn html_wird_escaped() {
-        assert_eq!(
-            html("<script>\"x\"&'</script>"),
-            "&lt;script&gt;&quot;x&quot;&amp;&#39;&lt;/script&gt;"
-        );
     }
 
     #[test]

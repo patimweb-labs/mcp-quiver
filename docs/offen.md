@@ -3,15 +3,25 @@
 Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 
 ## Server
-- [ ] Die Verwaltung (Vue) nutzt noch den alten Admin-Token; die Server-Seite nimmt
-      seit Aufgabe 20 nur noch Sitzungen an. Aufgabe 21 stellt die Anmeldeseite um.
-      Bis dahin funktionieren auch die Bildschirmfotos der Verwaltung nicht mit
-      einem neuen Server.
 - [ ] Der Client nutzt noch den Einmal-Code-Weg; `/api/v1/anmeldearten` und
       `/api/v1/auth/geraet/tausch` liegen bereit, Aufgabe 22 baut den Browser-Weg.
-- [ ] Discovery wird einmal geholt und nicht erneuert; die JWKS nur bei
-      unbekannter `kid` (höchstens 1×/min). Ein Endpunktwechsel bei Entra mitten
-      im Betrieb braucht einen Neustart.
+- [ ] Die JWKS wird nur bei unbekannter `kid` neu geholt (höchstens 1×/min); die
+      Discovery nach 24 Stunden. Ein Endpunktwechsel bei Entra mitten im Betrieb
+      erreicht den Server damit erst beim nächsten Auffrischen.
+- [ ] Der Einmal-Code der Ersteinrichtung (Aufgabe 25) steht im Log und ist
+      128 Bit breit; wer das Log lesen darf, kann den Server in den ersten 15
+      Minuten übernehmen. Gewollt, aber es bleibt ein Cheat für den Betrieb:
+      Logs der ersten Minuten wegräumen hilft nicht rückwirkend.
+- [ ] Zustand der Ersteinrichtung (Code-Hash, Fehlversuche) liegt nur im
+      Arbeitsspeicher; ein Neustart erzeugt einen neuen Code und öffnet das
+      Fenster erneut. Bei mehreren Instanzen hätte jede ihr eigenes Fenster.
+- [ ] Ohne `QUIVER_OEFFENTLICH` gilt `http://localhost:<Port>`; dann braucht
+      die Einrichtung keinen Code, und der `Host`-Kopf lässt sich fälschen. Wer
+      den Port in den ersten 15 Minuten erreicht, könnte den Root anlegen.
+      Deshalb: auf `127.0.0.1` veröffentlichen oder eine `https`-Basis-URL
+      setzen. Eine Prüfung der Aufrufer-IP statt der Basis-URL wäre strenger,
+      bricht aber den üblichen Docker-Weg (`-p 127.0.0.1:…`, im Container
+      kommt die Verbindung vom Docker-Netz).
 - [ ] Zeitlimit und Größenbegrenzung der Entra-Antworten sind eingebaut, aber
       nicht gegen einen hängenden oder riesigen Nachbau getestet.
 - [ ] Die Drossel liegt im Arbeitsspeicher; ein Neustart vergisst die Versuche.
@@ -23,8 +33,16 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       rotiert.
 - [ ] `admin-setzen --oid` setzt voraus, dass der Benutzer schon einmal gesehen
       wurde; die Liste der Benutzer hat keine Suche und keine Seiten.
-- [ ] Der Log-Test deckt den Ablauf Anmeldung/Prüfen/Fehlversuch ab; ein
-      Geheimnis in einer ganz anderen Meldung wäre nicht erfasst.
+- [ ] Der Log-Test deckt den Ablauf Anmeldung/Prüfen/Fehlversuch und die
+      Ersteinrichtung ab; ein Geheimnis in einer ganz anderen Meldung wäre
+      nicht erfasst.
+- [ ] Das Stylesheet der Server-Seiten ist eine erzeugte Datei
+      (`crates/server/seiten/system.css`); sie wird von einem Test gegen die
+      Tokens geprüft, aber nicht in den Container-Bau eingecheckt – wer die
+      Tokens ändert, muss sie neu erzeugen.
+- [ ] Die Seiten des Servers nutzen nur Farben und Maße; Bausteine der
+      Verwaltung (Knöpfe, Karten) sind nachgebaut, nicht geteilt. Ein
+      gemeinsamer Bausatz für Vue und die Server-Seiten fehlt.
 - [ ] Ein Gerät, dessen altes Token einem anderen Benutzer gehört, bekommt ein
       neues Gerät; das alte bleibt in der Verwaltung stehen.
 - [ ] Die Prüfspur der Kommandozeile nennt als Akteur `root-setzen`, nicht die

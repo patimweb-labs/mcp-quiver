@@ -123,27 +123,74 @@ pub fn sitzung_anlegen(
 }
 
 /// Sitzung aus dem Cookie prüfen. `None` = keine gültige Sitzung.
+///
+/// Bei Entra-Benutzern gilt zusätzlich (Aufgabe 26, Punkt 1):
+/// - `token_stand` muss `gueltig` sein,
+/// - gesperrt, gelöscht oder `neu_anmelden` beendet **alle** Sitzungen des
+///   Benutzers sofort (löschen, nicht nur ablehnen),
+/// - ist die letzte Nachprüfung länger als 60 Minuten her, prüft die Wache
+///   vor dem Durchlassen nach.
 pub async fn sitzung_aus_cookie(
     zustand: &Arc<Zustand>,
     token: &str,
 ) -> Ergebnis<Option<SitzungKontext>> {
     let hash = hilfen::hash(token);
     let jetzt = zustand.uhr.jetzt();
-    let treffer = db(zustand, move |conn| {
-        let Some(sitzung) = speicher::sitzung_holen(conn, &hash, jetzt)? else {
-            return Ok(None);
-        };
-        let Some(benutzer) = speicher::benutzer_holen(conn, &sitzung.oid)? else {
-            conn.execute(
-                "DELETE FROM sitzungen WHERE hash = ?1",
-                rusqlite::params![hash],
-            )?;
-            return Ok(None);
-        };
-        Ok(Some(benutzer))
+    let treffer = db(zustand, {
+        let hash = hash.clone();
+        move |conn| {
+            let Some(sitzung) = speicher::sitzung_holen(conn, &hash, jetzt)? else {
+                return Ok(None);
+            };
+            let Some(benutzer) = speicher::benutzer_holen(conn, &sitzung.oid)? else {
+                conn.execute(
+                    "DELETE FROM sitzungen WHERE hash = ?1",
+                    rusqlite::params![hash],
+                )?;
+                return Ok(None);
+            };
+            Ok(Some(benutzer))
+        }
     })
     .await?;
-    Ok(treffer.map(|benutzer| SitzungKontext {
+    let Some(mut benutzer) = treffer else {
+        return Ok(None);
+    };
+
+    // Der Root hat kein Entra; für ihn gilt nur das Passwort (und damit die
+    // Sitzungen selbst).
+    if benutzer.oid != speicher::ROOT_OID {
+        if !benutzer.anmeldung_gueltig() {
+            sitzungen_beenden(zustand, &benutzer.oid).await?;
+            return Ok(None);
+        }
+        if pruefung_faellig(&benutzer, jetzt) {
+            if crate::refresh::bei_verbindung(zustand, &benutzer.oid)
+                .await
+                .is_err()
+            {
+                sitzungen_beenden(zustand, &benutzer.oid).await?;
+                return Ok(None);
+            }
+            // Die Prüfung kann Rollen und Gruppen geändert haben: neu lesen.
+            let kennung = benutzer.oid.clone();
+            let Some(frisch) = db(zustand, move |conn| {
+                speicher::benutzer_holen(conn, &kennung)
+            })
+            .await?
+            else {
+                sitzungen_beenden(zustand, &benutzer.oid).await?;
+                return Ok(None);
+            };
+            if !frisch.anmeldung_gueltig() {
+                sitzungen_beenden(zustand, &frisch.oid).await?;
+                return Ok(None);
+            }
+            benutzer = frisch;
+        }
+    }
+
+    Ok(Some(SitzungKontext {
         art: if benutzer.rolle == Rolle::Root {
             Anmeldeart::Root
         } else {
@@ -151,6 +198,34 @@ pub async fn sitzung_aus_cookie(
         },
         benutzer,
     }))
+}
+
+/// Ist die letzte Nachprüfung länger als 60 Minuten her (oder gab es keine)?
+fn pruefung_faellig(benutzer: &Benutzer, jetzt: OffsetDateTime) -> bool {
+    benutzer
+        .token_erneuert
+        .as_deref()
+        .and_then(hilfen::zeit_lesen)
+        .is_none_or(|zuletzt| {
+            jetzt - zuletzt > time::Duration::minutes(crate::refresh::BEI_VERBINDUNG_MINUTEN)
+        })
+}
+
+/// Alle Sitzungen eines Benutzers am Server löschen.
+async fn sitzungen_beenden(zustand: &Arc<Zustand>, oid: &str) -> Ergebnis<()> {
+    if oid == speicher::ROOT_OID {
+        return Ok(());
+    }
+    let kennung = oid.to_string();
+    db(zustand, move |conn| {
+        let anzahl = speicher::sitzungen_von_user_loeschen(conn, &kennung)?;
+        if anzahl > 0 {
+            tracing::info!("{anzahl} Sitzung(en) von {kennung} beendet");
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(())
 }
 
 /// Geschlossene Sitzung am Server löschen.
@@ -246,6 +321,13 @@ pub(crate) async fn verwaltung_wache(
     mut req: Request,
     next: Next,
 ) -> Ergebnis<Response> {
+    // Vor der Ersteinrichtung ist die Verwaltung ganz gesperrt (Aufgabe 25);
+    // Geräte laufen weiter.
+    if !db(&zustand, |conn| speicher::root_ist_gesetzt(conn)).await? {
+        return Err(FehlerAntwort::verboten(
+            "dieser Server ist noch nicht eingerichtet; bitte die Ersteinrichtung im Browser ausfüllen",
+        ));
+    }
     let token = sitzungstoken(&req, zustand.konfig.ist_https())
         .ok_or_else(|| FehlerAntwort::nicht_angemeldet("Sitzung fehlt"))?;
     let Some(kontext) = sitzung_aus_cookie(&zustand, &token).await? else {

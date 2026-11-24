@@ -10,6 +10,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use time::OffsetDateTime;
 use url::Url;
@@ -40,6 +41,51 @@ impl Uhr {
     /// Wieder die Systemzeit nehmen.
     pub fn zuruecksetzen(&self) {
         *crate::sperre(&self.0) = None;
+    }
+}
+
+/// Die Laufzeit des Servers seit dem Start – **nicht** die Wanduhr.
+///
+/// Das Zeitfenster der Ersteinrichtung (15 Minuten, Aufgabe 25) hängt daran:
+/// Wer die Systemzeit verstellt, verlängert es nicht. In Tests lässt es sich
+/// mit [`Laufzeit::vorspulen`] stellen, damit das Ablaufen prüfbar ist.
+#[derive(Clone)]
+pub struct Laufzeit {
+    start: Arc<Instant>,
+    versatz: Arc<Mutex<Duration>>,
+}
+
+impl std::fmt::Debug for Laufzeit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Laufzeit")
+            .field("seit_start_ms", &self.seit_start().as_millis())
+            .finish()
+    }
+}
+
+impl Default for Laufzeit {
+    fn default() -> Self {
+        Self::neu()
+    }
+}
+
+impl Laufzeit {
+    /// Der Start ist jetzt (der Server baut seine Konfiguration beim Start).
+    pub fn neu() -> Self {
+        Self {
+            start: Arc::new(Instant::now()),
+            versatz: Arc::new(Mutex::new(Duration::ZERO)),
+        }
+    }
+
+    /// Wie lange der Server schon läuft.
+    pub fn seit_start(&self) -> Duration {
+        self.start.elapsed() + *crate::sperre(&self.versatz)
+    }
+
+    /// Nur für Tests: die Laufzeit um `dauer` weiterstellen.
+    pub fn vorspulen(&self, dauer: Duration) {
+        *crate::sperre(&self.versatz) += dauer;
     }
 }
 
@@ -88,6 +134,8 @@ pub struct Konfig {
     /// Dürfen Geräte ohne Entra-Benutzer weiterlaufen?
     pub altgeraete_erlaubt: bool,
     pub uhr: Uhr,
+    /// Die Laufzeit seit dem Start (Fenster der Ersteinrichtung).
+    pub laufzeit: Laufzeit,
 }
 
 impl Konfig {
@@ -101,19 +149,29 @@ impl Konfig {
             proxies: Vec::new(),
             altgeraete_erlaubt: true,
             uhr: Uhr::default(),
+            laufzeit: Laufzeit::neu(),
         }
     }
 
     /// Alles aus der Umgebung lesen und prüfen.
+    ///
+    /// Ohne `QUIVER_OEFFENTLICH` gilt `http://localhost:<Port>` (Aufgabe 26,
+    /// Punkt 9): der Server, der ohne weitere Konfiguration startet, ist über
+    /// Loopback erreichbar – und damit ohne Einmal-Code einrichtbar.
     pub fn aus_umgebung(daten: PathBuf) -> anyhow::Result<Self> {
-        let oeffentlich = std::env::var("QUIVER_OEFFENTLICH").unwrap_or_default();
-        if oeffentlich.trim().is_empty() {
-            anyhow::bail!(
-                "QUIVER_OEFFENTLICH fehlt (Beispiel: https://quiver.example.test). \
-                 Ohne Basis-URL lässt sich weder der Origin prüfen noch die Entra-Rückkehr bauen."
+        Self::aus_umgebung_mit_port(daten, 8740)
+    }
+
+    /// Wie [`Konfig::aus_umgebung`], mit dem Port aus `QUIVER_ADRESSE`.
+    pub fn aus_umgebung_mit_port(daten: PathBuf, port: u16) -> anyhow::Result<Self> {
+        let roh = std::env::var("QUIVER_OEFFENTLICH").ok();
+        if roh.as_deref().is_none_or(|wert| wert.trim().is_empty()) {
+            tracing::info!(
+                "QUIVER_OEFFENTLICH fehlt; es gilt {} (nur lokal erreichbar)",
+                oeffentlich_aus(None, port)?
             );
         }
-        let oeffentlich = basis_url_pruefen(&oeffentlich)?;
+        let oeffentlich = oeffentlich_aus(roh.as_deref(), port)?;
 
         let tenant = std::env::var("QUIVER_ENTRA_TENANT").unwrap_or_default();
         let client_id = std::env::var("QUIVER_ENTRA_CLIENT_ID").unwrap_or_default();
@@ -210,6 +268,7 @@ impl Konfig {
             proxies,
             altgeraete_erlaubt,
             uhr: Uhr::default(),
+            laufzeit: Laufzeit::neu(),
         })
     }
 
@@ -224,8 +283,16 @@ impl Konfig {
     }
 }
 
-/// Eine Basis-URL prüfen und ohne abschließenden Schrägstrich zurückgeben.
-///
+/// Die Basis-URL aus der Umgebung: gesetzt und geprüft, sonst
+/// `http://localhost:<Port>` (Aufgabe 26, Punkt 9).
+pub fn oeffentlich_aus(wert: Option<&str>, port: u16) -> anyhow::Result<String> {
+    match wert {
+        Some(wert) if !wert.trim().is_empty() => basis_url_pruefen(wert),
+        _ => basis_url_pruefen(&format!("http://localhost:{port}")),
+    }
+}
+
+/// Eine Basis-URL prüfen und ohne abschließenden Schrägstrich zurückgeben.///
 /// `https` ist Pflicht; `http` nur auf Loopback, damit Tests und die Entwicklung
 /// ohne Zertifikat laufen können.
 pub fn basis_url_pruefen(wert: &str) -> anyhow::Result<String> {
@@ -406,6 +473,32 @@ mod tests {
             Some("10.0.0.5".parse().unwrap())
         );
         assert_eq!(aufrufer_ip(None, Some("203.0.113.9"), &alle), None);
+    }
+
+    #[test]
+    fn vorgabe_ist_loopback_localhost() {
+        assert_eq!(
+            oeffentlich_aus(None, 8740).unwrap(),
+            "http://localhost:8740"
+        );
+        assert_eq!(
+            oeffentlich_aus(Some("  "), 9000).unwrap(),
+            "http://localhost:9000"
+        );
+        assert_eq!(
+            oeffentlich_aus(Some("https://quiver.example.test"), 8740).unwrap(),
+            "https://quiver.example.test"
+        );
+        // Eine fremde http-Adresse bleibt ein Startfehler.
+        assert!(oeffentlich_aus(Some("http://quiver.example.test"), 8740).is_err());
+    }
+
+    #[test]
+    fn laufzeit_laesst_sich_vorspulen() {
+        let laufzeit = Laufzeit::neu();
+        let vorher = laufzeit.seit_start();
+        laufzeit.vorspulen(Duration::from_secs(16 * 60));
+        assert!(laufzeit.seit_start() >= vorher + Duration::from_secs(16 * 60));
     }
 
     #[test]

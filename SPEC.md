@@ -153,8 +153,9 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
    Objekt-Ids aus dem ID-Token und werden auf lokale Gruppen abgebildet.
 3. **Client → Server, ohne Entra:** Einmal-Code aus der Verwaltung. Beide Wege
    enden in derselben Gerätebindung; Geräte lassen sich sperren.
-4. **Verwaltung:** Root (genau einer, E-Mail und Passwort, Argon2id) über die
-   Kommandozeile gesetzt; Entra-Benutzer mit Rolle `admin`. Sitzung als
+4. **Verwaltung:** Root (genau einer, E-Mail und Passwort, Argon2id) wird bei
+   der **Ersteinrichtung im Browser** angelegt (`POST /auth/einrichten`), sonst
+   über die Kommandozeile; Entra-Benutzer mit Rolle `admin`. Sitzung als
    HttpOnly-Cookie, 12 h absolut, 60 min ohne Nutzung. Ändernde Anfragen
    brauchen `Origin` = Basis-URL **und** `X-Quiver: 1`; keine CORS-Freigabe.
    Rechte werden bei jeder Anfrage frisch aus der Datenbank gelesen. Einen
@@ -169,6 +170,33 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
    Eintrags (`entra-delegiert`) mit dem Login des Users. Microsoft prüft die
    Rechte, nicht wir. Das Tool bekommt das Token pro Aufruf und speichert es
    nicht.
+7. **Ersteinrichtung (Aufgabe 25):** Gibt es keinen Root, zeigt die Verwaltung
+   statt der Anmeldung die Ersteinrichtung. `GET /auth/stand` (offen) sagt nur
+   `{ eingerichtet, einrichtung, code_noetig, entra }`. `POST /auth/einrichten`
+   legt **genau einen** Root an (eine Transaktion mit Prüfung „kein Root“:
+   gleichzeitige Aufrufe ergeben einmal 200 und sonst 409), meldet ihn an und
+   löscht `<daten>/admin-token`; danach antwortet der Weg mit 404. Das Fenster
+   ist **15 Minuten nach dem Start** offen und hängt an der Laufzeit des
+   Prozesses, nicht an der Wanduhr. Ist die Basis-URL nicht Loopback, ist ein
+   Einmal-Code Pflicht (128 Bit, nur gehasht im Speicher, genau einmal im
+   eigenen Log, konstante Zeit, nach zehn Fehlversuchen geschlossen). `Host`
+   und `Origin` müssen exakt die Basis-URL sein, dazu `X-Quiver: 1`. Vor der
+   Einrichtung ist die Admin-API ganz gesperrt; Geräte laufen weiter. Ohne
+   `QUIVER_OEFFENTLICH` gilt `http://localhost:<Port>`.
+8. **Sitzungen folgen dem Benutzer (Aufgabe 26):** Die Wachen prüfen bei
+   Entra-Benutzern auch `token_stand`; `neu_anmelden`, gesperrt oder gelöscht
+   beendet **alle** Sitzungen des Benutzers sofort (löschen, nicht nur
+   ablehnen). Ist die letzte Nachprüfung länger als 60 Minuten her, prüft die
+   Wache vor dem Durchlassen nach. Die Discovery gilt höchstens 24 Stunden;
+   schlägt das Neuholen fehl, gilt der alte Stand weiter (Warnung im Log).
+9. **Seiten des Servers (Aufgabe 26):** Bestätigung und Fehler sind eigene
+   Seiten mit eigenem Stylesheet (`/auth/stil.css` aus denselben Tokens, dunkel
+   als Vorgabe, hell über `prefers-color-scheme`), Logo und Hand-Cursor; Titel
+   und Texte deutsch oder englisch nach `Accept-Language`. `Referrer-Policy`
+   ist `same-origin` – mit `no-referrer` schickt der Browser beim Formular
+   `Origin: null`, und die Bestätigung scheitert. Nur die Bestätigungsseite
+   bekommt `form-action 'self' http://127.0.0.1:<Port>` mit genau dem Port des
+   Vorgangs, weil Chrome auch die Weiterleitung nach dem Absenden prüft.
 
 **Festlegung:** Zugangsdaten werden nie als Umgebungsvariable oder Datei
 abgelegt, die ein Agent lesen könnte. Fehler an ein Gerät tragen einen
@@ -177,10 +205,13 @@ unbekannte Gründe gelten als `neu_anmelden`.
 
 *Preis:* Der Server ist nun auch Identity-Provider-Abhängigkeit: ohne Entra
 gilt der letzte Stand höchstens 24 h. Ein Gruppen-Überlauf im Token wird
-abgelehnt statt als „keine Gruppen“ gelesen. Die Anmeldeseite des Servers ist
+abgelehnt statt als „keine Gruppen“ gelesen. Die Seiten des Servers sind
 schmucklos (kein Inline-Skript, keine Inline-Stile), damit die CSP ohne
-Ausnahme gilt. Die Verwaltung muss ihre Anmeldung auf Sitzungen umstellen
-(Aufgabe 21).
+Ausnahme gilt; sie tragen dieselben Tokens wie Verwaltung und Client, aber
+nicht deren Bausteine. Die Ersteinrichtung ist ein Weg, der nur in den ersten
+15 Minuten eines Serverlaufs offen ist – wer sie verpasst, startet neu. Der
+Einmal-Code für Nicht-Loopback steht im Log; wer das Log lesen darf, kann den
+Server übernehmen, und genau das ist gewollt (Aufgabe 25).
 
 ## 8. Laufzeiten im Client
 

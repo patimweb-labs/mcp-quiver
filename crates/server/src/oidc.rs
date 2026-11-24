@@ -30,6 +30,8 @@ pub const ZEITLIMIT: Duration = Duration::from_secs(10);
 pub const TOLERANZ_SEKUNDEN: i64 = 60;
 /// Frühestens nach dieser Zeit wird die JWKS bei unbekannter `kid` neu geholt.
 pub const JWKS_SPERRE: Duration = Duration::from_secs(60);
+/// So lange gilt eine Discovery; danach wird sie neu geholt (Aufgabe 26, 6).
+pub const DISCOVERY_STUNDEN: i64 = 24;
 
 /// Was im ID-Token stehen muss.
 #[derive(Debug, Clone)]
@@ -99,7 +101,8 @@ struct Cache {
 pub struct Oidc {
     pub konfig: EntraKonfig,
     client: reqwest::Client,
-    discovery: Mutex<Option<Discovery>>,
+    /// Die zuletzt geprüfte Discovery und wann sie geholt wurde.
+    discovery: Mutex<Option<(Discovery, OffsetDateTime)>>,
     jwks: Mutex<Cache>,
 }
 
@@ -132,16 +135,41 @@ impl Oidc {
         })
     }
 
-    /// Discovery holen (einmal) und prüfen.
-    pub async fn discovery(&self) -> anyhow::Result<Discovery> {
-        if let Some(entdeckt) = crate::sperre(&self.discovery).clone() {
-            return Ok(entdeckt);
+    /// Discovery holen und prüfen; höchstens 24 Stunden alt (Aufgabe 26, 6).
+    ///
+    /// Schlägt das Neuholen nach Ablauf fehl, gilt der alte Stand weiter –
+    /// mit einer Warnung im Log. Besser eine veraltete Discovery als ein
+    /// Server, der ohne Grund niemanden mehr anmeldet.
+    pub async fn discovery(&self, jetzt: OffsetDateTime) -> anyhow::Result<Discovery> {
+        let vorhanden = crate::sperre(&self.discovery).clone();
+        if let Some((entdeckt, geholt)) = vorhanden {
+            if jetzt - geholt < time::Duration::hours(DISCOVERY_STUNDEN) {
+                return Ok(entdeckt);
+            }
+            match self.discovery_holen().await {
+                Ok(neu) => {
+                    *crate::sperre(&self.discovery) = Some((neu.clone(), jetzt));
+                    return Ok(neu);
+                }
+                Err(fehler) => {
+                    tracing::warn!(
+                        "Discovery ist älter als {DISCOVERY_STUNDEN} Stunden und nicht \
+                         erneuerbar ({fehler}); der alte Stand gilt weiter"
+                    );
+                    return Ok(entdeckt);
+                }
+            }
         }
+        let entdeckt = self.discovery_holen().await?;
+        *crate::sperre(&self.discovery) = Some((entdeckt.clone(), jetzt));
+        Ok(entdeckt)
+    }
+
+    /// Die Discovery wirklich holen (ohne Weiterleitungen, mit Zeitlimit).
+    async fn discovery_holen(&self) -> anyhow::Result<Discovery> {
         let url = format!("{}/.well-known/openid-configuration", self.konfig.authority);
         let roh = holen_json(&self.client, &url).await?;
-        let entdeckt = discovery_pruefen(&roh, &self.konfig.authority)?;
-        *crate::sperre(&self.discovery) = Some(entdeckt.clone());
-        Ok(entdeckt)
+        discovery_pruefen(&roh, &self.konfig.authority)
     }
 
     /// Die Adresse, an die der Browser zur Anmeldung geschickt wird.
@@ -150,8 +178,9 @@ impl Oidc {
         state: &str,
         nonce: &str,
         challenge: &str,
+        jetzt: OffsetDateTime,
     ) -> anyhow::Result<String> {
-        let d = self.discovery().await?;
+        let d = self.discovery(jetzt).await?;
         let mut url = Url::parse(&d.authorization_endpoint)?;
         url.query_pairs_mut()
             .append_pair("client_id", &self.konfig.client_id)
@@ -174,7 +203,7 @@ impl Oidc {
         nonce: &str,
         jetzt: OffsetDateTime,
     ) -> anyhow::Result<(Identitaet, Tokens)> {
-        let d = self.discovery().await?;
+        let d = self.discovery(jetzt).await?;
         let form = [
             ("client_id", self.konfig.client_id.as_str()),
             ("client_secret", self.konfig.secret.as_str()),
@@ -211,7 +240,7 @@ impl Oidc {
         jetzt: OffsetDateTime,
     ) -> Result<(Identitaet, Tokens), TokenFehler> {
         let d = self
-            .discovery()
+            .discovery(jetzt)
             .await
             .map_err(|fehler| TokenFehler::Netz(format!("Discovery nicht erreichbar: {fehler}")))?;
         let form = [
@@ -288,7 +317,7 @@ impl Oidc {
                 }
             }
         }
-        let d = self.discovery().await?;
+        let d = self.discovery(jetzt).await?;
         let roh = holen_json(&self.client, &d.jwks_uri).await?;
         let set: JwkSet = serde_json::from_value(roh).context("JWKS nicht lesbar")?;
         if set.find(kid).is_none() {

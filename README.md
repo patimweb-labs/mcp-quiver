@@ -52,17 +52,44 @@ and looks exactly like the client.
 
 ```bash
 docker build -t mcp-quiver-server .
-docker run -d --name quiver -p 8740:8740 \
+docker run -d --name quiver -p 127.0.0.1:8740:8740 \
   -e QUIVER_OEFFENTLICH=http://localhost:8740 \
   -v quiver-daten:/daten mcp-quiver-server
-docker exec -it quiver quiver-server root-setzen admin@example.test
 ```
 
-`root-setzen` asks for the password twice (12 to 256 characters). Then open
-`http://localhost:8740` and sign in with that e-mail and password. There is no
+Then open `http://localhost:8740`. The first page is the **initial setup**: it
+asks for the e-mail and password of the one root user (12 to 256 characters,
+Argon2id) and signs that user in. The setup is only available for 15 minutes
+after the server starts, and — unless the base URL is loopback — only with a
+one-time code that the server prints once at start-up:
+
+```
+INFO quiver_server::einrichtung: Ersteinrichtung: Code für diesen Start: …
+```
+
+The window follows the server's uptime, not the wall clock; after it closes,
+restart the server. `docker exec -it quiver quiver-server root-setzen
+admin@example.test` remains the way to set a forgotten password. There is no
 admin token any more; `QUIVER_ADMIN_TOKEN` is ignored and `daten/admin-token`
 is removed as soon as a root user exists. Without a Docker Hub login, build
 with `--build-arg BASIS=public.ecr.aws/docker/library`.
+
+The container always listens on all addresses; the publish above keeps it on
+`127.0.0.1` only. That is why the base URL may be plain `http`: with anything
+but an https base URL the server refuses to start unless the host is loopback.
+**Keep it that way.** A loopback base URL means the setup needs no one-time
+code, and the code is only required for non-loopback base URLs – whoever can
+reach the port during the first 15 minutes could create the root. Publish on
+`127.0.0.1` (as above) or use an `https` base URL.
+
+| First start (dark) | Sign-in (light) | Closed window (dark) |
+| --- | --- | --- |
+| ![Initial setup](docs/bilder/admin-dark-einrichtung.png) | ![Sign-in](docs/bilder/admin-light-anmeldung.png) | ![Setup closed](docs/bilder/admin-dark-geschlossen.png) |
+
+Sign-in itself: e-mail and password for the root, and **Sign in with
+Microsoft** once Entra is configured. The session lives in an HttpOnly cookie
+(`SameSite=Lax`, `Secure` and `__Host-` on https, 12 h absolute, 60 min idle);
+nothing is kept in the browser's storage.
 
 ### Sign-in with Entra ID (optional)
 
@@ -94,7 +121,7 @@ token is revoked, their devices lose their tools on the next check.
 
 | Variable | Meaning |
 | --- | --- |
-| `QUIVER_OEFFENTLICH` | Base URL (required; `https`, or `http` only on loopback) |
+| `QUIVER_OEFFENTLICH` | Base URL (`https`, or `http` only on loopback; default `http://localhost:<port of QUIVER_ADRESSE>`) |
 | `QUIVER_ADRESSE` | Listen address (default `0.0.0.0:8740`) |
 | `QUIVER_DATEN` | Data folder (default `./daten`) |
 | `QUIVER_ADMIN_DIST` | Built admin UI (default `./admin/dist`) |
@@ -118,6 +145,9 @@ generated from them and checked in; never edit it by hand:
 
 ```bash
 cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
+# the pages the server itself delivers (confirmation, errors): dark by
+# default, light via `prefers-color-scheme`
+cargo run -p quiver-oberflaeche --bin tokens_seite_css > crates/server/seiten/system.css
 ```
 
 ### Admin interface
@@ -130,6 +160,20 @@ npm run dev     # Vite on 5173, /api → 127.0.0.1:8740
 npm run build   # to admin/dist; the server serves it at /
 npm run typecheck
 npm test
+```
+
+Two browser checks run against the real server (built `admin/dist`, the
+server's own CSP, Chrome headless with a temporary profile, loopback and a
+temporary data folder — no real tenant, no real vault):
+
+```bash
+cargo build -p quiver-server
+npm run pruefung            # setup → sign out → sign in → wrong password →
+                            # overview → change one set: 0 CSP violations,
+                            # 0 console errors
+npm run pruefung:anmeldung  # device sign-in → confirmation → redirect to
+                            # 127.0.0.1:<port>/quiver with a code, against a
+                            # local Entra stand-in
 ```
 
 Layout, components and screenshots: [admin/README.md](admin/README.md).

@@ -66,6 +66,8 @@ struct Mock {
 struct MockZustand {
     codes: HashMap<String, CodeInfo>,
     naechster_code: usize,
+    discovery_hits: usize,
+    discovery_fehler: bool,
     jwks_hits: usize,
     token_hits: usize,
     refresh_hits: usize,
@@ -137,6 +139,8 @@ impl Mock {
             zustand: Arc::new(Mutex::new(MockZustand {
                 codes: HashMap::new(),
                 naechster_code: 0,
+                discovery_hits: 0,
+                discovery_fehler: false,
                 jwks_hits: 0,
                 token_hits: 0,
                 refresh_hits: 0,
@@ -193,15 +197,37 @@ impl Mock {
         let z = self.zustand.lock().unwrap();
         (z.jwks_hits, z.token_hits, z.refresh_hits)
     }
+
+    /// Wie oft die Discovery geholt wurde (Aufgabe 26, Punkt 6).
+    fn discovery_zaehler(&self) -> usize {
+        self.zustand.lock().unwrap().discovery_hits
+    }
+
+    /// Die Discovery unerreichbar machen (Netzfehler).
+    fn discovery_aus(&self, aus: bool) {
+        self.zustand.lock().unwrap().discovery_fehler = aus;
+    }
 }
 
-async fn discovery(AxState(m): AxState<Mock>) -> Json<Value> {
+async fn discovery(AxState(m): AxState<Mock>) -> Response {
+    {
+        let mut z = m.zustand.lock().unwrap();
+        z.discovery_hits += 1;
+        if z.discovery_fehler {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "temporarily_unavailable"})),
+            )
+                .into_response();
+        }
+    }
     Json(json!({
         "issuer": m.basis,
         "authorization_endpoint": format!("{}/authorize", m.basis),
         "token_endpoint": format!("{}/token", m.basis),
         "jwks_uri": format!("{}/keys", m.basis),
     }))
+    .into_response()
 }
 
 async fn keys(AxState(m): AxState<Mock>) -> Json<Value> {
@@ -216,7 +242,13 @@ async fn authorize(
     let mut z = m.zustand.lock().unwrap();
     z.naechster_code += 1;
     let code = format!("code-{}", z.naechster_code);
-    let claims = z.claims.clone();
+    let mut claims = z.claims.clone();
+    // Die Zeitfenster gehören zum Zeitpunkt der Anmeldung, nicht zum Start des
+    // Nachbaus: Tests stellen die Uhr, ohne neu zu starten.
+    let jetzt = m.uhr.jetzt().unix_timestamp();
+    claims["exp"] = json!(jetzt + 3600);
+    claims["nbf"] = json!(jetzt - 10);
+    claims["iat"] = json!(jetzt - 10);
     z.codes.insert(
         code.clone(),
         CodeInfo {
@@ -833,250 +865,274 @@ async fn auspacken(antwort: Response) -> Antwort {
 
 #[tokio::test]
 async fn voller_geraeteweg_ueber_entra() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let antwort = p.geraet_anmelden("Testrechner", 51234).await;
-    assert_eq!(antwort.geraet.name, "Testrechner");
-    assert_eq!(antwort.token.len(), 64);
-    assert_eq!(
-        antwort.geraet.gruppen,
-        vec![quiver_domain::GruppeId::neu("team")],
-        "Entra-Gruppe wird auf die interne Gruppe abgebildet"
-    );
-    let soll = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(soll.status, StatusCode::OK, "{}", soll.text);
-    assert_eq!(soll.json["eintraege"].as_array().map(Vec::len), Some(1));
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let antwort = p.geraet_anmelden("Testrechner", 51234).await;
+        assert_eq!(antwort.geraet.name, "Testrechner");
+        assert_eq!(antwort.token.len(), 64);
+        assert_eq!(
+            antwort.geraet.gruppen,
+            vec![quiver_domain::GruppeId::neu("team")],
+            "Entra-Gruppe wird auf die interne Gruppe abgebildet"
+        );
+        let soll = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(soll.status, StatusCode::OK, "{}", soll.text);
+        assert_eq!(soll.json["eintraege"].as_array().map(Vec::len), Some(1));
 
-    // Der Benutzer steht in der Verwaltung, die Geräte-Gruppen sind wirksam.
-    let benutzer_liste = p.admin("GET", "/admin/benutzer", None).await;
-    let liste: Vec<BenutzerSicht> = serde_json::from_value(benutzer_liste.json).expect("Liste");
-    let test = liste.iter().find(|b| b.oid == OID).expect("Benutzer");
-    assert_eq!(test.rolle, Rolle::Benutzer);
-    assert_eq!(test.geraete, 1);
-    assert_eq!(test.entra, vec![GRUPPE_ENTRA.to_string()]);
+        // Der Benutzer steht in der Verwaltung, die Geräte-Gruppen sind wirksam.
+        let benutzer_liste = p.admin("GET", "/admin/benutzer", None).await;
+        let liste: Vec<BenutzerSicht> = serde_json::from_value(benutzer_liste.json).expect("Liste");
+        let test = liste.iter().find(|b| b.oid == OID).expect("Benutzer");
+        assert_eq!(test.rolle, Rolle::Benutzer);
+        assert_eq!(test.geraete, 1);
+        assert_eq!(test.entra, vec![GRUPPE_ENTRA.to_string()]);
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn start_lehnt_kaputte_werte_ab() {
-    let p = Pruefung::mit_entra().await;
-    for pfad in [
-        "/auth/geraet/start?challenge=kurz&port=51234&zustand=a&name=x".to_string(),
-        format!(
-            "/auth/geraet/start?challenge={}&port=80&zustand=a&name=x",
-            Pruefung::challenge(&Pruefung::verifier())
-        ),
-        format!(
-            "/auth/geraet/start?challenge={}&port=51234&zustand=mit%20leer&name=x",
-            Pruefung::challenge(&Pruefung::verifier())
-        ),
-        format!(
-            "/auth/geraet/start?challenge={}&port=51234&zustand=a&name={}",
-            Pruefung::challenge(&Pruefung::verifier()),
-            "x".repeat(81)
-        ),
-    ] {
-        let antwort = p.browsere_anfrage(&pfad, None, &[], None).await;
-        assert_eq!(antwort.status, StatusCode::BAD_REQUEST, "{pfad}");
-        assert!(antwort.text.contains("Anmeldung nicht möglich"));
-    }
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        for pfad in [
+            "/auth/geraet/start?challenge=kurz&port=51234&zustand=a&name=x".to_string(),
+            format!(
+                "/auth/geraet/start?challenge={}&port=80&zustand=a&name=x",
+                Pruefung::challenge(&Pruefung::verifier())
+            ),
+            format!(
+                "/auth/geraet/start?challenge={}&port=51234&zustand=mit%20leer&name=x",
+                Pruefung::challenge(&Pruefung::verifier())
+            ),
+            format!(
+                "/auth/geraet/start?challenge={}&port=51234&zustand=a&name={}",
+                Pruefung::challenge(&Pruefung::verifier()),
+                "x".repeat(81)
+            ),
+        ] {
+            let antwort = p.browsere_anfrage(&pfad, None, &[], None).await;
+            assert_eq!(antwort.status, StatusCode::BAD_REQUEST, "{pfad}");
+            assert!(antwort.text.contains("Anmeldung nicht möglich"));
+        }
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn state_ist_an_browser_und_einmaligkeit_gebunden() {
-    let p = Pruefung::mit_entra().await;
-    let (code, state, cookie) = p.oidc(false, "Rechner", 51234).await;
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let (code, state, cookie) = p.oidc(false, "Rechner", 51234).await;
 
-    // Anderer Browser (falsches Cookie) → 400, der Zustand ist verbraucht.
-    let fremd = p.callback(&code, &state, "quiver_oidc=falsch").await;
-    assert_eq!(fremd.status, StatusCode::BAD_REQUEST);
+        // Anderer Browser (falsches Cookie) → 400, der Zustand ist verbraucht.
+        let fremd = p.callback(&code, &state, "quiver_oidc=falsch").await;
+        assert_eq!(fremd.status, StatusCode::BAD_REQUEST);
 
-    let nochmal = p.callback(&code, &state, &cookie).await;
-    assert_eq!(nochmal.status, StatusCode::BAD_REQUEST, "einmalig");
+        let nochmal = p.callback(&code, &state, &cookie).await;
+        assert_eq!(nochmal.status, StatusCode::BAD_REQUEST, "einmalig");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn falscher_verifier_verbraucht_den_code() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
-    let seite = p.callback(&code, &state, &oidc_cookie).await;
-    let token = feld(&seite.text, "token");
-    let csrf = feld(&seite.text, "csrf");
-    let cookie = cookie_aus(&seite, "quiver_bestaetigung");
-    let bestaetigt = p
-        .browsere_post(
-            "/auth/geraet/bestaetigen",
-            Some(&cookie),
-            &[("origin", &p.oeffentlich)],
-            url::form_urlencoded::Serializer::new(String::new())
-                .append_pair("token", &token)
-                .append_pair("csrf", &csrf)
-                .finish()
-                .into_bytes(),
-        )
-        .await;
-    let ziel = kopf(&bestaetigt, header::LOCATION);
-    let ziel_url = url::Url::parse(&ziel).expect("Ziel");
-    let paare: HashMap<String, String> = ziel_url.query_pairs().into_owned().collect();
-    let code = paare.get("code").cloned().expect("Code");
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
+        let seite = p.callback(&code, &state, &oidc_cookie).await;
+        let token = feld(&seite.text, "token");
+        let csrf = feld(&seite.text, "csrf");
+        let cookie = cookie_aus(&seite, "quiver_bestaetigung");
+        let bestaetigt = p
+            .browsere_post(
+                "/auth/geraet/bestaetigen",
+                Some(&cookie),
+                &[("origin", &p.oeffentlich)],
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("token", &token)
+                    .append_pair("csrf", &csrf)
+                    .finish()
+                    .into_bytes(),
+            )
+            .await;
+        let ziel = kopf(&bestaetigt, header::LOCATION);
+        let ziel_url = url::Url::parse(&ziel).expect("Ziel");
+        let paare: HashMap<String, String> = ziel_url.query_pairs().into_owned().collect();
+        let code = paare.get("code").cloned().expect("Code");
 
-    let falsch = p
-        .anfrage(
-            "POST",
-            "/auth/geraet/tausch",
-            None,
-            None,
-            &[],
-            Some(
-                serde_json::to_vec(&Tausch {
-                    code: code.clone(),
-                    verifier: URL_SAFE_NO_PAD.encode([1u8; 32]),
-                    altes_token: None,
-                })
-                .expect("JSON"),
-            ),
-        )
-        .await;
-    assert_eq!(falsch.status, StatusCode::BAD_REQUEST);
+        let falsch = p
+            .anfrage(
+                "POST",
+                "/auth/geraet/tausch",
+                None,
+                None,
+                &[],
+                Some(
+                    serde_json::to_vec(&Tausch {
+                        code: code.clone(),
+                        verifier: URL_SAFE_NO_PAD.encode([1u8; 32]),
+                        altes_token: None,
+                    })
+                    .expect("JSON"),
+                ),
+            )
+            .await;
+        assert_eq!(falsch.status, StatusCode::BAD_REQUEST);
 
-    // Auch mit richtigem Verifier: der Code ist verbraucht.
-    let nochmal = p
-        .anfrage(
-            "POST",
-            "/auth/geraet/tausch",
-            None,
-            None,
-            &[],
-            Some(
-                serde_json::to_vec(&Tausch {
-                    code,
-                    verifier: Pruefung::verifier(),
-                    altes_token: None,
-                })
-                .expect("JSON"),
-            ),
-        )
-        .await;
-    assert_eq!(nochmal.status, StatusCode::BAD_REQUEST);
+        // Auch mit richtigem Verifier: der Code ist verbraucht.
+        let nochmal = p
+            .anfrage(
+                "POST",
+                "/auth/geraet/tausch",
+                None,
+                None,
+                &[],
+                Some(
+                    serde_json::to_vec(&Tausch {
+                        code,
+                        verifier: Pruefung::verifier(),
+                        altes_token: None,
+                    })
+                    .expect("JSON"),
+                ),
+            )
+            .await;
+        assert_eq!(nochmal.status, StatusCode::BAD_REQUEST);
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn bestaetigung_braucht_csrf_und_origin_und_abbruch_geht_zurueck() {
-    let p = Pruefung::mit_entra().await;
-    let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
-    let seite = p.callback(&code, &state, &oidc_cookie).await;
-    let token = feld(&seite.text, "token");
-    let csrf = feld(&seite.text, "csrf");
-    let cookie = cookie_aus(&seite, "quiver_bestaetigung");
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
+        let seite = p.callback(&code, &state, &oidc_cookie).await;
+        let token = feld(&seite.text, "token");
+        let csrf = feld(&seite.text, "csrf");
+        let cookie = cookie_aus(&seite, "quiver_bestaetigung");
 
-    // Ohne CSRF → 400.
-    let ohne = p
-        .browsere_post(
-            "/auth/geraet/bestaetigen",
-            Some(&cookie),
-            &[("origin", &p.oeffentlich)],
-            url::form_urlencoded::Serializer::new(String::new())
-                .append_pair("token", &token)
-                .finish()
-                .into_bytes(),
-        )
-        .await;
-    assert_eq!(ohne.status, StatusCode::BAD_REQUEST);
+        // Ohne CSRF → 400.
+        let ohne = p
+            .browsere_post(
+                "/auth/geraet/bestaetigen",
+                Some(&cookie),
+                &[("origin", &p.oeffentlich)],
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("token", &token)
+                    .finish()
+                    .into_bytes(),
+            )
+            .await;
+        assert_eq!(ohne.status, StatusCode::BAD_REQUEST);
 
-    // Fremder Origin → 403; der Zustand ist dabei verbraucht.
-    let fremd = p
-        .browsere_post(
-            "/auth/geraet/bestaetigen",
-            Some(&cookie),
-            &[("origin", "https://evil.example.test")],
-            url::form_urlencoded::Serializer::new(String::new())
-                .append_pair("token", &token)
-                .append_pair("csrf", &csrf)
-                .finish()
-                .into_bytes(),
-        )
-        .await;
-    assert_eq!(fremd.status, StatusCode::FORBIDDEN);
+        // Fremder Origin → 403; der Zustand ist dabei verbraucht.
+        let fremd = p
+            .browsere_post(
+                "/auth/geraet/bestaetigen",
+                Some(&cookie),
+                &[("origin", "https://evil.example.test")],
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("token", &token)
+                    .append_pair("csrf", &csrf)
+                    .finish()
+                    .into_bytes(),
+            )
+            .await;
+        assert_eq!(fremd.status, StatusCode::FORBIDDEN);
 
-    // Neuer Anlauf für den Abbruch.
-    let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
-    let seite = p.callback(&code, &state, &oidc_cookie).await;
-    let token = feld(&seite.text, "token");
-    let csrf = feld(&seite.text, "csrf");
-    let cookie = cookie_aus(&seite, "quiver_bestaetigung");
-    let abbruch = p
-        .browsere_post(
-            "/auth/geraet/abbrechen",
-            Some(&cookie),
-            &[("origin", &p.oeffentlich)],
-            url::form_urlencoded::Serializer::new(String::new())
-                .append_pair("token", &token)
-                .append_pair("csrf", &csrf)
-                .finish()
-                .into_bytes(),
-        )
-        .await;
-    assert_eq!(abbruch.status, StatusCode::SEE_OTHER);
-    let ziel = kopf(&abbruch, header::LOCATION);
-    assert!(ziel.starts_with("http://127.0.0.1:51234/quiver?"));
-    assert!(ziel.contains("fehler=abgebrochen"));
-    assert!(ziel.contains("zustand=test-1"));
+        // Neuer Anlauf für den Abbruch.
+        let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
+        let seite = p.callback(&code, &state, &oidc_cookie).await;
+        let token = feld(&seite.text, "token");
+        let csrf = feld(&seite.text, "csrf");
+        let cookie = cookie_aus(&seite, "quiver_bestaetigung");
+        let abbruch = p
+            .browsere_post(
+                "/auth/geraet/abbrechen",
+                Some(&cookie),
+                &[("origin", &p.oeffentlich)],
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("token", &token)
+                    .append_pair("csrf", &csrf)
+                    .finish()
+                    .into_bytes(),
+            )
+            .await;
+        assert_eq!(abbruch.status, StatusCode::SEE_OTHER);
+        let ziel = kopf(&abbruch, header::LOCATION);
+        assert!(ziel.starts_with("http://127.0.0.1:51234/quiver?"));
+        assert!(ziel.contains("fehler=abgebrochen"));
+        assert!(ziel.contains("zustand=test-1"));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn falsche_signatur_wird_abgelehnt() {
-    let p = Pruefung::mit_entra().await;
-    let mock = p.mock.as_ref().expect("Mock");
-    mock.falscher_schluessel();
-    let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
-    let antwort = p.callback(&code, &state, &oidc_cookie).await;
-    assert_eq!(antwort.status, StatusCode::BAD_GATEWAY);
-    assert!(antwort.text.contains("Anmeldung gescheitert"));
-    assert!(!antwort.text.contains(ENTRA_SECRET));
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let mock = p.mock.as_ref().expect("Mock");
+        mock.falscher_schluessel();
+        let (code, state, oidc_cookie) = p.oidc(false, "Rechner", 51234).await;
+        let antwort = p.callback(&code, &state, &oidc_cookie).await;
+        assert_eq!(antwort.status, StatusCode::BAD_GATEWAY);
+        assert!(antwort.text.contains("Anmeldung gescheitert"));
+        assert!(!antwort.text.contains(ENTRA_SECRET));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn falscher_tenant_und_gruppen_ueberlauf_werden_abgelehnt() {
-    let p = Pruefung::mit_entra().await;
-    let mock = p.mock.as_ref().expect("Mock");
-    mock.setze_claims(|c| c["tid"] = json!("00000000-0000-0000-0000-000000000000"));
-    let (code, state, cookie) = p.oidc(false, "Rechner", 51234).await;
-    let antwort = p.callback(&code, &state, &cookie).await;
-    assert_eq!(antwort.status, StatusCode::BAD_GATEWAY);
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let mock = p.mock.as_ref().expect("Mock");
+        mock.setze_claims(|c| c["tid"] = json!("00000000-0000-0000-0000-000000000000"));
+        let (code, state, cookie) = p.oidc(false, "Rechner", 51234).await;
+        let antwort = p.callback(&code, &state, &cookie).await;
+        assert_eq!(antwort.status, StatusCode::BAD_GATEWAY);
 
-    mock.setze_claims(|c| {
-        c["tid"] = json!(TENANT);
-        c.as_object_mut().unwrap().remove("groups");
-        c["_claim_names"] = json!({"groups": "src1"});
-    });
-    let (code, state, cookie) = p.oidc(false, "Rechner", 51234).await;
-    let antwort = p.callback(&code, &state, &cookie).await;
-    assert_eq!(antwort.status, StatusCode::BAD_GATEWAY);
-    assert!(antwort.text.contains("Gruppen"));
+        mock.setze_claims(|c| {
+            c["tid"] = json!(TENANT);
+            c.as_object_mut().unwrap().remove("groups");
+            c["_claim_names"] = json!({"groups": "src1"});
+        });
+        let (code, state, cookie) = p.oidc(false, "Rechner", 51234).await;
+        let antwort = p.callback(&code, &state, &cookie).await;
+        assert_eq!(antwort.status, StatusCode::BAD_GATEWAY);
+        assert!(antwort.text.contains("Gruppen"));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn altes_token_fuehrt_dasselbe_geraet() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let erst = p.geraet_anmelden("Rechner", 51234).await;
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let erst = p.geraet_anmelden("Rechner", 51234).await;
 
-    // Zweite Anmeldung mit altem Token: dieselbe Kennung, neues Token.
-    let zweit = p
-        .geraet_anmelden_mit_altem("Rechner", 51234, Some(&erst.token))
-        .await;
-    assert_eq!(zweit.geraet.id, erst.geraet.id);
-    assert_ne!(zweit.token, erst.token);
-    let alt = p
-        .anfrage("GET", "/geraet/soll", Some(&erst.token), None, &[], None)
-        .await;
-    assert_eq!(
-        alt.status,
-        StatusCode::UNAUTHORIZED,
-        "altes Token gilt nicht mehr"
-    );
+        // Zweite Anmeldung mit altem Token: dieselbe Kennung, neues Token.
+        let zweit = p
+            .geraet_anmelden_mit_altem("Rechner", 51234, Some(&erst.token))
+            .await;
+        assert_eq!(zweit.geraet.id, erst.geraet.id);
+        assert_ne!(zweit.token, erst.token);
+        let alt = p
+            .anfrage("GET", "/geraet/soll", Some(&erst.token), None, &[], None)
+            .await;
+        assert_eq!(
+            alt.status,
+            StatusCode::UNAUTHORIZED,
+            "altes Token gilt nicht mehr"
+        );
+    })
+    .await;
 }
 
 impl Pruefung {
@@ -1131,494 +1187,305 @@ impl Pruefung {
 
 #[tokio::test]
 async fn gesperrt_und_kein_zugriff_liefern_grund() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let antwort = p.geraet_anmelden("Rechner", 51234).await;
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let antwort = p.geraet_anmelden("Rechner", 51234).await;
 
-    let liste = p.admin("GET", "/admin/benutzer", None).await;
-    let liste: Vec<BenutzerSicht> = serde_json::from_value(liste.json).expect("Liste");
-    let test = liste.iter().find(|b| b.oid == OID).expect("Benutzer");
+        let liste = p.admin("GET", "/admin/benutzer", None).await;
+        let liste: Vec<BenutzerSicht> = serde_json::from_value(liste.json).expect("Liste");
+        let test = liste.iter().find(|b| b.oid == OID).expect("Benutzer");
 
-    // Sperren → Gerät bekommt 403 mit grund=gesperrt.
-    let gesperrt = p
-        .admin(
-            "PUT",
-            &format!("/admin/benutzer/{}", test.oid),
-            Some(json!(BenutzerAendern {
-                gesperrt: Some(true),
-                ..Default::default()
-            })),
-        )
-        .await;
-    assert_eq!(gesperrt.status, StatusCode::OK);
-    let nach = p.admin("GET", "/admin/benutzer", None).await;
-    let nach: Vec<BenutzerSicht> = serde_json::from_value(nach.json).expect("Liste");
-    assert!(
-        nach.iter().any(|b| b.oid == OID && b.gesperrt),
-        "Sperre steht in der Datenbank: {nach:?}"
-    );
-    let abgewiesen = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
-    assert_eq!(abgewiesen.json["grund"], "gesperrt");
+        // Sperren → Gerät bekommt 403 mit grund=gesperrt.
+        let gesperrt = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{}", test.oid),
+                Some(json!(BenutzerAendern {
+                    gesperrt: Some(true),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(gesperrt.status, StatusCode::OK);
+        let nach = p.admin("GET", "/admin/benutzer", None).await;
+        let nach: Vec<BenutzerSicht> = serde_json::from_value(nach.json).expect("Liste");
+        assert!(
+            nach.iter().any(|b| b.oid == OID && b.gesperrt),
+            "Sperre steht in der Datenbank: {nach:?}"
+        );
+        let abgewiesen = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "gesperrt");
 
-    // Entsperren, Gruppe wegnehmen → grund=kein_zugriff.
-    let frei = p
-        .admin(
-            "PUT",
-            &format!("/admin/benutzer/{}", test.oid),
-            Some(json!(BenutzerAendern {
-                gesperrt: Some(false),
-                ..Default::default()
-            })),
-        )
-        .await;
-    assert_eq!(frei.status, StatusCode::OK);
-    let ohne = p
-        .admin(
-            "PUT",
-            "/admin/gruppen/team",
-            Some(json!(quiver_domain::Gruppe {
-                id: quiver_domain::GruppeId::neu("team"),
-                titel: "Team".into(),
-                saetze: vec![SatzId::neu("basis")],
-                entra: Vec::new(),
-            })),
-        )
-        .await;
-    assert_eq!(ohne.status, StatusCode::OK);
-    let abgewiesen = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
-    assert_eq!(abgewiesen.json["grund"], "kein-zugriff");
+        // Entsperren, Gruppe wegnehmen → grund=kein_zugriff.
+        let frei = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{}", test.oid),
+                Some(json!(BenutzerAendern {
+                    gesperrt: Some(false),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(frei.status, StatusCode::OK);
+        let ohne = p
+            .admin(
+                "PUT",
+                "/admin/gruppen/team",
+                Some(json!(quiver_domain::Gruppe {
+                    id: quiver_domain::GruppeId::neu("team"),
+                    titel: "Team".into(),
+                    saetze: vec![SatzId::neu("basis")],
+                    entra: Vec::new(),
+                })),
+            )
+            .await;
+        assert_eq!(ohne.status, StatusCode::OK);
+        let abgewiesen = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "kein-zugriff");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn refresh_rotation_und_invalid_grant() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let antwort = p.geraet_anmelden("Rechner", 51234).await;
-    let mock = p.mock.clone().expect("Mock");
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let antwort = p.geraet_anmelden("Rechner", 51234).await;
+        let mock = p.mock.clone().expect("Mock");
 
-    // Nachprüfen auf Knopf: genau ein Refresh-Aufruf, Token bleibt gültig.
-    let geprueft = p
-        .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
-        .await;
-    assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
-    assert_eq!(mock.zaehler().2, 1);
-    let soll = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(soll.status, StatusCode::OK);
+        // Nachprüfen auf Knopf: genau ein Refresh-Aufruf, Token bleibt gültig.
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        assert_eq!(mock.zaehler().2, 1);
+        let soll = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(soll.status, StatusCode::OK);
 
-    // Gruppen ändern sich → Gerät sieht das neue Soll.
-    mock.setze_refresh_claims(|c| c["groups"] = json!([]));
-    let wieder = p
-        .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
-        .await;
-    assert_eq!(wieder.status, StatusCode::FORBIDDEN, "{}", wieder.text);
-    let abgewiesen = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
-    assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
+        // Gruppen ändern sich → Gerät sieht das neue Soll.
+        mock.setze_refresh_claims(|c| c["groups"] = json!([]));
+        let wieder = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(wieder.status, StatusCode::FORBIDDEN, "{}", wieder.text);
+        let abgewiesen = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
 
-    // invalid_grant → neu_anmelden.
-    let p2 = Pruefung::mit_entra().await;
-    p2.eintrag_anlegen().await;
-    let antwort = p2.geraet_anmelden("Rechner", 51234).await;
-    p2.mock.as_ref().unwrap().refresh_fehler("invalid_grant");
-    let abgelehnt = p2
-        .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
-        .await;
-    assert_eq!(abgelehnt.status, StatusCode::FORBIDDEN);
-    let abgewiesen = p2
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
-    assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
+        // invalid_grant → neu_anmelden.
+        let p2 = Pruefung::mit_entra().await;
+        p2.eintrag_anlegen().await;
+        let antwort = p2.geraet_anmelden("Rechner", 51234).await;
+        p2.mock.as_ref().unwrap().refresh_fehler("invalid_grant");
+        let abgelehnt = p2
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(abgelehnt.status, StatusCode::FORBIDDEN);
+        let abgewiesen = p2
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn nachpruefen_je_benutzer_nicht_gleichzeitig() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let _antwort = p.geraet_anmelden("Rechner", 51234).await;
-    p.mock.as_ref().unwrap().verzoegern(200);
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let _antwort = p.geraet_anmelden("Rechner", 51234).await;
+        p.mock.as_ref().unwrap().verzoegern(200);
 
-    let pfad = format!("/admin/benutzer/{OID}/pruefen");
-    let (a, b) = tokio::join!(p.admin("POST", &pfad, None), p.admin("POST", &pfad, None));
-    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
-    assert_eq!(b.status, StatusCode::OK, "{}", b.text);
-    // Zwei Prüfungen, aber nacheinander: jede hat ein frisches Refresh-Token.
-    assert_eq!(p.mock.as_ref().unwrap().zaehler().2, 2);
+        let pfad = format!("/admin/benutzer/{OID}/pruefen");
+        let (a, b) = tokio::join!(p.admin("POST", &pfad, None), p.admin("POST", &pfad, None));
+        assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+        assert_eq!(b.status, StatusCode::OK, "{}", b.text);
+        // Zwei Prüfungen, aber nacheinander: jede hat ein frisches Refresh-Token.
+        assert_eq!(p.mock.as_ref().unwrap().zaehler().2, 2);
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn netzfehler_haelt_23_stunden_und_gibt_nach_25_auf() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let antwort = p.geraet_anmelden("Rechner", 51234).await;
-    p.mock.as_ref().unwrap().token_fehler(503);
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let antwort = p.geraet_anmelden("Rechner", 51234).await;
+        p.mock.as_ref().unwrap().token_fehler(503);
 
-    // 23 Stunden: letzter Stand bleibt.
-    p.uhr
-        .setze(OffsetDateTime::now_utc() + time::Duration::hours(23));
-    let cookie = p.root_anmelden().await;
-    let noch = p
-        .admin_mit(
-            &cookie,
-            "POST",
-            &format!("/admin/benutzer/{OID}/pruefen"),
-            None,
-        )
-        .await;
-    assert_eq!(noch.status, StatusCode::OK, "23h: {}", noch.text);
-    let soll = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(soll.status, StatusCode::OK);
+        // 23 Stunden: letzter Stand bleibt.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::hours(23));
+        let cookie = p.root_anmelden().await;
+        let noch = p
+            .admin_mit(
+                &cookie,
+                "POST",
+                &format!("/admin/benutzer/{OID}/pruefen"),
+                None,
+            )
+            .await;
+        assert_eq!(noch.status, StatusCode::OK, "23h: {}", noch.text);
+        let soll = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(soll.status, StatusCode::OK);
 
-    // 25 Stunden: neu anmelden.
-    p.uhr
-        .setze(OffsetDateTime::now_utc() + time::Duration::hours(25));
-    let cookie = p.root_anmelden().await;
-    let auf = p
-        .admin_mit(
-            &cookie,
-            "POST",
-            &format!("/admin/benutzer/{OID}/pruefen"),
-            None,
-        )
-        .await;
-    assert_eq!(auf.status, StatusCode::FORBIDDEN, "25h: {}", auf.text);
-    let abgewiesen = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
-    assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
+        // 25 Stunden: neu anmelden.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::hours(25));
+        let cookie = p.root_anmelden().await;
+        let auf = p
+            .admin_mit(
+                &cookie,
+                "POST",
+                &format!("/admin/benutzer/{OID}/pruefen"),
+                None,
+            )
+            .await;
+        assert_eq!(auf.status, StatusCode::FORBIDDEN, "25h: {}", auf.text);
+        let abgewiesen = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn verwaltungssitzung_nur_fuer_admins_und_rechte_frisch() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    // Der Benutzer existiert nach einer Geräteanmeldung.
-    p.geraet_anmelden("Rechner", 51234).await;
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        // Der Benutzer existiert nach einer Geräteanmeldung.
+        p.geraet_anmelden("Rechner", 51234).await;
 
-    // Ohne Rolle: Verwaltungsanmeldung abgelehnt.
-    let ohne = p.oidc(true, "", 0).await;
-    let antwort = p.callback(&ohne.0, &ohne.1, &ohne.2).await;
-    assert_eq!(antwort.status, StatusCode::FORBIDDEN);
+        // Ohne Rolle: Verwaltungsanmeldung abgelehnt.
+        let ohne = p.oidc(true, "", 0).await;
+        let antwort = p.callback(&ohne.0, &ohne.1, &ohne.2).await;
+        assert_eq!(antwort.status, StatusCode::FORBIDDEN);
 
-    // Root ernennt den Benutzer zum Admin.
-    let ernannt = p
-        .admin(
-            "PUT",
-            &format!("/admin/benutzer/{OID}"),
-            Some(json!(BenutzerAendern {
-                rolle: Some(Rolle::Admin),
-                ..Default::default()
-            })),
-        )
-        .await;
-    assert_eq!(ernannt.status, StatusCode::OK, "{}", ernannt.text);
+        // Root ernennt den Benutzer zum Admin.
+        let ernannt = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}"),
+                Some(json!(BenutzerAendern {
+                    rolle: Some(Rolle::Admin),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(ernannt.status, StatusCode::OK, "{}", ernannt.text);
 
-    let cookie = p.verwaltungs_anmeldung().await;
-    let ich = p
-        .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
-        .await;
-    assert_eq!(ich.status, StatusCode::OK);
-    assert_eq!(ich.json["benutzer"]["rolle"], "admin");
-    let ueberblick = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
-    assert_eq!(ueberblick.status, StatusCode::OK);
+        let cookie = p.verwaltungs_anmeldung().await;
+        let ich = p
+            .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
+            .await;
+        assert_eq!(ich.status, StatusCode::OK);
+        assert_eq!(ich.json["benutzer"]["rolle"], "admin");
+        let ueberblick = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(ueberblick.status, StatusCode::OK);
 
-    // Rolle entzogen: die nächste Anfrage ist 403, ohne neue Anmeldung.
-    let entzogen = p
-        .admin(
-            "PUT",
-            &format!("/admin/benutzer/{OID}"),
-            Some(json!(BenutzerAendern {
-                rolle: Some(Rolle::Benutzer),
-                ..Default::default()
-            })),
-        )
-        .await;
-    assert_eq!(entzogen.status, StatusCode::OK);
-    let danach = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
-    assert_eq!(danach.status, StatusCode::FORBIDDEN);
+        // Rolle entzogen: die nächste Anfrage ist 403, ohne neue Anmeldung.
+        let entzogen = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}"),
+                Some(json!(BenutzerAendern {
+                    rolle: Some(Rolle::Benutzer),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(entzogen.status, StatusCode::OK);
+        let danach = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(danach.status, StatusCode::FORBIDDEN);
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn sitzungscookie_origin_und_keine_cors_freigabe() {
-    let p = Pruefung::mit_entra().await;
-    // Lesen braucht kein Origin; ändern schon.
-    let lesen = p
-        .anfrage("GET", "/admin/ueberblick", None, Some(&p.cookie), &[], None)
-        .await;
-    assert_eq!(lesen.status, StatusCode::OK);
-    let codes = json!(CodeAnlegen {
-        gruppen: Vec::new(),
-        minuten: None,
-        unbegrenzt: false
-    });
-    let ohne = p
-        .anfrage(
-            "POST",
-            "/admin/codes",
-            None,
-            Some(&p.cookie),
-            &[],
-            Some(serde_json::to_vec(&codes).unwrap()),
-        )
-        .await;
-    assert_eq!(ohne.status, StatusCode::FORBIDDEN);
-    let ohne_kopf = p
-        .anfrage(
-            "POST",
-            "/admin/codes",
-            None,
-            Some(&p.cookie),
-            &[("origin", &p.oeffentlich)],
-            Some(serde_json::to_vec(&codes).unwrap()),
-        )
-        .await;
-    assert_eq!(ohne_kopf.status, StatusCode::FORBIDDEN);
-    let fremd = p
-        .anfrage(
-            "POST",
-            "/admin/codes",
-            None,
-            Some(&p.cookie),
-            &[("origin", "https://evil.example.test"), ("x-quiver", "1")],
-            Some(serde_json::to_vec(&codes).unwrap()),
-        )
-        .await;
-    assert_eq!(fremd.status, StatusCode::FORBIDDEN);
-    assert!(fremd.headers.get("access-control-allow-origin").is_none());
-    // Mit Origin und Kopf kommt die Anfrage durch die Wache (danach 404,
-    // weil Entra läuft).
-    let richtig = p
-        .anfrage(
-            "POST",
-            "/admin/codes",
-            None,
-            Some(&p.cookie),
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            Some(serde_json::to_vec(&codes).unwrap()),
-        )
-        .await;
-    assert_eq!(richtig.status, StatusCode::NOT_FOUND);
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        // Lesen braucht kein Origin; ändern schon.
+        let lesen = p
+            .anfrage("GET", "/admin/ueberblick", None, Some(&p.cookie), &[], None)
+            .await;
+        assert_eq!(lesen.status, StatusCode::OK);
+        let codes = json!(CodeAnlegen {
+            gruppen: Vec::new(),
+            minuten: None,
+            unbegrenzt: false
+        });
+        let ohne = p
+            .anfrage(
+                "POST",
+                "/admin/codes",
+                None,
+                Some(&p.cookie),
+                &[],
+                Some(serde_json::to_vec(&codes).unwrap()),
+            )
+            .await;
+        assert_eq!(ohne.status, StatusCode::FORBIDDEN);
+        let ohne_kopf = p
+            .anfrage(
+                "POST",
+                "/admin/codes",
+                None,
+                Some(&p.cookie),
+                &[("origin", &p.oeffentlich)],
+                Some(serde_json::to_vec(&codes).unwrap()),
+            )
+            .await;
+        assert_eq!(ohne_kopf.status, StatusCode::FORBIDDEN);
+        let fremd = p
+            .anfrage(
+                "POST",
+                "/admin/codes",
+                None,
+                Some(&p.cookie),
+                &[("origin", "https://evil.example.test"), ("x-quiver", "1")],
+                Some(serde_json::to_vec(&codes).unwrap()),
+            )
+            .await;
+        assert_eq!(fremd.status, StatusCode::FORBIDDEN);
+        assert!(fremd.headers.get("access-control-allow-origin").is_none());
+        // Mit Origin und Kopf kommt die Anfrage durch die Wache (danach 404,
+        // weil Entra läuft).
+        let richtig = p
+            .anfrage(
+                "POST",
+                "/admin/codes",
+                None,
+                Some(&p.cookie),
+                &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                Some(serde_json::to_vec(&codes).unwrap()),
+            )
+            .await;
+        assert_eq!(richtig.status, StatusCode::NOT_FOUND);
 
-    // Cookie-Flags: HttpOnly, SameSite=Lax, Path=/, ohne Secure bei http.
-    let login = p
-        .anfrage(
-            "POST",
-            "/auth/root",
-            None,
-            None,
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            Some(
-                serde_json::to_vec(&json!({
-                    "email": ROOT_EMAIL,
-                    "passwort": ROOT_PASSWORT
-                }))
-                .expect("JSON"),
-            ),
-        )
-        .await;
-    let set = login
-        .headers
-        .get(header::SET_COOKIE)
-        .and_then(|wert| wert.to_str().ok())
-        .expect("Cookie");
-    assert!(set.starts_with("quiver_sitzung="));
-    assert!(set.contains("HttpOnly"));
-    assert!(set.contains("SameSite=Lax"));
-    assert!(set.contains("Path=/"));
-    assert!(!set.contains("Secure"));
-
-    // https: __Host- und Secure.
-    let https = p.neu_oeffentlich("https://quiver.example.test", true).await;
-    let login = https
-        .clone()
-        .oneshot(
-            axum::http::Request::builder()
-                .method("POST")
-                .uri("/api/v1/auth/root")
-                .header("content-type", "application/json")
-                .header("origin", "https://quiver.example.test")
-                .header("x-quiver", "1")
-                .body(axum::body::Body::from(
-                    serde_json::to_vec(&json!({
-                        "email": ROOT_EMAIL,
-                        "passwort": ROOT_PASSWORT
-                    }))
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let set = login
-        .headers()
-        .get(header::SET_COOKIE)
-        .and_then(|wert| wert.to_str().ok())
-        .expect("Cookie")
-        .to_string();
-    assert!(set.starts_with("__Host-quiver_sitzung="), "{set}");
-    assert!(set.contains("Secure"));
-    let hsts = login
-        .headers()
-        .get(header::STRICT_TRANSPORT_SECURITY)
-        .is_some();
-    assert!(hsts);
-}
-
-#[tokio::test]
-async fn sitzung_laeuft_ab_abmelden_und_neue_kennung() {
-    let p = Pruefung::neu().await;
-    let ich = p
-        .anfrage("GET", "/auth/ich", None, Some(&p.cookie), &[], None)
-        .await;
-    assert_eq!(ich.status, StatusCode::OK);
-
-    // 61 Minuten ohne Nutzung.
-    p.uhr
-        .setze(OffsetDateTime::now_utc() + time::Duration::minutes(61));
-    let alt = p
-        .anfrage("GET", "/auth/ich", None, Some(&p.cookie), &[], None)
-        .await;
-    assert_eq!(alt.status, StatusCode::UNAUTHORIZED);
-
-    // Neue Sitzung, 12 Stunden absolut.
-    let cookie = p.root_anmelden().await;
-    assert_ne!(cookie, p.cookie);
-    p.uhr
-        .setze(OffsetDateTime::now_utc() + time::Duration::hours(12) + time::Duration::seconds(1));
-    let zu_alt = p
-        .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
-        .await;
-    assert_eq!(zu_alt.status, StatusCode::UNAUTHORIZED);
-
-    // Abmelden löscht am Server.
-    let cookie = p.root_anmelden().await;
-    let ab = p
-        .anfrage(
-            "POST",
-            "/auth/abmelden",
-            None,
-            Some(&cookie),
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            None,
-        )
-        .await;
-    assert_eq!(ab.status, StatusCode::NO_CONTENT);
-    let danach = p
-        .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
-        .await;
-    assert_eq!(danach.status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn passwortwechsel_beendet_alte_sitzungen() {
-    let p = Pruefung::neu().await;
-    let alt = p.cookie.clone();
-    // Neues Root-Passwort setzen: alle Root-Sitzungen enden.
-    benutzer::root_setzen_auf_platte(&p.daten, ROOT_EMAIL, "noch-ein-langes-passwort-42")
-        .expect("Root neu setzen");
-    let danach = p
-        .anfrage("GET", "/auth/ich", None, Some(&alt), &[], None)
-        .await;
-    assert_eq!(danach.status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn refresh_mit_anderer_oid_meldet_neu_an() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let antwort = p.geraet_anmelden("Rechner", 51234).await;
-    p.mock
-        .as_ref()
-        .unwrap()
-        .setze_refresh_claims(|c| c["oid"] = json!("00000000-1111-2222-3333-444444444444"));
-    let geprueft = p
-        .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
-        .await;
-    assert_eq!(geprueft.status, StatusCode::FORBIDDEN, "{}", geprueft.text);
-    let abgewiesen = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
-    assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
-}
-
-#[tokio::test]
-async fn root_drossel_gleiche_antwort_und_passwortlaenge() {
-    let p = Pruefung::neu().await;
-    let _wache = ROOT_SPERRE.lock().await;
-    // Zu kurzes Passwort: 400.
-    let kurz = p
-        .anfrage(
-            "POST",
-            "/auth/root",
-            None,
-            None,
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            Some(
-                serde_json::to_vec(&json!({"email": ROOT_EMAIL, "passwort": "kurz"}))
-                    .expect("JSON"),
-            ),
-        )
-        .await;
-    assert_eq!(kurz.status, StatusCode::BAD_REQUEST);
-
-    let falsch = p
-        .anfrage(
-            "POST",
-            "/auth/root",
-            None,
-            None,
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            Some(
-                serde_json::to_vec(&json!({
-                    "email": ROOT_EMAIL,
-                    "passwort": "falsches-passwort-123"
-                }))
-                .expect("JSON"),
-            ),
-        )
-        .await;
-    assert_eq!(falsch.status, StatusCode::UNAUTHORIZED);
-
-    let unbekannt = p
-        .anfrage(
-            "POST",
-            "/auth/root",
-            None,
-            None,
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            Some(
-                serde_json::to_vec(&json!({
-                    "email": "niemand@example.test",
-                    "passwort": "falsches-passwort-123"
-                }))
-                .expect("JSON"),
-            ),
-        )
-        .await;
-    assert_eq!(unbekannt.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        falsch.json["fehler"], unbekannt.json["fehler"],
-        "unbekannte E-Mail sieht gleich aus"
-    );
-
-    // Nach fünf Fehlversuchen: 429, nie dauerhaft (Drossel-Test deckt das ab).
-    let mut letzter = StatusCode::OK;
-    for _ in 0..6 {
-        let antwort = p
+        // Cookie-Flags: HttpOnly, SameSite=Lax, Path=/, ohne Secure bei http.
+        let login = p
             .anfrage(
                 "POST",
                 "/auth/root",
@@ -1627,160 +1494,389 @@ async fn root_drossel_gleiche_antwort_und_passwortlaenge() {
                 &[("origin", &p.oeffentlich), ("x-quiver", "1")],
                 Some(
                     serde_json::to_vec(&json!({
-                        "email": "gesperrt@example.test",
+                        "email": ROOT_EMAIL,
+                        "passwort": ROOT_PASSWORT
+                    }))
+                    .expect("JSON"),
+                ),
+            )
+            .await;
+        let set = login
+            .headers
+            .get(header::SET_COOKIE)
+            .and_then(|wert| wert.to_str().ok())
+            .expect("Cookie");
+        assert!(set.starts_with("quiver_sitzung="));
+        assert!(set.contains("HttpOnly"));
+        assert!(set.contains("SameSite=Lax"));
+        assert!(set.contains("Path=/"));
+        assert!(!set.contains("Secure"));
+
+        // https: __Host- und Secure.
+        let https = p.neu_oeffentlich("https://quiver.example.test", true).await;
+        let login = https
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/root")
+                    .header("content-type", "application/json")
+                    .header("origin", "https://quiver.example.test")
+                    .header("x-quiver", "1")
+                    .body(axum::body::Body::from(
+                        serde_json::to_vec(&json!({
+                            "email": ROOT_EMAIL,
+                            "passwort": ROOT_PASSWORT
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let set = login
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|wert| wert.to_str().ok())
+            .expect("Cookie")
+            .to_string();
+        assert!(set.starts_with("__Host-quiver_sitzung="), "{set}");
+        assert!(set.contains("Secure"));
+        let hsts = login
+            .headers()
+            .get(header::STRICT_TRANSPORT_SECURITY)
+            .is_some();
+        assert!(hsts);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn sitzung_laeuft_ab_abmelden_und_neue_kennung() {
+    mit_zeitlimit(async {
+        let p = Pruefung::neu().await;
+        let ich = p
+            .anfrage("GET", "/auth/ich", None, Some(&p.cookie), &[], None)
+            .await;
+        assert_eq!(ich.status, StatusCode::OK);
+
+        // 61 Minuten ohne Nutzung.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::minutes(61));
+        let alt = p
+            .anfrage("GET", "/auth/ich", None, Some(&p.cookie), &[], None)
+            .await;
+        assert_eq!(alt.status, StatusCode::UNAUTHORIZED);
+
+        // Neue Sitzung, 12 Stunden absolut.
+        let cookie = p.root_anmelden().await;
+        assert_ne!(cookie, p.cookie);
+        p.uhr.setze(
+            OffsetDateTime::now_utc() + time::Duration::hours(12) + time::Duration::seconds(1),
+        );
+        let zu_alt = p
+            .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
+            .await;
+        assert_eq!(zu_alt.status, StatusCode::UNAUTHORIZED);
+
+        // Abmelden löscht am Server.
+        let cookie = p.root_anmelden().await;
+        let ab = p
+            .anfrage(
+                "POST",
+                "/auth/abmelden",
+                None,
+                Some(&cookie),
+                &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                None,
+            )
+            .await;
+        assert_eq!(ab.status, StatusCode::NO_CONTENT);
+        let danach = p
+            .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
+            .await;
+        assert_eq!(danach.status, StatusCode::UNAUTHORIZED);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn passwortwechsel_beendet_alte_sitzungen() {
+    mit_zeitlimit(async {
+        let p = Pruefung::neu().await;
+        let alt = p.cookie.clone();
+        // Neues Root-Passwort setzen: alle Root-Sitzungen enden.
+        benutzer::root_setzen_auf_platte(&p.daten, ROOT_EMAIL, "noch-ein-langes-passwort-42")
+            .expect("Root neu setzen");
+        let danach = p
+            .anfrage("GET", "/auth/ich", None, Some(&alt), &[], None)
+            .await;
+        assert_eq!(danach.status, StatusCode::UNAUTHORIZED);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn refresh_mit_anderer_oid_meldet_neu_an() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let antwort = p.geraet_anmelden("Rechner", 51234).await;
+        p.mock
+            .as_ref()
+            .unwrap()
+            .setze_refresh_claims(|c| c["oid"] = json!("00000000-1111-2222-3333-444444444444"));
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::FORBIDDEN, "{}", geprueft.text);
+        let abgewiesen = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "neu-anmelden");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn root_drossel_gleiche_antwort_und_passwortlaenge() {
+    mit_zeitlimit(async {
+        let p = Pruefung::neu().await;
+        let _wache = ROOT_SPERRE.lock().await;
+        // Zu kurzes Passwort: 400.
+        let kurz = p
+            .anfrage(
+                "POST",
+                "/auth/root",
+                None,
+                None,
+                &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                Some(
+                    serde_json::to_vec(&json!({"email": ROOT_EMAIL, "passwort": "kurz"}))
+                        .expect("JSON"),
+                ),
+            )
+            .await;
+        assert_eq!(kurz.status, StatusCode::BAD_REQUEST);
+
+        let falsch = p
+            .anfrage(
+                "POST",
+                "/auth/root",
+                None,
+                None,
+                &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                Some(
+                    serde_json::to_vec(&json!({
+                        "email": ROOT_EMAIL,
                         "passwort": "falsches-passwort-123"
                     }))
                     .expect("JSON"),
                 ),
             )
             .await;
-        letzter = antwort.status;
-    }
-    assert_eq!(
-        letzter,
-        StatusCode::TOO_MANY_REQUESTS,
-        "nach fünf freien Versuchen gedrosselt"
-    );
+        assert_eq!(falsch.status, StatusCode::UNAUTHORIZED);
+
+        let unbekannt = p
+            .anfrage(
+                "POST",
+                "/auth/root",
+                None,
+                None,
+                &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                Some(
+                    serde_json::to_vec(&json!({
+                        "email": "niemand@example.test",
+                        "passwort": "falsches-passwort-123"
+                    }))
+                    .expect("JSON"),
+                ),
+            )
+            .await;
+        assert_eq!(unbekannt.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            falsch.json["fehler"], unbekannt.json["fehler"],
+            "unbekannte E-Mail sieht gleich aus"
+        );
+
+        // Nach fünf Fehlversuchen: 429, nie dauerhaft (Drossel-Test deckt das ab).
+        let mut letzter = StatusCode::OK;
+        for _ in 0..6 {
+            let antwort = p
+                .anfrage(
+                    "POST",
+                    "/auth/root",
+                    None,
+                    None,
+                    &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                    Some(
+                        serde_json::to_vec(&json!({
+                            "email": "gesperrt@example.test",
+                            "passwort": "falsches-passwort-123"
+                        }))
+                        .expect("JSON"),
+                    ),
+                )
+                .await;
+            letzter = antwort.status;
+        }
+        assert_eq!(
+            letzter,
+            StatusCode::TOO_MANY_REQUESTS,
+            "nach fünf freien Versuchen gedrosselt"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn root_bleibt_root_und_admin_token_gilt_nicht() {
-    let p = Pruefung::neu().await;
-    let loeschen = p.admin("DELETE", "/admin/benutzer/root", None).await;
-    assert_eq!(loeschen.status, StatusCode::CONFLICT);
-    let herab = p
-        .admin(
-            "PUT",
-            "/admin/benutzer/root",
-            Some(json!(BenutzerAendern {
-                rolle: Some(Rolle::Benutzer),
-                ..Default::default()
-            })),
-        )
-        .await;
-    assert_eq!(herab.status, StatusCode::CONFLICT);
+    mit_zeitlimit(async {
+        let p = Pruefung::neu().await;
+        let loeschen = p.admin("DELETE", "/admin/benutzer/root", None).await;
+        assert_eq!(loeschen.status, StatusCode::CONFLICT);
+        let herab = p
+            .admin(
+                "PUT",
+                "/admin/benutzer/root",
+                Some(json!(BenutzerAendern {
+                    rolle: Some(Rolle::Benutzer),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(herab.status, StatusCode::CONFLICT);
 
-    // Der alte Admin-Schlüssel öffnet nichts mehr.
-    let alt = p
-        .anfrage(
-            "GET",
-            "/admin/ueberblick",
-            Some("admin-token-fuer-den-test"),
-            None,
-            &[],
-            None,
-        )
-        .await;
-    assert_eq!(alt.status, StatusCode::UNAUTHORIZED);
+        // Der alte Admin-Schlüssel öffnet nichts mehr.
+        let alt = p
+            .anfrage(
+                "GET",
+                "/admin/ueberblick",
+                Some("admin-token-fuer-den-test"),
+                None,
+                &[],
+                None,
+            )
+            .await;
+        assert_eq!(alt.status, StatusCode::UNAUTHORIZED);
 
-    // Die Datei wird beim Root-Setzen entfernt.
-    assert!(!p.daten.join("admin-token").exists());
+        // Die Datei wird beim Root-Setzen entfernt.
+        assert!(!p.daten.join("admin-token").exists());
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn mit_entra_gibt_es_keine_einmal_codes() {
-    let p = Pruefung::mit_entra().await;
-    let anmelden = p
-        .anfrage(
-            "POST",
-            "/anmelden",
-            None,
-            None,
-            &[],
-            Some(serde_json::to_vec(&json!({"code": "ABCD-2345", "name": "x"})).unwrap()),
-        )
-        .await;
-    assert_eq!(anmelden.status, StatusCode::NOT_FOUND);
-    let codes = p
-        .admin(
-            "POST",
-            "/admin/codes",
-            Some(json!(CodeAnlegen {
-                gruppen: Vec::new(),
-                minuten: None,
-                unbegrenzt: false
-            })),
-        )
-        .await;
-    assert_eq!(codes.status, StatusCode::NOT_FOUND);
-    let arten = p
-        .anfrage("GET", "/anmeldearten", None, None, &[], None)
-        .await;
-    assert_eq!(arten.status, StatusCode::OK);
-    assert_eq!(arten.json["entra"], true);
-    assert_eq!(arten.json["root"], true);
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let anmelden = p
+            .anfrage(
+                "POST",
+                "/anmelden",
+                None,
+                None,
+                &[],
+                Some(serde_json::to_vec(&json!({"code": "ABCD-2345", "name": "x"})).unwrap()),
+            )
+            .await;
+        assert_eq!(anmelden.status, StatusCode::NOT_FOUND);
+        let codes = p
+            .admin(
+                "POST",
+                "/admin/codes",
+                Some(json!(CodeAnlegen {
+                    gruppen: Vec::new(),
+                    minuten: None,
+                    unbegrenzt: false
+                })),
+            )
+            .await;
+        assert_eq!(codes.status, StatusCode::NOT_FOUND);
+        let arten = p
+            .anfrage("GET", "/anmeldearten", None, None, &[], None)
+            .await;
+        assert_eq!(arten.status, StatusCode::OK);
+        assert_eq!(arten.json["entra"], true);
+        assert_eq!(arten.json["root"], true);
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn altgeraete_ohne_benutzer_nur_wenn_erlaubt() {
-    let p = Pruefung::neu().await;
-    // Einen Code-Weg ohne Entra benutzen: Gruppe, Code, Anmelden.
-    let gruppe = qd_gruppe();
-    assert_eq!(
-        p.admin("PUT", "/admin/gruppen/team", Some(json!(gruppe)))
-            .await
-            .status,
-        StatusCode::OK
-    );
-    let code = p
-        .admin(
-            "POST",
-            "/admin/codes",
-            Some(json!(CodeAnlegen {
-                gruppen: vec![quiver_domain::GruppeId::neu("team")],
-                minuten: Some(60),
-                unbegrenzt: false
-            })),
-        )
-        .await;
-    let code: quiver_protocol::Code = serde_json::from_value(code.json).expect("Code");
-    let anmelden = p
-        .anfrage(
-            "POST",
-            "/anmelden",
-            None,
-            None,
-            &[],
-            Some(serde_json::to_vec(&json!({"code": code.code, "name": "Alt"})).expect("JSON")),
-        )
-        .await;
-    assert_eq!(anmelden.status, StatusCode::OK);
-    let antwort: AnmeldenAntwort = serde_json::from_value(anmelden.json).expect("Antwort");
+    mit_zeitlimit(async {
+        let p = Pruefung::neu().await;
+        // Einen Code-Weg ohne Entra benutzen: Gruppe, Code, Anmelden.
+        let gruppe = qd_gruppe();
+        assert_eq!(
+            p.admin("PUT", "/admin/gruppen/team", Some(json!(gruppe)))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        let code = p
+            .admin(
+                "POST",
+                "/admin/codes",
+                Some(json!(CodeAnlegen {
+                    gruppen: vec![quiver_domain::GruppeId::neu("team")],
+                    minuten: Some(60),
+                    unbegrenzt: false
+                })),
+            )
+            .await;
+        let code: quiver_protocol::Code = serde_json::from_value(code.json).expect("Code");
+        let anmelden = p
+            .anfrage(
+                "POST",
+                "/anmelden",
+                None,
+                None,
+                &[],
+                Some(serde_json::to_vec(&json!({"code": code.code, "name": "Alt"})).expect("JSON")),
+            )
+            .await;
+        assert_eq!(anmelden.status, StatusCode::OK);
+        let antwort: AnmeldenAntwort = serde_json::from_value(anmelden.json).expect("Antwort");
 
-    // Erlaubt: das Gerät darf.
-    let erlaubt = p
-        .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
-        .await;
-    assert_eq!(erlaubt.status, StatusCode::OK);
+        // Erlaubt: das Gerät darf.
+        let erlaubt = p
+            .anfrage("GET", "/geraet/soll", Some(&antwort.token), None, &[], None)
+            .await;
+        assert_eq!(erlaubt.status, StatusCode::OK);
 
-    // Gesperrt: 403 mit grund=neu_anmelden.
-    let gesperrt = p.neu_oeffentlich(&p.oeffentlich, false).await;
-    let antwort_gesperrt = gesperrt
-        .clone()
-        .oneshot(
-            axum::http::Request::builder()
-                .uri("/api/v1/geraet/soll")
-                .header("authorization", format!("Bearer {}", antwort.token))
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let (status, json) = {
-        let status = antwort_gesperrt.status();
-        let text = antwort_gesperrt
-            .into_body()
-            .collect()
+        // Gesperrt: 403 mit grund=neu_anmelden.
+        let gesperrt = p.neu_oeffentlich(&p.oeffentlich, false).await;
+        let antwort_gesperrt = gesperrt
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/geraet/soll")
+                    .header("authorization", format!("Bearer {}", antwort.token))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
             .await
-            .unwrap()
-            .to_bytes();
-        (
-            status,
-            serde_json::from_slice::<Value>(&text).unwrap_or(Value::Null),
-        )
-    };
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(json["grund"], "neu-anmelden");
+            .unwrap();
+        let (status, json) = {
+            let status = antwort_gesperrt.status();
+            let text = antwort_gesperrt
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes();
+            (
+                status,
+                serde_json::from_slice::<Value>(&text).unwrap_or(Value::Null),
+            )
+        };
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(json["grund"], "neu-anmelden");
+    })
+    .await;
 }
 
 #[derive(Clone, Default)]
@@ -1818,28 +1914,33 @@ async fn kein_geheimnis_im_log() {
         .with_max_level(tracing::Level::TRACE)
         .finish();
     let _wache = tracing::subscriber::set_default(abonnent);
+    // Der Interesse-Cache entscheidet, ob ein Aufrufpunkt überhaupt schreibt;
+    // viele Tests laufen gleichzeitig durch dieselben Zeilen.
+    tracing::callsite::rebuild_interest_cache();
 
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let _ = p.geraet_anmelden("Rechner", 51234).await;
-    // Auch ein Fehlversuch darf kein Geheimnis ins Log schreiben.
-    let _ = p
-        .anfrage(
-            "POST",
-            "/auth/root",
-            None,
-            None,
-            &[("origin", &p.oeffentlich), ("x-quiver", "1")],
-            Some(
-                serde_json::to_vec(&json!({
-                    "email": ROOT_EMAIL,
-                    "passwort": "falsches-passwort-123"
-                }))
-                .unwrap(),
-            ),
-        )
-        .await;
-    drop(_wache);
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let _ = p.geraet_anmelden("Rechner", 51234).await;
+        // Auch ein Fehlversuch darf kein Geheimnis ins Log schreiben.
+        let _ = p
+            .anfrage(
+                "POST",
+                "/auth/root",
+                None,
+                None,
+                &[("origin", &p.oeffentlich), ("x-quiver", "1")],
+                Some(
+                    serde_json::to_vec(&json!({
+                        "email": ROOT_EMAIL,
+                        "passwort": "falsches-passwort-123"
+                    }))
+                    .unwrap(),
+                ),
+            )
+            .await;
+    })
+    .await;
     let text = puffer.text();
     for geheim in [ENTRA_SECRET, ROOT_PASSWORT, "refresh-1", "refresh-2"] {
         assert!(
@@ -1860,32 +1961,233 @@ fn qd_gruppe() -> quiver_domain::Gruppe {
 
 #[tokio::test]
 async fn keine_geheimnisse_in_antworten_und_pruefspur() {
-    let p = Pruefung::mit_entra().await;
-    p.eintrag_anlegen().await;
-    let antwort = p.geraet_anmelden("Rechner", 51234).await;
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let antwort = p.geraet_anmelden("Rechner", 51234).await;
 
-    let mut ausgaben = Vec::new();
-    for (methode, pfad) in [
-        ("GET", "/admin/benutzer"),
-        ("GET", "/admin/entra-gruppen"),
-        ("GET", "/admin/pruefspur"),
-        ("GET", "/admin/ueberblick"),
-    ] {
-        let antwort = p.admin(methode, pfad, None).await;
-        assert_eq!(antwort.status, StatusCode::OK, "{pfad}");
-        ausgaben.push(antwort.text);
-    }
-    // Die Prüfspur nennt Vorgänge, aber keine Geheimnisse.
-    let pruefspur = &ausgaben[2];
-    assert!(pruefspur.contains("anmeldung") || pruefspur.contains("geraet"));
-    for geheim in [ENTRA_SECRET, ROOT_PASSWORT, "refresh-1", "refresh-2"] {
-        for ausgabe in &ausgaben {
-            assert!(
-                !ausgabe.contains(geheim),
-                "Geheimnis {geheim} steht in einer Antwort"
+        let mut ausgaben = Vec::new();
+        for (methode, pfad) in [
+            ("GET", "/admin/benutzer"),
+            ("GET", "/admin/entra-gruppen"),
+            ("GET", "/admin/pruefspur"),
+            ("GET", "/admin/ueberblick"),
+        ] {
+            let antwort = p.admin(methode, pfad, None).await;
+            assert_eq!(antwort.status, StatusCode::OK, "{pfad}");
+            ausgaben.push(antwort.text);
+        }
+        // Die Prüfspur nennt Vorgänge, aber keine Geheimnisse.
+        let pruefspur = &ausgaben[2];
+        assert!(pruefspur.contains("anmeldung") || pruefspur.contains("geraet"));
+        for geheim in [ENTRA_SECRET, ROOT_PASSWORT, "refresh-1", "refresh-2"] {
+            for ausgabe in &ausgaben {
+                assert!(
+                    !ausgabe.contains(geheim),
+                    "Geheimnis {geheim} steht in einer Antwort"
+                );
+            }
+        }
+        // Das Geräte-Token erscheint nur in der Anmeldeantwort selbst.
+        assert!(!ausgaben.iter().any(|a| a.contains(&antwort.token)));
+    })
+    .await;
+}
+
+// ----------------------------------------------- Aufgabe 26, Punkt 1 und 6
+
+/// Zeitlimit je Test, der auf Server oder Nachbau wartet: Hängen ist ein
+/// Fehlschlag (Aufgabe 26, Punkt 7).
+async fn mit_zeitlimit<T>(was: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(120), was)
+        .await
+        .expect("Test hängt: Zeitlimit überschritten")
+}
+
+#[tokio::test]
+async fn gesperrter_benutzer_verliert_seine_sitzungen_sofort() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        p.geraet_anmelden("Rechner", 51234).await;
+        let ernannt = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}"),
+                Some(json!(BenutzerAendern {
+                    rolle: Some(Rolle::Admin),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(ernannt.status, StatusCode::OK, "{}", ernannt.text);
+        let cookie = p.verwaltungs_anmeldung().await;
+        let vorher = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(vorher.status, StatusCode::OK, "{}", vorher.text);
+
+        // Sperren: die Sitzung endet sofort am Server (löschen, nicht nur
+        // ablehnen) – die nächste Anfrage ist 401, nicht 403.
+        let gesperrt = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}"),
+                Some(json!(BenutzerAendern {
+                    gesperrt: Some(true),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(gesperrt.status, StatusCode::OK, "{}", gesperrt.text);
+
+        let danach = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(
+            danach.status,
+            StatusCode::UNAUTHORIZED,
+            "Sitzung ist gelöscht: {}",
+            danach.text
+        );
+
+        // Auch `/auth/ich` kennt die Sitzung nicht mehr.
+        let ich = p
+            .anfrage("GET", "/auth/ich", None, Some(&cookie), &[], None)
+            .await;
+        assert_eq!(ich.status, StatusCode::UNAUTHORIZED);
+
+        // In der Datenbank steht keine Sitzung dieses Benutzers mehr.
+        let conn = rusqlite::Connection::open(p.daten.join("quiver.db")).expect("DB");
+        let anzahl: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sitzungen WHERE oid = ?1",
+                rusqlite::params![OID],
+                |zeile| zeile.get(0),
+            )
+            .expect("Zahl");
+        assert_eq!(anzahl, 0, "gesperrter Benutzer hat keine Sitzung mehr");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn wache_prueft_nach_60_minuten_nach_und_beendet_dann() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        p.geraet_anmelden("Rechner", 51234).await;
+        let ernannt = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}"),
+                Some(json!(BenutzerAendern {
+                    rolle: Some(Rolle::Admin),
+                    ..Default::default()
+                })),
+            )
+            .await;
+        assert_eq!(ernannt.status, StatusCode::OK);
+        let cookie = p.verwaltungs_anmeldung().await;
+        let mock = p.mock.clone().expect("Nachbau");
+        let vorher = mock.zaehler().2;
+
+        // Kurz danach: keine Nachprüfung, die Wache lässt durch.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::minutes(1));
+        let frueh = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(frueh.status, StatusCode::OK, "{}", frueh.text);
+        assert_eq!(mock.zaehler().2, vorher, "noch keine Nachprüfung");
+
+        // Mehr als 60 Minuten seit der letzten Prüfung (die Sitzung selbst lebt
+        // im Leerlauf 60 Minuten, deshalb in zwei Schritten): die Wache prüft
+        // selbst nach und lässt durch.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::minutes(50));
+        let zwischen = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(zwischen.status, StatusCode::OK, "{}", zwischen.text);
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::minutes(100));
+        let nach = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(nach.status, StatusCode::OK, "{}", nach.text);
+        assert_eq!(
+            mock.zaehler().2,
+            vorher + 1,
+            "die Wache hat vor dem Durchlassen nachgeprüft"
+        );
+
+        // Verweigert Entra die Auffrischung, enden die Sitzungen sofort. Die
+        // Sitzung lebt im Leerlauf 60 Minuten, die Prüfung ist nach 60 Minuten
+        // fällig – deshalb dazwischen ab und zu benutzen.
+        mock.refresh_fehler("invalid_grant");
+        for minuten in [120, 150] {
+            p.uhr
+                .setze(OffsetDateTime::now_utc() + time::Duration::minutes(minuten));
+            let weiter = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+            assert_eq!(
+                weiter.status,
+                StatusCode::OK,
+                "nach {minuten} Minuten ohne fällige Prüfung: {}",
+                weiter.text
             );
         }
-    }
-    // Das Geräte-Token erscheint nur in der Anmeldeantwort selbst.
-    assert!(!ausgaben.iter().any(|a| a.contains(&antwort.token)));
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::minutes(165));
+        let abgewiesen = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
+        assert_eq!(
+            abgewiesen.status,
+            StatusCode::UNAUTHORIZED,
+            "{}",
+            abgewiesen.text
+        );
+        let conn = rusqlite::Connection::open(p.daten.join("quiver.db")).expect("DB");
+        let anzahl: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sitzungen WHERE oid = ?1",
+                rusqlite::params![OID],
+                |zeile| zeile.get(0),
+            )
+            .expect("Zahl");
+        assert_eq!(anzahl, 0, "die Sitzung ist gelöscht, nicht nur abgelehnt");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn discovery_wird_nach_24_stunden_erneuert_und_haelt_den_alten_stand() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        p.geraet_anmelden("Rechner", 51234).await;
+        let mock = p.mock.clone().expect("Nachbau");
+        let erster_stand = mock.discovery_zaehler();
+        assert!(erster_stand >= 1, "die Discovery wurde geholt");
+
+        // Keine 24 Stunden: kein neues Holen.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::hours(23));
+        p.geraet_anmelden("Zweiter", 51234).await;
+        assert_eq!(
+            mock.discovery_zaehler(),
+            erster_stand,
+            "innerhalb von 24 Stunden gilt die Discovery weiter"
+        );
+
+        // Nach 24 Stunden wird neu geholt – der Nachbau antwortet nicht, der
+        // alte Stand gilt weiter (mit Warnung), die Anmeldung klappt trotzdem.
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::hours(25));
+        mock.discovery_aus(true);
+        let vor_dem_versuch = mock.discovery_zaehler();
+        p.geraet_anmelden("Dritter", 51234).await;
+        assert!(
+            mock.discovery_zaehler() > vor_dem_versuch,
+            "nach 24 Stunden wurde es erneut versucht"
+        );
+
+        // Ist der Nachbau wieder da, wird der neue Stand genommen.
+        mock.discovery_aus(false);
+        p.uhr
+            .setze(OffsetDateTime::now_utc() + time::Duration::hours(50));
+        let vor_dem_neuen = mock.discovery_zaehler();
+        p.geraet_anmelden("Vierter", 51234).await;
+        assert!(mock.discovery_zaehler() > vor_dem_neuen);
+    })
+    .await;
 }

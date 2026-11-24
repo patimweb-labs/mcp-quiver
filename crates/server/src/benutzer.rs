@@ -58,13 +58,16 @@ pub fn passwort_pruefen(passwort: &str, hash: &str) -> bool {
 }
 
 /// Ein Dummy-Hash für unbekannte E-Mails: gleiche Arbeit, gleiche Dauer.
-fn dummy_hash() -> &'static str {
-    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    DUMMY.get_or_init(|| {
-        passwort_hashen("kein-benutzer-hat-dieses-passwort-123")
-            .expect("Dummy-Hash lässt sich bilden")
-    })
+///
+/// Er wird **beim Start** erzeugt (Aufgabe 26, Punkt 4), nicht beim ersten
+/// fehlgeschlagenen Versuch und nicht im Async-Faden – sonst wäre der erste
+/// Rateversuch schneller als alle folgenden und damit ein Orakel.
+pub fn dummy_hash_erzeugen() -> anyhow::Result<String> {
+    passwort_hashen(DUMMY_PASSWORT)
 }
+
+/// Das Passwort, das nie jemand benutzt; nur der Hash davon wird gebraucht.
+pub const DUMMY_PASSWORT: &str = "kein-benutzer-hat-dieses-passwort-123";
 
 /// `GET /anmeldearten`: welche Wege bietet dieser Server? (Für die Anmeldeseite.)
 pub(crate) async fn anmeldearten(
@@ -127,7 +130,8 @@ pub(crate) async fn root_anmelden(
     }
 
     // Auch bei unbekannter E-Mail wird gerechnet, und zwar am Dummy-Hash –
-    // sonst wäre die Antwortzeit ein Orakel für gültige Konten.
+    // sonst wäre die Antwortzeit ein Orakel für gültige Konten. Der Dummy-Hash
+    // ist beim Start entstanden (`Zustand::dummy`), nicht jetzt.
     let vorhanden = gefunden.is_some();
     let permit = zustand.argon.try_acquire().map_err(|_| {
         FehlerAntwort::neu(
@@ -137,9 +141,9 @@ pub(crate) async fn root_anmelden(
     })?;
     let passwort = anfrage.passwort.clone();
     let hash = if vorhanden {
-        hash.unwrap_or_else(|| dummy_hash().to_string())
+        hash.unwrap_or_else(|| zustand.dummy.clone())
     } else {
-        dummy_hash().to_string()
+        zustand.dummy.clone()
     };
     let passt = tokio::task::spawn_blocking(move || passwort_pruefen(&passwort, &hash))
         .await
@@ -204,7 +208,8 @@ fn warteschlange(zustand: &Zustand, ip: &str, konto: &str, jetzt: OffsetDateTime
     }
 }
 
-fn antwort_mit_sitzung(
+/// Antwort nach einer Anmeldung: Rumpf [`Ich`] und Sitzungscookie.
+pub(crate) fn antwort_mit_sitzung(
     zustand: &Zustand,
     token: &str,
     benutzer: &Benutzer,
@@ -623,5 +628,34 @@ pub fn admin_token_ignorieren() {
         tracing::warn!(
             "QUIVER_ADMIN_TOKEN wird seit Aufgabe 20 ignoriert; die Verwaltung nutzt Sitzungen"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dummy_hash_ist_ein_echter_argon2id_hash() {
+        // Beim Start erzeugt (`Zustand::dummy`), damit der erste Rateversuch
+        // nicht schneller ist als alle folgenden (Aufgabe 26, Punkt 4).
+        let hash = dummy_hash_erzeugen().expect("Dummy-Hash");
+        assert!(hash.starts_with("$argon2id$"), "kein Argon2id: {hash}");
+        assert!(passwort_pruefen(DUMMY_PASSWORT, &hash));
+        assert!(!passwort_pruefen("etwas-anderes", &hash));
+        // Zwei Hashes desselben Passworts sind verschieden (eigener Salt).
+        let zweiter = dummy_hash_erzeugen().expect("Dummy-Hash");
+        assert_ne!(hash, zweiter);
+    }
+
+    #[test]
+    fn passwortregeln_und_email() {
+        assert!(!email_gueltig("keine-email"));
+        assert!(!email_gueltig("zwei@punkte@example.test"));
+        assert!(!email_gueltig("mit leer@example.test"));
+        assert!(email_gueltig("root@example.test"));
+        let hash = passwort_hashen("kurz").expect("Hash");
+        assert!(passwort_pruefen("kurz", &hash));
+        assert!(!passwort_pruefen("lang", &hash));
     }
 }

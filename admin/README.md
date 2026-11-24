@@ -24,12 +24,22 @@ npm run build      # nach admin/dist (der Server liefert sie unter / aus)
 npm run typecheck  # vue-tsc
 npm test           # vitest, reine Logik
 npm run bilder     # Bildschirmfotos: Muster immer, Verwaltung mit Server
+npm run pruefung            # Browser-Prüfung gegen den echten Server
+npm run pruefung:anmeldung  # Browser-Prüfung der Geräteanmeldung (+ Entra-Nachbau)
 ```
 
 Zum Ausprobieren im Betrieb: `cargo run -p quiver-server` im Wurzelverzeichnis,
 dann `http://127.0.0.1:8740` öffnen. Beim ersten Start zeigt die Verwaltung die
 Ersteinrichtung; dort entsteht der eine Root-Benutzer. Einen Admin-Token gibt es
 seit ADR 0002 nicht mehr.
+
+Für `npm run dev` (Vite auf 5173) muss der Server dieselbe Herkunft kennen, denn
+`/auth/stand` und `/auth/einrichten` prüfen den `Host`-Kopf gegen
+`QUIVER_OEFFENTLICH`:
+
+```bash
+QUIVER_OEFFENTLICH=http://localhost:5173 cargo run -p quiver-server
+```
 
 ## Aufbau
 
@@ -82,7 +92,12 @@ Ohne Admin-Token (ADR 0002, Aufgaben 20 und 25):
   Wiederholung und – außerhalb von Loopback – der Einmal-Code aus dem
   Server-Log. Mindestlänge und Gleichheit sind sofort sichtbar. Ist das
   Fenster zu (15 Minuten nach dem Start), nennt die Seite den Befehl zum
-  Neustart.
+  Neustart. Angelegt wird der Root mit `POST /auth/einrichten`; danach meldet
+  der Server gleich an, und die Seite kommt nie wieder (404).
+- **Die Seiten des Servers** (Gerätebestätigung, Fehlermeldungen) bringt der
+  Server selbst mit: eigenes Stylesheet `/auth/stil.css` aus denselben Tokens,
+  Logo, dunkel/hell über `prefers-color-scheme`, Hand-Cursor, Titel und Texte
+  deutsch oder englisch nach `Accept-Language`. Sie brauchen kein Vue.
 
 Die Seite hat **kein Inline-JavaScript**: die Sicherheitsköpfe des Servers
 erlauben nur `script-src 'self'`. Das Theme setzt deshalb `public/thema.js`
@@ -156,3 +171,32 @@ Stand gibt es sie nicht.
   `http://127.0.0.1:8740`), die Anmeldung über die echte Seite aus
   `QUIVER_BILD_EMAIL` und `QUIVER_BILD_PASSWORT`. Fehlen sie, bleiben diese
   Bilder unverändert.
+
+## Prüfungen im Browser
+
+Zwei Skripte prüfen die Verwaltung gegen den **echten** Server: gebautes
+`dist`, die CSP des Servers, Chrome headless mit eigenem temporären Profil,
+Loopback und ein temporärer Datenordner. Kein echter Mandant, kein echter
+Tresor, keine Firmendaten; Ports 8740–8742 bleiben unberührt (es wird ein
+freier Port gesucht).
+
+```bash
+cargo build -p quiver-server
+npm run build
+npm run pruefung            # Einrichten → Abmelden → Anmelden → falsches
+                            # Passwort → Übersicht → einen Satz ändern;
+                            # am Ende: 0 CSP-Verstöße, 0 Konsolenfehler
+npm run pruefung:anmeldung  # Geräteanmeldung → Bestätigen → Rücksprung auf
+                            # http://127.0.0.1:<Port>/quiver mit Code, gegen
+                            # einen Entra-Nachbau auf Loopback
+```
+
+`pruefung:anmeldung` prüft zusätzlich die Kopfzeile `Referrer-Policy`
+(`same-origin`, sonst schickt der Browser beim Formular `Origin: null`), das
+`form-action` der Bestätigungsseite für genau den Port des Vorgangs, das
+geladene Stylesheet und den Hand-Cursor. Beide Skripte haben ein Zeitlimit;
+Hängen ist ein Fehlschlag.
+
+`scripts/server.mjs` startet den Server (`QUIVER_BIN` überschreibt den Pfad),
+`scripts/mock-entra.mjs` ist der OIDC-Nachbau (eigener RSA-Schlüssel,
+erfundene GUIDs).

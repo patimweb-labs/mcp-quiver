@@ -8,7 +8,9 @@
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "bilder": "node scripts/bilder.mjs"
+    "bilder": "node scripts/bilder.mjs",
+    "pruefung": "node scripts/pruefung.mjs",
+    "pruefung:anmeldung": "node scripts/anmeldung-browser.mjs"
   },
   "dependencies": {
     "lucide-vue-next": "^1.0.0",
