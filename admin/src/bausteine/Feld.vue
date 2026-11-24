@@ -5,18 +5,25 @@
 // Kennung weiter).
 import { useId } from "vue";
 
-const props = defineProps<{
-  beschriftung: string;
-  hinweis?: string;
-  fehler?: string;
-  /** Eigene Kennung, wenn das Element sie schon von außen bekommt. */
-  kennung?: string;
-  /**
-   * `false` für Bedienelemente, die keinen eigenen Namen tragen können
-   * (Knopfreihen) – die Beschriftung bleibt sichtbar, verknüpft aber nichts.
-   */
-  benennt?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    beschriftung: string;
+    hinweis?: string;
+    fehler?: string | null;
+    /** Eigene Kennung, wenn das Element sie schon von außen bekommt. */
+    kennung?: string;
+    /**
+     * `false` für Bedienelemente, die keinen eigenen Namen tragen können
+     * (Knopfreihen) – die Beschriftung bleibt sichtbar, verknüpft aber nichts.
+     *
+     * Der Vorgabewert steht ausdrücklich hier: Vue wandelt ein fehlendes
+     * Boolean-Attribut sonst in `false` um, und dann wäre jede Beschriftung ein
+     * `<span>` ohne Namen für den Screenreader.
+     */
+    benennt?: boolean;
+  }>(),
+  { benennt: true, fehler: null },
+);
 
 const eigene = useId();
 const id = props.kennung ?? eigene;
@@ -24,7 +31,7 @@ const id = props.kennung ?? eigene;
 
 <template>
   <div class="feld">
-    <label v-if="benennt !== false" class="feld__label" :for="id">
+    <label v-if="benennt" class="feld__label" :for="id">
       {{ beschriftung }}
     </label>
     <span v-else class="feld__label">{{ beschriftung }}</span>

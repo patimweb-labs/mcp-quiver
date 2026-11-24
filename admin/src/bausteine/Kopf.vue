@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// Kopf der Verwaltung: Wortmarke links, Farbschema und Abmelden rechts.
+// Kopf der Verwaltung: Wortmarke links, Farbschema, Name mit Rolle und
+// Abmelden rechts.
 // Dasselbe Muster wie `bausteine::kopf` im Client-Fenster: feste Höhe aus
 // `size.kopf`, Inhalt mittig, 16 px Rand links und rechts (AGENTS.md §2.11).
 //
@@ -10,14 +11,20 @@ import { LogOut, Settings } from "lucide-vue-next";
 import { WpButton, WpIconButton, WpMenu } from "@weppelmann/components";
 import type { MenuItem } from "@weppelmann/components";
 
-import type { Thema } from "../api/typen";
+import type { Ich, Thema } from "../api/typen";
 import { breite } from "../logik/breite";
+import { anzeige_name, rollen_text } from "../logik/anmeldung";
 import { THEMEN, THEMA_TEXT } from "../logik/thema";
 import Marke from "./Marke.vue";
 import Segmentauswahl from "./Segmentauswahl.vue";
 
-const props = defineProps<{ thema: Thema }>();
+// `ich` fehlt nur auf der Musterseite: sie vergleicht Maße, sie zeigt keinen
+// Benutzer (dort steht dieselbe Kopfzeile wie im Client-Fenster).
+const props = defineProps<{ thema: Thema; ich?: Ich }>();
 const emit = defineEmits<{ thema: [string]; abmelden: [] }>();
+
+const name = computed(() => (props.ich ? anzeige_name(props.ich.benutzer) : ""));
+const rolle = computed(() => (props.ich ? rollen_text(props.ich.benutzer.rolle) : ""));
 
 const farbschemen = THEMEN.map((wert) => ({
   wert,
@@ -57,6 +64,10 @@ function waehleThema(wert: string): void {
       >
         <WpIconButton :icon="Settings" label="Farbschema" size="sm" />
       </WpMenu>
+      <span v-if="ich" class="kopf__ich" :title="`${name} · ${rolle}`">
+        <span class="kopf__name">{{ name }}</span>
+        <span class="kopf__rolle">{{ rolle }}</span>
+      </span>
       <WpButton
         label="Abmelden"
         variant="secondary"
@@ -85,5 +96,26 @@ function waehleThema(wert: string): void {
   align-items: center;
   gap: var(--wp-space-3);
   min-width: 0;
+}
+
+/* Name und Rolle: der Name darf schrumpfen, die Rolle bleibt lesbar. */
+.kopf__ich {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wp-space-2);
+  min-width: 0;
+}
+
+.kopf__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: calc(var(--wp-space-8) * 3);
+}
+
+.kopf__rolle {
+  flex: none;
+  color: var(--wp-color-text-muted);
+  font-size: var(--wp-font-size-sm);
 }
 </style>

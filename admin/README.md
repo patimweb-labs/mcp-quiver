@@ -27,24 +27,24 @@ npm run bilder     # Bildschirmfotos: Muster immer, Verwaltung mit Server
 ```
 
 Zum Ausprobieren im Betrieb: `cargo run -p quiver-server` im Wurzelverzeichnis,
-dann `http://127.0.0.1:8740` öffnen. Seit Aufgabe 20 gibt es keinen
-Admin-Token mehr: die Verwaltung meldet sich mit einer Sitzung an (Root per
-E-Mail/Passwort oder Entra mit Rolle `admin`). Die Anmeldeseite dieser
-Oberfläche wird in Aufgabe 21 darauf umgestellt.
+dann `http://127.0.0.1:8740` öffnen. Beim ersten Start zeigt die Verwaltung die
+Ersteinrichtung; dort entsteht der eine Root-Benutzer. Einen Admin-Token gibt es
+seit ADR 0002 nicht mehr.
 
 ## Aufbau
 
 ```
 src/
   api/typen.ts        Vertrag, eins zu eins aus crates/protocol und crates/domain
-  api/client.ts       fetch mit Bearer-Token; 401 führt zur Anmeldung
+  api/client.ts       fetch mit Sitzungscookie; 401 führt zur Anmeldung
   logik/              reine Funktionen mit Tests (Zustände, Prüfung, Format,
                       Breitenstufen)
   bausteine/          eigene Bausteine, gleiche Namen und Maße wie in
                       crates/oberflaeche/src/bausteine.rs: Kopf,
                       Seitenleiste, Segmentauswahl, Karte, Status, Feld, …
   ansichten/Muster.vue Musterseite für den Vergleich (nur im Dev-Bau)
-  ansichten/          Überblick, Bibliothek, Sätze, Gruppen, Geräte
+  ansichten/          Anmeldebereich (Anmelden, Ersteinrichtung, geschlossen),
+                      Überblick, Bibliothek, Sätze, Gruppen, Geräte
   styles/tokens.css   erzeugt aus tokens/ – nicht von Hand ändern
   styles/schriften.css IBM Plex Sans/Mono aus crates/oberflaeche/schriften
 ```
@@ -52,6 +52,41 @@ src/
 Der Zustand einer Seite ist ein Summentyp (`Zustand<T>` in `logik/seite.ts`):
 `laedt`, `fertig` mit Daten oder `fehler` mit Text. Die Ansichten entscheiden
 nichts; Rechnen, Filtern und Prüfen steht in `logik/` und ist getestet.
+
+## Anmeldung
+
+Ohne Admin-Token (ADR 0002, Aufgaben 20 und 25):
+
+- **Sitzung nur im Cookie.** Der Server setzt `quiver_sitzung` (`HttpOnly`,
+  `SameSite=Lax`, `Path=/`, bei https `Secure` und `__Host-`). Der Client
+  schickt `credentials: "same-origin"` mit und nirgends ein `Authorization`.
+  Weder `localStorage` noch `sessionStorage` enthalten etwas außer dem Theme.
+- **Ändernde Anfragen** (POST, PUT, PATCH, DELETE) tragen `X-Quiver: 1`; der
+  Server verlangt zusätzlich einen `Origin`, der zu `QUIVER_OEFFENTLICH` passt
+  (CSRF). GET braucht beides nicht.
+- **`GET /auth/stand`** (offen) sagt, ob ein Root gesetzt ist und ob die
+  Ersteinrichtung offen ist. Danach zeigt die Verwaltung genau eine Lage aus
+  `logik/anmeldung.ts`: laden, Ersteinrichtung, geschlossen, anmelden, bereit,
+  keine Rolle oder Fehler. Ein Server ohne diesen Weg (404) bleibt bei der
+  Anmeldung.
+- **Anmelden:** Root mit E-Mail und Passwort (`POST /api/v1/auth/root`), dazu
+  „Mit Microsoft anmelden“ (`GET /auth/admin/start`) — nur wenn der Server
+  Entra kennt. Ein echter Verweis, damit der Browser der Weiterleitung folgt.
+- **Ein 401** führt zur Anmeldung mit Begründung. Der Rücksprung danach nimmt
+  nur eigene Pfade (`#/geraete` ja, fremde Adresse nein) — `logik/anmeldung.ts`
+  prüft das, die Ansicht baut das Ziel nie aus einer fremden Adresse.
+- **Abmelden** löscht die Sitzung am Server (`POST /api/v1/auth/abmelden`) und
+  zeigt wieder die Anmeldung. Im Kopf stehen Name und Rolle aus
+  `GET /api/v1/auth/ich`.
+- **Ersteinrichtung** (nur solange kein Root gesetzt ist): E-Mail, Passwort,
+  Wiederholung und – außerhalb von Loopback – der Einmal-Code aus dem
+  Server-Log. Mindestlänge und Gleichheit sind sofort sichtbar. Ist das
+  Fenster zu (15 Minuten nach dem Start), nennt die Seite den Befehl zum
+  Neustart.
+
+Die Seite hat **kein Inline-JavaScript**: die Sicherheitsköpfe des Servers
+erlauben nur `script-src 'self'`. Das Theme setzt deshalb `public/thema.js`
+vor dem ersten Aufbau, nicht ein `<script>` im `index.html`.
 
 ## Fenstergröße
 
@@ -110,8 +145,14 @@ Stand gibt es sie nicht.
   Entwicklungs-Server selbst; es braucht weder Server noch Anmeldung. Das
   Gegenstück erzeugt `QUIVER_BILDER=docs/bilder cargo test -p quiver-oberflaeche
   --test muster`.
+- `admin-{dark,light}-{anmeldung,einrichtung,geschlossen}.png` (1440 × 900) —
+  die Seiten vor der Anmeldung. Dafür genügt derselbe Entwicklungs-Server: das
+  Skript ersetzt im Browser die Antworten von `/auth/stand` und
+  `/api/v1/auth/ich`, damit jeder Zustand einmal zu sehen ist. Kein Server,
+  keine Zugangsdaten.
 - `admin-{dark,light}-{bibliothek,geraete}.png` — dafür muss ein Server mit
-  Daten laufen und `admin/dist` gebaut sein (`npm run build`). Die Adresse
-  kommt aus `QUIVER_BILD_BASIS` (Standard `http://127.0.0.1:8740`). Die
-  Anmeldung über eine Sitzung folgt mit Aufgabe 21; bis dahin bleiben diese
+  Daten und gesetztem Root laufen und `admin/dist` gebaut sein (`npm run
+  build`); die Adresse kommt aus `QUIVER_BILD_BASIS` (Standard
+  `http://127.0.0.1:8740`), die Anmeldung über die echte Seite aus
+  `QUIVER_BILD_EMAIL` und `QUIVER_BILD_PASSWORT`. Fehlen sie, bleiben diese
   Bilder unverändert.
