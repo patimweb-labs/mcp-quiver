@@ -7,3 +7,12 @@ Tests Ende-zu-Ende mit echtem Server und Entra-Nachbau, Browser als Trait; kitte
 ## Nachtrag: Warum der Client endet
 
 Jedes Ende steht mit Ursache im Log (Tray, Fenster/Cmd+Q, Strg+C, SIGTERM, zweite Instanz, Abmelden des Systems). SIGTERM geordnet wie Strg+C (Unix; Windows: Konsolen-Ereignisse). Cmd+Q ist **kein** Ende, sondern legt das Fenster in den Tray (wie das Schließen); beenden nur über den Tray. Tests.
+
+## Nachtrag: Seite Verbindung (Bild des Nutzers, 2026-11-24)
+
+- Erst **nur die Server-Adresse**. Nach „Weiter“ (oder Enter) fragt der Client `anmeldearten` und zeigt danach **entweder** einen Knopf „Mit Microsoft anmelden“ **oder** das Code-Feld, nie beides. Ohne Entra und ohne Code-Weg: klare Meldung.
+- Die zuletzt benutzte Adresse ist vorbelegt, auch nach dem Abmelden (Abmelden verwirft Token und Gerät, nicht die Adresse). Der Platzhalter ist `https://quiver.firma.de`.
+- Während der Anmeldung: „Im Browser fortfahren …“, Knöpfe „Browser erneut öffnen“ und „Abbrechen“; danach „Angemeldet als …“. Alle Fehlerfälle (Server nicht erreichbar, abgebrochen, keine Gruppe, gesperrt, Zeit abgelaufen) verständlich.
+- „Abmelden“ fragt nach und sagt, was passiert (Agenten verlieren alle Tools; Angaben bleiben).
+- Abmelden steht mit Ursache im Log („Abmelden im Fenster“). Abmelden löscht das Gerät auch am Server; ist er nicht erreichbar, sagt der Client das.
+- Der Server nennt die Gründe in Kebab-Schreibweise (`neu-anmelden`, `kein-zugriff`, `gesperrt`).
