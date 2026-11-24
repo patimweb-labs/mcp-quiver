@@ -255,6 +255,75 @@ export interface Fehler {
   fehler: string;
 }
 
+// ------------------------------------------------------------ Anmeldung
+//
+// Ohne Admin-Token (ADR 0002): Die Sitzung liegt in einem HttpOnly-Cookie,
+// Namen und Rolle kommen aus `/api/v1/auth/ich`. Die Formen stehen in
+// `crates/protocol/src/lib.rs` (`Rolle`, `Anmeldeart`, `Ich`, `BenutzerSicht`,
+// `Anmeldearten`, `RootAnmelden`) und in Aufgabe 25 (`AuthStand`, `Einrichten`).
+
+/** Rolle eines Benutzers; `root` ist der Notzugang, genau einer. */
+export type Rolle = "root" | "admin" | "benutzer";
+
+/** Woher die Sitzung kommt. */
+export type Anmeldeart = "root" | "entra";
+
+/** Ein Benutzer, wie ihn die Verwaltung sieht (`BenutzerSicht`). */
+export interface BenutzerSicht {
+  oid: string;
+  email: string | null;
+  name: string | null;
+  rolle: Rolle;
+  gesperrt: boolean;
+  /** Entra-Objekt-Ids der Gruppen aus dem letzten ID-Token. */
+  entra: string[];
+  /** RFC 3339, zuletzt gesehen. */
+  zuletzt: string | null;
+  /** `gueltig` oder `neu_anmelden`. */
+  token_stand: string;
+  geraete: number;
+}
+
+/** `GET /api/v1/auth/ich`: wer ist angemeldet? */
+export interface Ich {
+  benutzer: BenutzerSicht;
+  art: Anmeldeart;
+}
+
+/** `GET /api/v1/anmeldearten`: welche Wege bietet dieser Server? */
+export interface Anmeldearten {
+  entra: boolean;
+  root: boolean;
+}
+
+/** `POST /api/v1/auth/root`: Root-Anmeldung mit E-Mail und Passwort. */
+export interface RootAnmelden {
+  email: string;
+  passwort: string;
+}
+
+/**
+ * `GET /auth/stand` (Aufgabe 25, offen): Gibt es einen Root, und ist die
+ * Ersteinrichtung offen? `einrichtung` ist `null`, wenn die Frage nicht
+ * anwendbar ist; die Verwaltung zeigt dann dieselbe Seite wie `geschlossen`.
+ */
+export type Einrichtungslage = "offen" | "geschlossen" | null;
+
+export interface AuthStand {
+  eingerichtet: boolean;
+  einrichtung: Einrichtungslage;
+  code_noetig: boolean;
+  entra: boolean;
+}
+
+/** `POST /auth/einrichten` (Aufgabe 25): den einen Root anlegen. */
+export interface Einrichten {
+  email: string;
+  passwort: string;
+  /** Nur nötig, wenn `AuthStand.code_noetig` gilt. */
+  code?: string;
+}
+
 /** Die Seiten der Verwaltung. */
 export type Seite =
   | "ueberblick"

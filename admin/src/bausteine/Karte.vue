@@ -1,14 +1,21 @@
 <script setup lang="ts">
 // Eine Karte: Rahmen, Titel, Unterzeile, Inhalt. Gleiche Maße wie
 // `bausteine::karte` im Client-Fenster.
-defineProps<{ titel: string; unter?: string }>();
+//
+// `titel_als` ist die Ebene der Überschrift: Auf einer Seite, die nur aus
+// dieser Karte besteht (Anmelden, geschlossen), ist der Titel die h1; sonst
+// bleibt er eine h2 unter dem Seitenkopf. So hat jede Seite genau eine h1.
+withDefaults(
+  defineProps<{ titel: string; unter?: string; titel_als?: "h1" | "h2" }>(),
+  { titel_als: "h2" },
+);
 </script>
 
 <template>
   <section class="karte">
     <header class="karte__kopf">
       <div class="karte__zeile">
-        <h2 class="karte__titel">{{ titel }}</h2>
+        <component :is="titel_als" class="karte__titel">{{ titel }}</component>
         <div v-if="$slots.aktionen" class="karte__aktionen">
           <slot name="aktionen" />
         </div>
