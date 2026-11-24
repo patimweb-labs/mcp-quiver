@@ -239,6 +239,7 @@ pub enum Icon {
     Suchen,
     Warnung,
     Datei,
+    Ordner,
     Herunterladen,
     Extern,
 }
@@ -277,6 +278,7 @@ impl Icon {
             Icon::Suchen => egui::include_image!("../icons/search.svg"),
             Icon::Warnung => egui::include_image!("../icons/warning.svg"),
             Icon::Datei => egui::include_image!("../icons/datei.svg"),
+            Icon::Ordner => egui::include_image!("../icons/ordner.svg"),
             Icon::Herunterladen => egui::include_image!("../icons/herunterladen.svg"),
             Icon::Extern => egui::include_image!("../icons/external.svg"),
         }

@@ -70,8 +70,10 @@ describe("Beschriftung und Art", () => {
       "zahl",
       "schalter",
       "url",
+      "ordner",
       "auswahl",
     ]);
+    expect(feld_art_aus_name("ordner", "text")).toBe("ordner");
     expect(feld_art_name({ auswahl: { optionen: [] } })).toBe("auswahl");
     expect(feld_art_text("schalter")).toBe("Schalter");
   });

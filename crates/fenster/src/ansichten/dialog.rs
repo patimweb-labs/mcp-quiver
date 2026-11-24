@@ -50,6 +50,8 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
         .max(thema::SPACE_8 * 2.0);
     let mut bestaetigen = false;
     let mut abbrechen = false;
+    // Für welches Feld der Ordner-Dialog aufgeht – erst nach dem Zeichnen.
+    let mut ordner_fuer: Option<usize> = None;
     // Werte, die der Dialog nicht zeigt (Standardwerte der Felder). Ein
     // Hilfe-Link darf auch sie als Platzhalter nutzen (Aufgabe 13).
     let basis = match &sicht.dialog {
@@ -170,6 +172,13 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                                     &t(sprache, "tools.auswaehlen"),
                                                 )
                                             }
+                                            FeldArt::Ordner => ordnerfeld(
+                                                ui,
+                                                &f,
+                                                &mut eingaben[i].wert,
+                                                &t(sprache, "tools.ordner_waehlen"),
+                                                || ordner_fuer = Some(i),
+                                            ),
                                             _ => {
                                                 let mut feld =
                                                     bausteine::eingabefeld(&mut eingaben[i].wert)
@@ -518,6 +527,13 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                                     &t(sprache, "tools.auswaehlen"),
                                                 )
                                             }
+                                            FeldArt::Ordner => ordnerfeld(
+                                                ui,
+                                                &f,
+                                                &mut eingaben[i].wert,
+                                                &t(sprache, "tools.ordner_waehlen"),
+                                                || ordner_fuer = Some(i),
+                                            ),
                                             _ => {
                                                 let mut feld =
                                                     bausteine::eingabefeld(&mut eingaben[i].wert)
@@ -957,6 +973,9 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
             }
         });
 
+    if let Some(index) = ordner_fuer {
+        sicht.ordner_waehlen(index);
+    }
     if bestaetigen {
         aktionen.extend(sicht.dialog_bestaetigen());
     } else if abbrechen {
@@ -1104,4 +1123,29 @@ impl FokusEinmal for egui::Response {
             ui.ctx().data_mut(|d| d.insert_temp(id, true));
         }
     }
+}
+
+/// Ein Ordner: der Pfad und daneben der Knopf, der den Ordner-Dialog öffnet.
+/// Der Pfad bleibt bearbeitbar, etwa für `~` oder zum Einfügen.
+fn ordnerfeld(
+    ui: &mut egui::Ui,
+    f: &thema::Farben,
+    wert: &mut String,
+    knopf: &str,
+    waehlen: impl FnOnce(),
+) -> egui::Response {
+    // Rechts bleibt Platz für den Scrollbalken des Dialogs.
+    let breite = bausteine::feldbreite(ui).min(ui.available_width() - thema::SPACE_3);
+    let hoehe = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(breite, hoehe),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            if bausteine::knopf(ui, f, Icon::Ordner, knopf).clicked() {
+                waehlen();
+            }
+            ui.add(bausteine::eingabefeld(wert).desired_width(f32::INFINITY))
+        },
+    )
+    .inner
 }

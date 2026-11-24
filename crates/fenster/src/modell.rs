@@ -348,6 +348,24 @@ impl Sicht {
         )
     }
 
+    /// Den Ordner für das Feld `index` des offenen Dialogs wählen. Abbrechen
+    /// lässt den bisherigen Wert stehen. Im Test steht der Pfad in der Sicht.
+    pub fn ordner_waehlen(&mut self, index: usize) {
+        let vorgabe = self.datei.take();
+        let titel = crate::texte::t(self.sprache, "tools.ordner_titel");
+        let (Dialog::Werte { eingaben, .. } | Dialog::Zugang { eingaben, .. }) = &mut self.dialog
+        else {
+            return;
+        };
+        let Some(eingabe) = eingaben.get_mut(index) else {
+            return;
+        };
+        let pfad = vorgabe.or_else(|| crate::datei::ordner_waehlen(&titel, &eingabe.wert));
+        if let Some(pfad) = pfad {
+            eingabe.wert = pfad.display().to_string();
+        }
+    }
+
     /// Ein neues Modell des Kerns übernehmen. Wechselt die Verbindung, folgt
     /// die Seite daraus (Startseite, siehe [`logik::seite_nach_wechsel`]).
     pub fn modell_setzen(&mut self, neu: Modell) {

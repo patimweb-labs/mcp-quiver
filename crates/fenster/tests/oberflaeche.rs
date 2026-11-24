@@ -689,6 +689,66 @@ fn ein_schalter_ist_eine_checkbox_mit_hand_cursor() {
 }
 
 #[test]
+fn ein_ordner_wird_ueber_den_dialog_gewaehlt() {
+    for (groesse, name) in [(gross(), "gross"), ((560.0, 720.0), "schmal")] {
+        let mut h = fenster(
+            modell(
+                verbunden(),
+                vec![eintrag(
+                    "drawio",
+                    "draw.io",
+                    "Diagramme.",
+                    EintragZustand::Laeuft { tools: 1 },
+                    vec![feld_mit(
+                        "ordner",
+                        Quelle::Client,
+                        FeldArt::Ordner,
+                        "Arbeitsordner",
+                    )],
+                )],
+            ),
+            Some(Seite::Tools),
+            Thema::Dunkel,
+            groesse,
+        );
+        h.run();
+        h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
+            .click();
+        h.run();
+        let knopf = h.get_by_role_and_label(Role::Button, "Ordner wählen");
+        let feld = h.get_by_role_and_label(Role::TextInput, "Arbeitsordner");
+        assert!(
+            feld.rect().width() > 120.0 && feld.rect().right() <= knopf.rect().left(),
+            "{name}: Feld {:?}, Knopf {:?}",
+            feld.rect(),
+            knopf.rect()
+        );
+        knopf.hover();
+        h.run();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            CursorIcon::PointingHand,
+            "kein Hand-Cursor auf „Ordner wählen“"
+        );
+        // Der Pfad kommt im Test aus der Sicht, der echte Dialog bleibt zu.
+        h.state_mut().0.sicht.datei = Some("/tmp/Diagramme".into());
+        h.get_by_role_and_label(Role::Button, "Ordner wählen")
+            .click();
+        h.run();
+        match &h.state().0.sicht.dialog {
+            Dialog::Werte { eingaben, .. } => assert_eq!(eingaben[0].wert, "/tmp/Diagramme"),
+            anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+        }
+        if let Ok(ziel) = std::env::var("ORDNER_BILD") {
+            h.render()
+                .unwrap()
+                .save(format!("{ziel}/ordner-{name}.png"))
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn eine_auswahl_hat_hand_cursor_und_setzt_den_wert() {
     let mut auswahl = feld_mit("farbe", Quelle::Client, FeldArt::Text, "Farbe");
     auswahl.art = FeldArt::Auswahl {

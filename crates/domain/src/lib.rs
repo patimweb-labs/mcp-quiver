@@ -111,6 +111,8 @@ pub enum FeldArt {
     Schalter,
     /// Eine Adresse, geprüft auf `http(s)://`.
     Url,
+    /// Ein Ordner auf dem Gerät, gewählt über den Datei-Dialog.
+    Ordner,
     /// Eine Auswahlliste aus festen Optionen.
     Auswahl { optionen: Vec<FeldOption> },
 }
