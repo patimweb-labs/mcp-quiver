@@ -92,6 +92,7 @@ impl Pruefung {
             profil: ordner.join("profil"),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: std::sync::Arc::new(SpeicherTresor::neu()),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");

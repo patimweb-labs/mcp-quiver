@@ -146,6 +146,12 @@ pub enum Dialog {
     AgentEntfernen { id: String, name: String },
     /// Die Anmeldung eines Eintrags beenden (Rückfrage).
     AnmeldungBeenden { eintrag: EintragId, titel: String },
+    /// Das Gerät vom Server abmelden (Rückfrage, Aufgabe 22): Agenten
+    /// verlieren alle Tools, Angaben und Adresse bleiben.
+    Abmelden {
+        server: String,
+        benutzer: Option<String>,
+    },
     /// Einen Zugang anlegen (`neu`) oder ändern (Aufgabe 14). Beim Ändern ist
     /// der Name fest; die Felder stehen als Eingaben im Dialog.
     Zugang {
@@ -259,6 +265,11 @@ pub struct Sicht {
 
 impl Sicht {
     pub fn neu(modell: Modell, einstellungen: &Einstellungen) -> Self {
+        let server = modell
+            .server_url
+            .clone()
+            .or_else(|| modell.verbindung.server().map(str::to_string))
+            .unwrap_or_default();
         Self {
             seite: logik::startseite(&modell),
             modell,
@@ -268,7 +279,10 @@ impl Sicht {
             offen: BTreeSet::new(),
             zugaenge_offen: BTreeSet::new(),
             nur_aktive: false,
-            eingaben: Eingaben::default(),
+            eingaben: Eingaben {
+                server,
+                code: String::new(),
+            },
             hinweis: None,
             ergebnis: None,
             datei: None,
@@ -374,6 +388,12 @@ impl Sicht {
         }
         self.seite =
             logik::seite_nach_wechsel(&self.modell.verbindung, &neu.verbindung, self.seite);
+        // Die zuletzt benutzte Adresse vorbelegen — auch nach dem Abmelden.
+        if self.eingaben.server.trim().is_empty() {
+            if let Some(server) = &neu.server_url {
+                self.eingaben.server = server.clone();
+            }
+        }
         // Der Server hat das Gerät abgelehnt: das sagt der Hinweis oben.
         if neu.abgelehnt && !self.modell.abgelehnt {
             self.hinweis = Some(crate::texte::t(self.sprache, "verbindung.abgelehnt"));
@@ -467,6 +487,7 @@ impl Sicht {
             Dialog::AnmeldungBeenden { eintrag, .. } => {
                 return Some(Aktion::EintragAbmelden { eintrag });
             }
+            Dialog::Abmelden { .. } => return Some(Aktion::Abmelden),
             Dialog::Zugang {
                 eintrag,
                 name,
@@ -539,6 +560,10 @@ mod tests {
             agenten: Vec::new(),
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
             abgelehnt: false,
+            anmelde_grund: None,
+            benutzer: None,
+            server_url: None,
+            anmeldewege: None,
             protokoll_fuer_agenten: false,
         }
     }
@@ -561,7 +586,7 @@ mod tests {
         neu.abgelehnt = true;
         sicht.modell_setzen(neu.clone());
         let hinweis = sicht.hinweis.clone().expect("Hinweis");
-        assert!(hinweis.contains("neuen Code"), "{hinweis}");
+        assert!(hinweis.contains("anmelden"), "{hinweis}");
         // Bleibt es abgelehnt, kommt der Hinweis nicht ständig neu.
         sicht.hinweis = None;
         neu.endpunkt = "http://127.0.0.1:9/mcp".into();

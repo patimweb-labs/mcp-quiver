@@ -14,6 +14,7 @@
 //! | GET | `/geraet/soll` | Gerät | → [`quiver_domain::Soll`] |
 //! | GET | `/geraet/ereignisse` | Gerät | SSE, Ereignis `soll`, Daten = Revision |
 //! | POST | `/geraet/meldung` | Gerät | [`Meldung`] → 204 |
+//! | POST | `/geraet/abmelden` | Gerät | → 204, das Gerät ist am Server gelöscht |
 //! | GET/PUT/DELETE | `/admin/eintraege[/{id}]` | Admin | [`quiver_domain::Eintrag`] |
 //! | POST | `/admin/eintraege/import` | Admin | server.json → [`quiver_domain::Eintrag`] |
 //! | GET/PUT/DELETE | `/admin/saetze[/{id}]` | Admin | [`quiver_domain::Satz`] |
@@ -49,6 +50,11 @@ pub struct AnmeldenAntwort {
     pub geraet: Geraet,
     /// Geheimes Geräte-Token. Der Server speichert nur seinen Hash.
     pub token: String,
+    /// Anzeigename des angemeldeten Benutzers (E-Mail oder Name), nur für
+    /// „Angemeldet als …“. Kein Schlüssel, kein Geheimnis; fehlt bei
+    /// Altgeräten ohne Benutzer und bei älteren Servern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benutzer: Option<String>,
 }
 
 /// Einmal-Code anlegen; das Gerät landet beim Einbinden in diesen Gruppen.

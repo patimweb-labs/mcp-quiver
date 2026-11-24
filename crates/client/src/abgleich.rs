@@ -14,7 +14,9 @@ use std::time::Duration;
 use anyhow::Context;
 use futures_util::StreamExt;
 use quiver_domain::Soll;
-use quiver_protocol::{Anmelden, AnmeldenAntwort, Fehler, Meldung, EREIGNIS_SOLL, PRAEFIX};
+use quiver_protocol::{
+    AnmeldeGrund, Anmelden, AnmeldenAntwort, Fehler, Meldung, EREIGNIS_SOLL, PRAEFIX,
+};
 
 use crate::sse;
 use crate::{anwenden, Innen, Verbindung};
@@ -54,6 +56,12 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
         });
         match soll_holen(&innen.http, &server, &token).await {
             Ok(soll) => {
+                // Zwischen Holen und Anwenden kann sich abgemeldet oder neu
+                // angemeldet worden sein — dann gehört dieses Ergebnis zu
+                // einem alten Token und wird verworfen (Aufgabe 22).
+                if !gilt_noch(&innen, &token) {
+                    continue;
+                }
                 innen.verbunden_setzen(&server);
                 anwenden(&innen, soll).await;
                 backoff = 1;
@@ -61,13 +69,21 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
                     StromEnde::Abgebrochen => return,
                     StromEnde::NeuVerbinden => continue,
                     StromEnde::Fehler(fehler) if ist_abgelehnt(&fehler) => {
-                        tracing::warn!("{fehler:#} – alle Tools gestoppt, Gerät neu einbinden");
-                        if let Err(fehler) = innen.ausbinden(true).await {
-                            tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                        if !gilt_noch(&innen, &token) {
+                            continue;
+                        }
+                        tracing::warn!("{fehler:#} – alle Tools gestoppt");
+                        innen.ablehnung_behandeln(&server, &fehler).await;
+                        tokio::select! {
+                            _ = innen.ende.warten() => return,
+                            _ = innen.erneut.notified() => {}
                         }
                         continue;
                     }
                     StromEnde::Fehler(fehler) => {
+                        if !gilt_noch(&innen, &token) {
+                            continue;
+                        }
                         let text = format!("{fehler:#}");
                         tracing::warn!("Ereignis-Strom weg: {text}");
                         innen.verbindung_setzen(Verbindung::Getrennt {
@@ -78,13 +94,21 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
                 }
             }
             Err(fehler) if ist_abgelehnt(&fehler) => {
-                tracing::warn!("{fehler:#} – alle Tools gestoppt, Gerät neu einbinden");
-                if let Err(fehler) = innen.ausbinden(true).await {
-                    tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                if !gilt_noch(&innen, &token) {
+                    continue;
+                }
+                tracing::warn!("{fehler:#} – alle Tools gestoppt");
+                innen.ablehnung_behandeln(&server, &fehler).await;
+                tokio::select! {
+                    _ = innen.ende.warten() => return,
+                    _ = innen.erneut.notified() => {}
                 }
                 continue;
             }
             Err(fehler) => {
+                if !gilt_noch(&innen, &token) {
+                    continue;
+                }
                 let text = format!("{fehler:#}");
                 tracing::warn!("Soll nicht abholbar: {text}");
                 innen.verbindung_setzen(Verbindung::Getrennt {
@@ -102,6 +126,12 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
             }
         }
     }
+}
+
+/// Gilt das Token dieses Durchlaufs noch? Nach Abmelden oder Neu-Anmelden
+/// nicht mehr; dann darf ein altes Ergebnis nichts überschreiben.
+fn gilt_noch(innen: &Arc<Innen>, token: &str) -> bool {
+    innen.zugang().1.as_deref() == Some(token)
 }
 
 /// Der Ereignis-Strom: sofort die aktuelle Revision, danach bei jeder Änderung.
@@ -140,12 +170,18 @@ async fn strom(innen: &Arc<Innen>, server: &str, token: &str) -> StromEnde {
             if ereignis.name != EREIGNIS_SOLL {
                 continue;
             }
+            // Nach Abmelden oder Neu-Anmelden gehört dieses Ereignis zu einem
+            // alten Token (Aufgabe 22).
+            if !gilt_noch(innen, token) {
+                return StromEnde::NeuVerbinden;
+            }
             let letzte = innen.stand().soll.revision.clone();
             if ereignis.daten == letzte {
                 continue;
             }
             match soll_holen(&innen.http, server, token).await {
-                Ok(soll) => anwenden(innen, soll).await,
+                Ok(soll) if gilt_noch(innen, token) => anwenden(innen, soll).await,
+                Ok(_) => return StromEnde::NeuVerbinden,
                 Err(fehler) => return StromEnde::Fehler(fehler),
             }
         }
@@ -188,6 +224,25 @@ pub(crate) async fn soll_holen(
     antwort.json().await.context("Antwort des Solls")
 }
 
+/// Das eigene Gerät am Server löschen (Aufgabe 22: „Abmelden“).
+///
+/// Der Server löscht es; danach gilt das Token nicht mehr. Ist der Server
+/// nicht erreichbar, bleibt das Gerät dort stehen — der Aufrufer sagt das.
+pub(crate) async fn geraet_abmelden(
+    client: &reqwest::Client,
+    server: &str,
+    token: &str,
+) -> anyhow::Result<()> {
+    let antwort = client
+        .post(format!("{server}{PRAEFIX}/geraet/abmelden"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("Server nicht erreichbar")?;
+    pruefen(antwort).await?;
+    Ok(())
+}
+
 /// Den eigenen Stand an den Server melden.
 pub(crate) async fn meldung_senden(
     client: &reqwest::Client,
@@ -208,11 +263,16 @@ pub(crate) async fn meldung_senden(
 
 /// Der Server nimmt das Gerät nicht (mehr) an: 401 oder 403 auf eine
 /// Geräte-Anfrage. Dann läuft kein Tool mehr, bis das Gerät neu eingebunden ist.
+///
+/// Seit Aufgabe 20 trägt `grund` den maschinenlesbaren Grund mit (`gesperrt`,
+/// `neu-anmelden`, `kein-zugriff`). Der Client entscheidet daran, ob das
+/// Geräte-Token bleibt (nur bei `neu-anmelden`).
 #[derive(Debug, thiserror::Error)]
 #[error("Der Server nimmt dieses Gerät nicht mehr an ({status}): {meldung}")]
 pub(crate) struct GeraetAbgelehnt {
     status: reqwest::StatusCode,
     meldung: String,
+    grund: Option<AnmeldeGrund>,
 }
 
 /// Ist dieser Fehler eine Ablehnung des Geräts?
@@ -220,21 +280,83 @@ pub(crate) fn ist_abgelehnt(fehler: &anyhow::Error) -> bool {
     fehler.chain().any(|teil| teil.is::<GeraetAbgelehnt>())
 }
 
+/// Der Status einer Geräte-Ablehnung (401 oder 403).
+pub(crate) fn status_von(fehler: &anyhow::Error) -> Option<reqwest::StatusCode> {
+    fehler
+        .chain()
+        .find_map(|teil| teil.downcast_ref::<GeraetAbgelehnt>())
+        .map(|abgelehnt| abgelehnt.status)
+}
+
+/// Der maschinenlesbare Grund einer Geräte-Ablehnung, falls der Server einen
+/// genannt hat. Ein unbekannter Grund bleibt `None` und wird wie
+/// `neu-anmelden` behandelt.
+pub(crate) fn grund_von(fehler: &anyhow::Error) -> Option<AnmeldeGrund> {
+    fehler
+        .chain()
+        .find_map(|teil| teil.downcast_ref::<GeraetAbgelehnt>())
+        .and_then(|abgelehnt| abgelehnt.grund)
+}
+
 /// Erfolg durchlassen, sonst den Fehlertext des Servers weitergeben.
-async fn pruefen(antwort: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+pub(crate) async fn pruefen(antwort: reqwest::Response) -> anyhow::Result<reqwest::Response> {
     let status = antwort.status();
     if status.is_success() {
         return Ok(antwort);
     }
     let text = antwort.text().await.unwrap_or_default();
-    let meldung = serde_json::from_str::<Fehler>(&text)
-        .map(|fehler| fehler.fehler)
-        .unwrap_or(text);
+    let (meldung, grund) = fehler_aus_text(&text);
     if matches!(
         status,
         reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
     ) {
-        return Err(GeraetAbgelehnt { status, meldung }.into());
+        return Err(GeraetAbgelehnt {
+            status,
+            meldung,
+            grund,
+        }
+        .into());
     }
     anyhow::bail!("Server antwortet mit {status}: {meldung}")
+}
+
+/// Den Fehlertext des Servers lesen. Ein unbekannter `grund` lässt die
+/// **ganze** Antwort unlesbar werden – dann gilt `None`, und der Client
+/// behandelt das wie `neu-anmelden` (Aufgabe 22: „Unbekannter Grund →
+/// wie neu_anmelden“).
+fn fehler_aus_text(text: &str) -> (String, Option<AnmeldeGrund>) {
+    match serde_json::from_str::<Fehler>(text) {
+        Ok(fehler) => (fehler.fehler, fehler.grund),
+        Err(_) => (text.to_string(), None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn der_grund_wird_gelesen_und_ein_unbekannter_bleibt_neutral() {
+        assert_eq!(
+            fehler_aus_text(r#"{"fehler":"gesperrt","grund":"gesperrt"}"#),
+            ("gesperrt".to_string(), Some(AnmeldeGrund::Gesperrt))
+        );
+        assert_eq!(
+            fehler_aus_text(r#"{"fehler":"neu","grund":"neu-anmelden"}"#),
+            ("neu".to_string(), Some(AnmeldeGrund::NeuAnmelden))
+        );
+        // Unbekannt: die Antwort ist nicht lesbar, kein Grund. Der Aufrufer
+        // behandelt das wie `neu-anmelden`.
+        assert_eq!(
+            fehler_aus_text(r#"{"fehler":"x","grund":"erfunden"}"#),
+            (r#"{"fehler":"x","grund":"erfunden"}"#.to_string(), None)
+        );
+        // Alter Server ohne `grund`.
+        assert_eq!(
+            fehler_aus_text(r#"{"fehler":"weg"}"#),
+            ("weg".to_string(), None)
+        );
+        // Kein JSON.
+        assert_eq!(fehler_aus_text("kaputt"), ("kaputt".to_string(), None));
+    }
 }

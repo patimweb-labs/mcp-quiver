@@ -73,6 +73,7 @@ impl Geraet {
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");

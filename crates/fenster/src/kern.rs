@@ -114,6 +114,16 @@ impl KernZugang for EchterKern {
         let wecker = self.wecker.clone();
         self.laufzeit.spawn(async move {
             let ergebnis = match aktion {
+                Aktion::Anmeldewege { server } => kern.anmeldewege(&server).await,
+                Aktion::AnmeldenMicrosoft { server } => {
+                    kern.anmelden_server(&server, &logik::geraetename()).await
+                }
+                Aktion::AnmeldungAbbrechen => {
+                    kern.anmeldung_abbrechen();
+                    Ok(())
+                }
+                // Den Browser öffnet das Fenster selbst (siehe `Fenster::bild`).
+                Aktion::BrowserOeffnen(_) => Ok(()),
                 Aktion::Einbinden { server, code } => {
                     kern.einbinden(&server, &code, &logik::geraetename()).await
                 }

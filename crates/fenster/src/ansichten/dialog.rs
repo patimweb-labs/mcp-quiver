@@ -920,6 +920,48 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                         }
                     });
                 }
+                Dialog::Abmelden { server, benutzer } => {
+                    ui.label(RichText::new(t(sprache, "verbindung.abmelden_titel")).heading());
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            crate::texte::tf(
+                                sprache,
+                                "verbindung.abmelden_text",
+                                &[&benutzer.as_deref().unwrap_or(server)],
+                            ),
+                            Ton::Leise,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_2);
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            t(sprache, "verbindung.abmelden_folgen"),
+                            Ton::Blass,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if bausteine::knopf(
+                            ui,
+                            &f,
+                            Icon::Trennen,
+                            &t(sprache, "verbindung.abmelden"),
+                        )
+                        .clicked()
+                        {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
                 Dialog::Aufruf { aufruf } => {
                     aufruf_details(ui, &f, sprache, aufruf, felder_hoehe);
                     ui.add_space(thema::SPACE_3);

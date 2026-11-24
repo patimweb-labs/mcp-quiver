@@ -26,8 +26,12 @@ Dev: `egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }`.
 
 ## Seiten
 
-1. **Verbindung** (Startseite, solange `NichtEingebunden`): Server-Adresse, Einmal-Code,
-   Knopf „Gerät einbinden“. Danach Status (verbunden/getrennt mit Fehlertext) und „Gerät abmelden“.
+1. **Verbindung** (Startseite, solange `NichtEingebunden`): zuerst **nur** die
+   Server-Adresse und „Weiter“; danach zeigt der Server **entweder** „Mit Microsoft
+   anmelden“ **oder** das Code-Feld (nie beides). Während der Anmeldung „Im Browser
+   fortfahren …“ mit „Browser erneut öffnen“ und „Abbrechen“, danach „Angemeldet als …“.
+   Status (verbunden/getrennt mit Fehlertext) und „Gerät abmelden“ mit Rückfrage.
+   Einzelheiten: `docs/aufgaben/22-client-anmeldung.md`.
 2. **Tools**: eine Karte je Eintrag: Icon `Paket`, Titel, Beschreibung, Status-Abzeichen
    (`status`-Baustein: ok = läuft mit Anzahl Tools, warn = braucht Angaben, error = Fehler,
    leise = startet). Klick auf „Braucht Angaben“ oder Stift → Dialog mit einem Feld je

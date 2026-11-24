@@ -907,10 +907,28 @@ pub(crate) async fn geraet_tausch(
     match ergebnis {
         Ok(geraet) => {
             zustand.melde_aenderung();
-            Ok(Json(AnmeldenAntwort { geraet, token }))
+            let benutzer = benutzer_anzeige(&zustand, &oid).await;
+            Ok(Json(AnmeldenAntwort {
+                geraet,
+                token,
+                benutzer,
+            }))
         }
         Err(grund) => Err(grund_fehler(grund)),
     }
+}
+
+/// Anzeigename des Benutzers für „Angemeldet als …“: E-Mail, sonst Name.
+/// Kein Schlüssel und kein Geheimnis; fehlt beides, bleibt das Feld leer.
+async fn benutzer_anzeige(zustand: &Arc<Zustand>, oid: &str) -> Option<String> {
+    let oid = oid.to_string();
+    db(zustand, move |conn| {
+        Ok(speicher::benutzer_holen(conn, &oid)?
+            .and_then(|benutzer| benutzer.email.or(benutzer.name)))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 fn neu_anlegen(

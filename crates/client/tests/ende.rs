@@ -92,6 +92,7 @@ impl Pruefung {
             profil: ordner.join("profil"),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");
@@ -868,6 +869,7 @@ async fn ohne_anmeldung_am_server_startet_kein_tool() {
         profil: p.ordner.join("profil"),
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: p.tresor.clone(),
+        browser: std::sync::Arc::new(quiver_client::SystemBrowser),
     })
     .await
     .expect("Kern startet");

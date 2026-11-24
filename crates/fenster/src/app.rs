@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use crate::ansichten;
+use crate::ende::{EndeFahne, EndeGrund};
 use crate::modell::{Meldung, Seite, Sicht};
 use crate::profil::Einstellungen;
 use crate::thema::{self, Thema};
@@ -60,6 +61,15 @@ pub trait KernZugang {
 /// Eine Anweisung des Fensters an den Kern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Aktion {
+    /// Hinter „Weiter“: welche Anmeldewege bietet dieser Server?
+    Anmeldewege { server: String },
+    /// Mit Microsoft anmelden: der Client öffnet die Seite des Servers und
+    /// wartet auf genau eine Antwort auf `127.0.0.1` (Aufgabe 22).
+    AnmeldenMicrosoft { server: String },
+    /// Eine laufende Browser-Anmeldung abbrechen (Knopf „Abbrechen“).
+    AnmeldungAbbrechen,
+    /// Die Anmeldeseite erneut im Standardbrowser öffnen.
+    BrowserOeffnen(String),
     /// Gerät mit Server-Adresse und Einmal-Code einbinden.
     Einbinden { server: String, code: String },
     /// Gerät abmelden (Token weg, nichts läuft mehr).
@@ -168,6 +178,10 @@ pub struct Fenster<K: KernZugang> {
     befehle: Option<Receiver<Befehl>>,
     /// Beenden ist angefordert: dann wird das Fenster nicht mehr festgehalten.
     beenden: bool,
+    /// Warum beendet wird (Signal-Faden), damit es im Protokoll steht.
+    ende: Option<EndeFahne>,
+    /// Wurde die Ursache schon protokolliert (Tray meldet selbst)?
+    ende_gemeldet: bool,
 }
 
 impl<K: KernZugang> Fenster<K> {
@@ -183,7 +197,15 @@ impl<K: KernZugang> Fenster<K> {
             tray: None,
             befehle: None,
             beenden: false,
+            ende: None,
+            ende_gemeldet: false,
         }
+    }
+
+    /// Die Ursache für ein Ende aus einem Signal-Faden übernehmen.
+    pub fn mit_ende(mut self, fahne: EndeFahne) -> Self {
+        self.ende = Some(fahne);
+        self
     }
 
     /// Wie der Autostart geschaltet wird (im Betrieb die Systemdatei).
@@ -226,6 +248,8 @@ impl<K: KernZugang> Fenster<K> {
                     self.sicht.autostart = !self.sicht.autostart;
                 }
                 Befehl::Beenden => {
+                    EndeGrund::Tray.protokollieren();
+                    self.ende_gemeldet = true;
                     self.kern.beenden();
                     self.beenden = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -320,12 +344,16 @@ impl<K: KernZugang> Fenster<K> {
             // nächsten Aktion.
             self.sicht.hinweis = None;
             self.sicht.ergebnis = None;
-            // Einen Hilfe-Link öffnet das Fenster selbst: der Standardbrowser
-            // hängt am Fenster (egui-winit führt `OpenUrl` aus), nicht am Kern.
-            // Damit braucht es keine weitere Abhängigkeit.
-            if let Aktion::LinkOeffnen(url) = &aktion {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
-                continue;
+            // Einen Hilfe-Link oder die Anmeldeseite öffnet das Fenster
+            // selbst: der Standardbrowser hängt am Fenster (egui-winit führt
+            // `OpenUrl` aus), nicht am Kern. Damit braucht es keine weitere
+            // Abhängigkeit.
+            match &aktion {
+                Aktion::LinkOeffnen(url) | Aktion::BrowserOeffnen(url) => {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                    continue;
+                }
+                _ => {}
             }
             self.kern.ausfuehren(aktion);
         }
@@ -350,6 +378,12 @@ impl<K: KernZugang> eframe::App for Fenster<K> {
 
     /// Letzter Halt: Kern sauber anhalten (Fenster zu, Beenden aus dem Tray).
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if !self.ende_gemeldet {
+            match self.ende.as_ref().and_then(EndeFahne::grund) {
+                Some(grund) => grund.protokollieren(),
+                None => EndeGrund::FensterBeendet.protokollieren(),
+            }
+        }
         self.kern.beenden();
     }
 }
@@ -364,6 +398,34 @@ pub fn schliessen_abfangen(ctx: &egui::Context, beenden: bool) -> bool {
     if beenden || !ctx.input(|i| i.viewport().close_requested()) {
         return false;
     }
+    EndeGrund::FensterWeggelegt.protokollieren();
+    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+    tray::weglegen(ctx);
+    true
+}
+
+/// Cmd+Q legt das Fenster in den Tray, statt quiver zu beenden. Gibt zurück,
+/// ob abgefangen wurde.
+pub fn cmd_q_abfangen(ctx: &egui::Context, beenden: bool) -> bool {
+    // Die Modifikatoren stehen am Tastenereignis; `InputState::modifiers`
+    // allein ist bei einer Attrappe (und beim ersten Bild) nicht gesetzt.
+    let cmd_q = ctx.input(|i| {
+        i.events.iter().any(|ereignis| {
+            matches!(
+                ereignis,
+                egui::Event::Key {
+                    key: egui::Key::Q,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.command
+            )
+        })
+    });
+    if beenden || !cmd_q {
+        return false;
+    }
+    EndeGrund::CmdQ.protokollieren();
     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
     tray::weglegen(ctx);
     true
@@ -420,6 +482,7 @@ mod tests {
     /// meldet. Geprüft wird, welche Befehle daraus folgen.
     fn schliessen(beenden: bool) -> Vec<egui::ViewportCommand> {
         let ctx = egui::Context::default();
+        quiver_oberflaeche::einrichten(&ctx);
         let mut eingabe = egui::RawInput::default();
         eingabe
             .viewports
@@ -453,6 +516,44 @@ mod tests {
         assert!(
             befehle.contains(&weglegen),
             "Fenster weggelegt: {befehle:?}"
+        );
+    }
+
+    /// Cmd+Q ist **kein** Ende: es legt das Fenster nur weg.
+    #[test]
+    fn cmd_q_legt_weg_statt_zu_beenden() {
+        let ctx = egui::Context::default();
+        quiver_oberflaeche::einrichten(&ctx);
+        let mut eingabe = egui::RawInput::default();
+        eingabe.events.push(egui::Event::Key {
+            key: egui::Key::Q,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+        });
+        let mut ausgabe = ctx.run_ui(eingabe, |ui| {
+            cmd_q_abfangen(ui.ctx(), false);
+        });
+        let befehle = ausgabe.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .clone();
+        ausgabe.textures_delta.clear();
+        assert!(
+            befehle.contains(&egui::ViewportCommand::CancelClose),
+            "Cmd+Q beendet nicht: {befehle:?}"
+        );
+        let weglegen = if tray::MINIMIEREN {
+            egui::ViewportCommand::Minimized(true)
+        } else {
+            egui::ViewportCommand::Visible(false)
+        };
+        assert!(
+            befehle.contains(&weglegen),
+            "Fenster in den Tray: {befehle:?}"
         );
     }
 
