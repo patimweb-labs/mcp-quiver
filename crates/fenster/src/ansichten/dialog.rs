@@ -440,9 +440,9 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                     } else {
                         None
                     };
-                    let name_hinweis = name_fehler
-                        .map(|schluessel| t(sprache, schluessel))
-                        .or_else(|| Some(t(sprache, "zugaenge.name_hinweis")));
+                    // Unter dem Feld steht immer die Regel; was gerade nicht
+                    // passt, steht als Fehler neben „Speichern“.
+                    let name_hinweis = Some(t(sprache, "zugaenge.name_hinweis"));
                     bausteine::feld(
                         ui,
                         &f,
@@ -588,10 +588,14 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                 }
                             }
                         });
-                    let grund = logik::sperrgrund(sprache, eingaben);
+                    // Auch ein ungültiger Name ist ein Grund – er steht neben
+                    // „Speichern“, nicht nur grau unter dem Namensfeld.
+                    let grund = name_fehler
+                        .map(|schluessel| t(sprache, schluessel))
+                        .or_else(|| logik::sperrgrund(sprache, eingaben));
                     ui.add_space(thema::SPACE_3);
                     ui.horizontal(|ui| {
-                        let bereit = name_fehler.is_none() && grund.is_none();
+                        let bereit = grund.is_none();
                         let geklickt = ui
                             .add_enabled_ui(bereit, |ui| {
                                 bausteine::hauptknopf_mit(

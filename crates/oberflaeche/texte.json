@@ -476,16 +476,16 @@
     "en": "Name"
   },
   "zugaenge.name_hinweis": {
-    "de": "a–z, 0–9, - und _, 1–40 Zeichen. Beim Anlegen frei, danach fest.",
-    "en": "a–z, 0–9, - and _, 1–40 characters. Free when adding, fixed afterwards."
+    "de": "Buchstaben (A–Z, a–z), 0–9, - und _, 1–40 Zeichen; Groß-/Kleinschreibung zählt nicht. Beim Anlegen frei, danach fest.",
+    "en": "Letters (A–Z, a–z), 0–9, - and _, 1–40 characters; case does not matter. Free when adding, fixed afterwards."
   },
   "zugaenge.name_fehlt": {
     "de": "Name fehlt.",
     "en": "Name is missing."
   },
   "zugaenge.name_ungueltig": {
-    "de": "Nur a–z, 0–9, - und _, höchstens 40 Zeichen.",
-    "en": "Only a–z, 0–9, - and _, at most 40 characters."
+    "de": "Nur Buchstaben (A–Z, a–z), 0–9, - und _, höchstens 40 Zeichen.",
+    "en": "Only letters (A–Z, a–z), 0–9, - and _, at most 40 characters."
   },
   "zugaenge.name_doppelt": {
     "de": "Diesen Namen gibt es schon.",

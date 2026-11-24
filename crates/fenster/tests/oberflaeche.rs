@@ -2288,9 +2288,19 @@ fn zugang_anlegen_schickt_namen_und_werte() {
     }
     h.run();
     assert!(
-        h.query_by_label("Nur a–z, 0–9, - und _, höchstens 40 Zeichen.")
+        h.query_by_label("Nur Buchstaben (A–Z, a–z), 0–9, - und _, höchstens 40 Zeichen.")
             .is_some(),
         "ungültiger Name muss sichtbar sein"
+    );
+    // Großbuchstaben sind erlaubt (SAP-Systeme heißen z. B. BL4_900).
+    if let Dialog::Zugang { name, .. } = &mut h.state_mut().0.sicht.dialog {
+        *name = "BL4_900".into();
+    }
+    h.run();
+    assert!(
+        h.query_by_label("Nur Buchstaben (A–Z, a–z), 0–9, - und _, höchstens 40 Zeichen.")
+            .is_none(),
+        "BL4_900 ist ein gültiger Name"
     );
     // Ausfüllen wie im Fenster und speichern.
     if let Dialog::Zugang { name, eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
@@ -2302,7 +2312,7 @@ fn zugang_anlegen_schickt_namen_und_werte() {
     }
     h.run();
     assert!(
-        h.query_by_label("Nur a–z, 0–9, - und _, höchstens 40 Zeichen.")
+        h.query_by_label("Nur Buchstaben (A–Z, a–z), 0–9, - und _, höchstens 40 Zeichen.")
             .is_none(),
         "mit gültigem Namen ist der Hinweis weg"
     );

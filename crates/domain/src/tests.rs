@@ -250,6 +250,11 @@ fn zugangsnamen() {
     assert!(zugangsname_gueltig("web-01"));
     assert!(!zugangsname_gueltig(""));
     assert!(!zugangsname_gueltig("Web 01"));
+    // SAP-Systeme heißen groß: erlaubt, und gleich zur kleinen Schreibweise.
+    assert!(zugangsname_gueltig("BL4_900"));
+    assert!(zugangsname_gleich("BL4_900", "bl4_900"));
+    assert!(!zugangsname_gleich("bl4_900", "bl4_901"));
+    assert!(!zugangsname_gueltig("wäb"));
     assert!(!zugangsname_gueltig(&"a".repeat(41)));
 }
 

@@ -502,8 +502,8 @@ async fn regeln_fuer_namen_pflichtfelder_und_leere_geheimnisse() {
     p.einbinden(eintrag(&p)).await;
     p.warte_auf_laeuft(&id).await;
 
-    // Der Name folgt `zugangsname_gueltig` (a–z, 0–9, - und _, 1–40 Zeichen).
-    for name in ["", "web 01", "Web-01", "web/01"] {
+    // Der Name folgt `zugangsname_gueltig` (A–Z, a–z, 0–9, - und _, 1–40 Zeichen).
+    for name in ["", "web 01", "wäb-01", "web/01"] {
         let fehler = p
             .kern
             .zugang_speichern(

@@ -607,7 +607,10 @@ pub fn zugang_name_fehler(name: &str, vorhandene: &[String]) -> Option<&'static 
     if !zugangsname_gueltig(name) {
         return Some("zugaenge.name_ungueltig");
     }
-    if vorhandene.iter().any(|vorhanden| vorhanden == name) {
+    if vorhandene
+        .iter()
+        .any(|vorhanden| quiver_domain::zugangsname_gleich(vorhanden, name))
+    {
         return Some("zugaenge.name_doppelt");
     }
     None
@@ -1779,7 +1782,13 @@ mod tests {
             Some("zugaenge.name_fehlt"),
             "Leerzeichen sind kein Name"
         );
-        for name in ["web 01", "Web-01", "web/01", "ä"] {
+        // Großschreibung zählt nicht: „Web-01“ ist derselbe Zugang wie „web-01“.
+        assert_eq!(
+            zugang_name_fehler("Web-01", &vorhanden),
+            Some("zugaenge.name_doppelt")
+        );
+        assert_eq!(zugang_name_fehler("BL4_900", &vorhanden), None);
+        for name in ["web 01", "web/01", "ä"] {
             assert_eq!(
                 zugang_name_fehler(name, &vorhanden),
                 Some("zugaenge.name_ungueltig"),

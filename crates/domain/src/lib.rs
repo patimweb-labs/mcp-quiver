@@ -252,7 +252,14 @@ pub fn zugangsname_gueltig(name: &str) -> bool {
     (1..=40).contains(&name.len())
         && name
             .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Zwei Zugangsnamen meinen denselben Zugang, wenn sie sich nur in Groß- und
+/// Kleinschreibung unterscheiden (`BL4_900` = `bl4_900`) – sonst gäbe es zwei
+/// Zugänge, die für einen Agenten gleich aussehen.
+pub fn zugangsname_gleich(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
 }
 
 /// Wie der Client die Einrichtung eines `Stdio`-Tools startet (SPEC.md §7).
