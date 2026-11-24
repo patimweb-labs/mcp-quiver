@@ -9,7 +9,10 @@ Entscheidung des Nutzers (2026-11-24): Der Fenster-Client wird **nicht** geteilt
 - Neues Crate `crates/konsole`, Programm `quiver-cli`, vollwertig: Verbindung, Tools, Angaben und Zugänge, an/aus, Agenten, Protokoll, Export/Import. Keine Grafikbibliotheken.
 - Beide nutzen `crates/client` (den Kern, heute schon ohne egui) unverändert als Bibliothek. Logik, die heute nur im Fenster steckt und beide brauchen (Prüfung der Felder, Texte), wandert dorthin statt doppelt zu entstehen; das Fenster verhält sich danach genau gleich (Tests und Bilder unverändert).
 - Zwei Bedienarten: **interaktive Oberfläche im Terminal** (`quiver-cli`, gleiche Seiten und Begriffe wie das Fenster, Tastatur, schmale Terminals, ohne Farbe lesbar) und **einzelne Befehle** für Skripte.
-- Auf einem Rechner läuft immer nur ein Client mit einem Profil: Läuft das Fenster, bedient `quiver-cli` den laufenden Client über einen geschützten lokalen Kanal (nur derselbe Benutzer), statt einen zweiten zu starten.
+- **Eigenes Setup, eigenes Vorgehen:** Der Konsolen-Client ist unabhängig vom Fenster. Eigenes Profil und eigener Tresor (`quiver-cli`, mehrere Profile mit `--profil`), **eigenes Gerät** am Server, eigener Port (frei gewählt, im Setup gezeigt), eigene Agenten-Kopplung. Beide dürfen gleichzeitig laufen und fassen sich gegenseitig nicht an. Je Profil läuft nur eine Instanz.
+- Übernahme aus dem Fenster nur ausdrücklich über die verschlüsselte Sicherung; Anmeldung und Geräte-Token wandern nie mit.
+- **Installation:** ein einzelnes Programm je Plattform (signiertes Paket, Homebrew/winget/deb, Docker-Image), ohne grafische Umgebung. **Betrieb:** im Vordergrund, als Dienst (`quiver-cli dienst einrichten|status|entfernen`; systemd, launchd, Windows-Dienst; mit Rechten des Benutzers, nie Root) oder im Container. **Aktualisieren** und **Entfernen** (samt Abmelden am Server) als eigene Befehle.
+- **Eigene Anleitung** (en/de): vom leeren Rechner bis zum ersten Tool-Aufruf, je einmal für Arbeitsplatz, Server und Docker. Ein Test spielt sie in einem frischen Container durch.
 - `--headless` am Fenster-Programm bleibt vorerst bestehen.
 
 ## Geführte Einrichtung
