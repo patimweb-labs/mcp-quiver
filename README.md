@@ -93,12 +93,15 @@ nothing is kept in the browser's storage.
 
 ### Sign-in with Entra ID (optional)
 
+**Full guide, click by click and with the Azure CLI, including troubleshooting:
+[docs/entra.md](docs/entra.md).** This is the short version.
+
 Without Entra the server issues one-time device codes from the admin UI. With
 Entra, devices sign in through the browser and groups come from the token.
 
 1. Register an application in your Entra tenant (single tenant). Add
-   `<base URL>/auth/callback` as a redirect URI (web platform) and turn on ID
-   tokens.
+   `<base URL>/auth/callback` as a redirect URI (web platform). Leave
+   implicit ID and access tokens **off**.
 2. Make the app emit the groups assigned to the application (`groups` claim,
    object ids only, no directory read permission). Very large group lists are
    rejected on purpose; limit the assignment instead.

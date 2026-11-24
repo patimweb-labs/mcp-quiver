@@ -96,12 +96,15 @@ absolut, 60 min ohne Nutzung); im Speicher des Browsers steht nichts.
 
 ### Anmeldung über Entra ID (optional)
 
+**Ausführliche Anleitung, Klick für Klick und mit Azure CLI, samt Fehlerhilfe:
+[docs/entra.de.md](docs/entra.de.md).** Hier die Kurzfassung.
+
 Ohne Entra erzeugt die Verwaltung Einmal-Codes für Geräte. Mit Entra melden
 sich Geräte im Browser an, und die Gruppen kommen aus dem Token.
 
 1. In der eigenen Entra-Mandantschaft eine Anwendung registrieren (ein
    Mandant). `<Basis-URL>/auth/callback` als Weiterleitungsadresse eintragen
-   (Web-Plattform) und ID-Token einschalten.
+   (Web-Plattform). Implizite ID- und Zugriffstoken bleiben **aus**.
 2. Die Anwendung soll die ihr zugewiesenen Gruppen als `groups`-Claim
    ausgeben (nur Objekt-Ids, kein Verzeichnis-Leserecht). Sehr lange
    Gruppenlisten werden bewusst abgelehnt; dann die Zuweisung verkleinern.
