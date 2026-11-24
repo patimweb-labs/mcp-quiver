@@ -214,6 +214,11 @@ pub struct Konfig {
     pub uhr: Uhr,
     /// Die Laufzeit seit dem Start (Fenster der Ersteinrichtung).
     pub laufzeit: Laufzeit,
+    /// So lange darf ein Client an einem Rumpf senden (`RUMPF_ZEIT`).
+    ///
+    /// Steht hier und nicht als fester Wert in der Schicht, damit ein Test ihn
+    /// kurz stellen kann – 30 Sekunden wären im Test eine Ewigkeit.
+    pub rumpf_zeit: Duration,
 }
 
 impl Konfig {
@@ -228,6 +233,7 @@ impl Konfig {
             altgeraete_erlaubt: true,
             uhr: Uhr::default(),
             laufzeit: Laufzeit::neu(),
+            rumpf_zeit: crate::RUMPF_ZEIT,
         }
     }
 
@@ -393,6 +399,7 @@ impl Konfig {
             altgeraete_erlaubt,
             uhr: Uhr::default(),
             laufzeit: Laufzeit::neu(),
+            rumpf_zeit: crate::RUMPF_ZEIT,
         })
     }
 

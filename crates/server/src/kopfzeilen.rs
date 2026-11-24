@@ -29,6 +29,21 @@ pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; 
 /// HSTS nur, wenn der Server hinter https läuft.
 pub const HSTS: &str = "max-age=31536000";
 
+/// Kein Fenster von außen ansprechen (`Cross-Origin-Opener-Policy`).
+pub const COOP: &str = "same-origin";
+/// Keine fremde Seite bindet unsere Antworten ein (`Cross-Origin-Resource-Policy`).
+pub const CORP: &str = "same-origin";
+/// Namen, die `http` nicht als Konstante kennt.
+pub const HEADER_COOP: HeaderName = HeaderName::from_static("cross-origin-opener-policy");
+/// Keine fremde Seite bindet unsere Antworten ein.
+pub const HEADER_CORP: HeaderName = HeaderName::from_static("cross-origin-resource-policy");
+/// Alle Geräte-Schnittstellen des Browsers aus; die Oberfläche braucht keine.
+pub const PERMISSIONS: &str = "accelerometer=(), autoplay=(), camera=(), \
+     display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), \
+     gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), \
+     picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), \
+     serial=(), usb=(), xr-spatial-tracking=()";
+
 pub async fn sicherheits_kopfzeilen(ist_https: bool, req: Request, next: Next) -> Response {
     let pfad = req.uri().path().to_string();
     let mut antwort = next.run(req).await;
@@ -48,6 +63,13 @@ pub async fn sicherheits_kopfzeilen(ist_https: bool, req: Request, next: Next) -
     setzen(kopf, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
     setzen(kopf, header::REFERRER_POLICY, "same-origin");
     setzen(kopf, header::X_FRAME_OPTIONS, "DENY");
+    setzen(kopf, HEADER_COOP.clone(), COOP);
+    setzen(kopf, HEADER_CORP.clone(), CORP);
+    setzen(
+        kopf,
+        header::HeaderName::from_static("permissions-policy"),
+        PERMISSIONS,
+    );
     if ist_https {
         setzen(kopf, header::STRICT_TRANSPORT_SECURITY, HSTS);
     }
@@ -120,6 +142,25 @@ mod tests {
                 .unwrap(),
             HSTS
         );
+        assert_eq!(
+            antwort.headers().get(HEADER_COOP.clone()).unwrap(),
+            "same-origin"
+        );
+        assert_eq!(
+            antwort.headers().get(HEADER_CORP.clone()).unwrap(),
+            "same-origin"
+        );
+        let richtlinien = antwort
+            .headers()
+            .get("permissions-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        for aus in ["camera=()", "microphone=()", "geolocation=()"] {
+            assert!(richtlinien.contains(aus), "{aus} fehlt: {richtlinien}");
+        }
+        assert!(!richtlinien.contains("*"), "nichts wird erlaubt");
         assert_eq!(
             antwort.headers().get(header::CACHE_CONTROL).unwrap(),
             "no-store"

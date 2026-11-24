@@ -3,6 +3,7 @@ name = "quiver-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "mcp-quiver: Server — Bibliothek, Zuweisung, Verteilung, Admin-API"
@@ -26,10 +27,16 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 futures-util = "0.3"
 hex.workspace = true
+# `LengthLimitError` erkennen: damit wird eine zu große Anfrage 413 und nicht 400.
+http-body-util = "0.1"
+# Der eigene Verbindungsweg (Zeitlimit für Kopfzeilen, Grenze der Verbindungen):
+# genau die Kisten, die `axum::serve` auch benutzt, nur mit Einstellungen.
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["service", "tokio"] }
 jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto", "use_pem"] }
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -37,7 +44,7 @@ thiserror.workspace = true
 time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+tower-http = { version = "0.6", features = ["fs", "timeout", "trace"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url = "2"
@@ -45,7 +52,7 @@ rsa = "0.10"
 x509-cert = { version = "0.3", features = ["builder", "pem"] }
 
 [dev-dependencies]
-http-body-util = "0.1"
-rsa_alt = { package = "rsa", version = "0.9" }
-rand08 = { package = "rand", version = "0.8" }
+# Zufall für die Prüfschlüssel in den Tests (rsa 0.10 nimmt rand_core 0.10;
+# `getrandom` ist die Quelle, die dazu passt – keine zusätzliche Kiste im Baum).
+getrandom = "0.4"
 tower = { version = "0.5", features = ["util"] }

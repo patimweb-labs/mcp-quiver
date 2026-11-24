@@ -457,15 +457,17 @@ async function main() {
     console.log(`ok: Prüfspur geladen und nachgeladen (${vorher} → mehr)`);
 
     await seite.getByRole("combobox", { name: "Art" }).click();
-    await seite.getByRole("option", { name: "Rolle" }).click();
+    await seite.getByRole("option", { name: "Verwaltung" }).click();
     await wartenAuf(
       async () => {
         const arten = await seite
           .locator("table.tabelle tbody tr td:nth-child(2)")
           .allTextContents();
-        return arten.length > 0 && arten.every((art) => art.trim() === "Rolle");
+        return (
+          arten.length > 0 && arten.every((art) => art.trim() === "Verwaltung")
+        );
       },
-      { was: "Filter nach Art Rolle", ms: SCHRITT_MS },
+      { was: "Filter nach Art Verwaltung", ms: SCHRITT_MS },
     );
     await seite.getByRole("combobox", { name: "Art" }).click();
     await seite.getByRole("option", { name: "Alle Arten" }).click();

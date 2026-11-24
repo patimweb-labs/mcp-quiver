@@ -3,6 +3,7 @@ name = "quiver-domain"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "mcp-quiver: Datenmodell und Regeln (Bibliothek, Sätze, Gruppen, Soll/Ist) — keine I/O"

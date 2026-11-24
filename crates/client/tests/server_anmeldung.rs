@@ -34,7 +34,7 @@ use quiver_protocol::{AnmeldeGrund, EintragZustand};
 use quiver_server::{app, benutzer, EntraKonfig, Konfig, Uhr};
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::traits::PublicKeyParts;
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 use serde_json::{json, Value};
 use sha2::Digest;
 
@@ -54,7 +54,7 @@ const FRIST: Duration = Duration::from_secs(20);
 struct Mock {
     basis: String,
     kid: String,
-    key: Arc<RsaPrivateKey>,
+    key: Arc<PrivateKey>,
     uhr: Uhr,
     zustand: Arc<Mutex<MockZustand>>,
 }
@@ -71,7 +71,7 @@ struct CodeInfo {
     nonce: String,
 }
 
-fn sign(key: &RsaPrivateKey, kid: &str, claims: &Value) -> String {
+fn sign(key: &PrivateKey, kid: &str, claims: &Value) -> String {
     let mut kopf = Header::new(Algorithm::RS256);
     kopf.kid = Some(kid.to_string());
     let pem = key.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).expect("PEM");
@@ -79,14 +79,14 @@ fn sign(key: &RsaPrivateKey, kid: &str, claims: &Value) -> String {
     encode(&kopf, claims, &schluessel).expect("JWT")
 }
 
-fn jwks(key: &RsaPrivateKey, kid: &str) -> Value {
+fn jwks(key: &PrivateKey, kid: &str) -> Value {
     json!({"keys": [{
         "kty": "RSA",
         "kid": kid,
         "use": "sig",
         "alg": "RS256",
-        "n": URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()),
-        "e": URL_SAFE_NO_PAD.encode(key.e().to_bytes_be()),
+        "n": URL_SAFE_NO_PAD.encode(key.n().to_be_bytes_trimmed_vartime()),
+        "e": URL_SAFE_NO_PAD.encode(key.e().to_be_bytes_trimmed_vartime()),
     }]})
 }
 
@@ -107,8 +107,8 @@ fn claims(basis: &str, jetzt: i64) -> Value {
 
 impl Mock {
     async fn start(uhr: Uhr) -> Self {
-        let mut rng = rand08::thread_rng();
-        let key = Arc::new(RsaPrivateKey::new(&mut rng, 2048).expect("RSA"));
+        let mut rng = getrandom::SysRng;
+        let key = Arc::new(PrivateKey::new(&mut rng, 2048).expect("RSA"));
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("Port frei");

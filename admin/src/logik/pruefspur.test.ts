@@ -30,6 +30,7 @@ describe("Art der Prüfspur", () => {
   it("benennt die Arten des Servers", () => {
     const arten = ARTEN.map((eintrag) => eintrag.wert);
     for (const wert of [
+      "verwaltung",
       "anmeldung",
       "fehlschlag",
       "rolle",
@@ -42,6 +43,7 @@ describe("Art der Prüfspur", () => {
       expect(arten).toContain(wert);
     }
     expect(art_titel("rolle")).toBe("Rolle");
+    expect(art_titel("verwaltung")).toBe("Verwaltung");
     expect(art_ton("fehlschlag")).toBe("warnung");
   });
 

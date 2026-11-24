@@ -35,10 +35,10 @@ use quiver_protocol::{
 use quiver_server::entra_schluessel::{erzeugen, SchluesselHalter, SCHLUESSEL_DATEI};
 use quiver_server::GRAPH_BASIS;
 use quiver_server::{app, benutzer, Ausweis, EntraKonfig, Konfig, Uhr};
+use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::pkcs8::EncodePublicKey;
-use rsa_alt::pkcs1::EncodeRsaPrivateKey;
-use rsa_alt::traits::PublicKeyParts;
-use rsa_alt::RsaPrivateKey;
+use rsa::traits::PublicKeyParts;
+use rsa::PrivateKey;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
@@ -54,6 +54,8 @@ const ROOT_EMAIL: &str = "root@example.test";
 const ROOT_PASSWORT: &str = "ein-sehr-langes-testpasswort";
 const ENTRA_SECRET: &str = "kein-echtes-geheimnis-nur-test";
 const OEFFENTLICH: &str = "http://127.0.0.1:8740";
+/// Der `Host`-Kopf, der zu [`OEFFENTLICH`] passt (Port gehört dazu).
+const HOST: &str = "127.0.0.1:8740";
 
 /// Höchstens zwei Argon2-Prüfungen laufen serverseitig gleichzeitig; damit
 /// parallele Tests nicht absichtlich 429 bekommen, melden sie sich nacheinander an.
@@ -65,7 +67,7 @@ static ROOT_SPERRE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 struct Mock {
     basis: String,
     kid: String,
-    key: Arc<RsaPrivateKey>,
+    key: Arc<PrivateKey>,
     uhr: Uhr,
     zustand: Arc<Mutex<MockZustand>>,
 }
@@ -80,7 +82,7 @@ struct MockZustand {
     refresh_hits: usize,
     claims: Value,
     refresh_claims: Value,
-    sign_with: Option<Arc<RsaPrivateKey>>,
+    sign_with: Option<Arc<PrivateKey>>,
     token_fehler: Option<(u16, &'static str)>,
     refresh_fehler: Option<&'static str>,
     verzoegerung_ms: u64,
@@ -135,24 +137,22 @@ fn graph_verhalten_default() -> GraphVerhalten {
     GraphVerhalten::Name(String::from("Team Alpha"))
 }
 
-fn sign(key: &RsaPrivateKey, kid: &str, claims: &Value) -> String {
+fn sign(key: &PrivateKey, kid: &str, claims: &Value) -> String {
     let mut kopf = Header::new(Algorithm::RS256);
     kopf.kid = Some(kid.to_string());
-    let pem = key
-        .to_pkcs1_pem(rsa_alt::pkcs1::LineEnding::LF)
-        .expect("PEM");
+    let pem = key.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).expect("PEM");
     let schluessel = EncodingKey::from_rsa_pem(pem.as_bytes()).expect("Signierschlüssel");
     encode(&kopf, claims, &schluessel).expect("JWT")
 }
 
-fn jwks(key: &RsaPrivateKey, kid: &str) -> Value {
+fn jwks(key: &PrivateKey, kid: &str) -> Value {
     json!({"keys": [{
         "kty": "RSA",
         "kid": kid,
         "use": "sig",
         "alg": "RS256",
-        "n": URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()),
-        "e": URL_SAFE_NO_PAD.encode(key.e().to_bytes_be()),
+        "n": URL_SAFE_NO_PAD.encode(key.n().to_be_bytes_trimmed_vartime()),
+        "e": URL_SAFE_NO_PAD.encode(key.e().to_be_bytes_trimmed_vartime()),
     }]})
 }
 
@@ -174,8 +174,8 @@ fn standard_claims(basis: &str, uhr: &Uhr, oid: &str, gruppen: &[&str]) -> Value
 
 impl Mock {
     async fn start(uhr: Uhr) -> Self {
-        let mut rng = rand08::thread_rng();
-        let key = Arc::new(RsaPrivateKey::new(&mut rng, 2048).expect("RSA"));
+        let mut rng = getrandom::SysRng;
+        let key = Arc::new(PrivateKey::new(&mut rng, 2048).expect("RSA"));
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("Port frei");
@@ -245,8 +245,8 @@ impl Mock {
     }
 
     fn falscher_schluessel(&self) {
-        let mut rng = rand08::thread_rng();
-        let fremd = Arc::new(RsaPrivateKey::new(&mut rng, 2048).expect("RSA"));
+        let mut rng = getrandom::SysRng;
+        let fremd = Arc::new(PrivateKey::new(&mut rng, 2048).expect("RSA"));
         self.zustand.lock().unwrap().sign_with = Some(fremd);
     }
 
@@ -865,6 +865,7 @@ impl Pruefung {
         let mut bauer = axum::http::Request::builder()
             .method(methode)
             .uri(format!("/api/v1{pfad}"))
+            .header("host", HOST)
             .header("content-type", "application/json");
         if let Some(token) = bearer {
             bauer = bauer.header("authorization", format!("Bearer {token}"));
@@ -899,7 +900,10 @@ impl Pruefung {
         extra: &[(&str, &str)],
         rumpf: Option<Vec<u8>>,
     ) -> Antwort {
-        let mut bauer = axum::http::Request::builder().method("GET").uri(pfad);
+        let mut bauer = axum::http::Request::builder()
+            .method("GET")
+            .uri(pfad)
+            .header("host", HOST);
         if let Some(cookie) = cookie {
             bauer = bauer.header("cookie", cookie);
         }
@@ -930,7 +934,10 @@ impl Pruefung {
         extra: &[(&str, &str)],
         rumpf: Vec<u8>,
     ) -> Antwort {
-        let mut bauer = axum::http::Request::builder().method("POST").uri(pfad);
+        let mut bauer = axum::http::Request::builder()
+            .method("POST")
+            .uri(pfad)
+            .header("host", HOST);
         if let Some(cookie) = cookie {
             bauer = bauer.header("cookie", cookie);
         }
@@ -1882,6 +1889,7 @@ async fn sitzungscookie_origin_und_keine_cors_freigabe() {
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/api/v1/auth/root")
+                    .header("host", "quiver.example.test")
                     .header("content-type", "application/json")
                     .header("origin", "https://quiver.example.test")
                     .header("x-quiver", "1")
@@ -2216,6 +2224,7 @@ async fn altgeraete_ohne_benutzer_nur_wenn_erlaubt() {
             .oneshot(
                 axum::http::Request::builder()
                     .uri("/api/v1/geraet/soll")
+                    .header("host", HOST)
                     .header("authorization", format!("Bearer {}", antwort.token))
                     .body(axum::body::Body::empty())
                     .unwrap(),
@@ -2590,8 +2599,8 @@ async fn discovery_wird_nach_24_stunden_erneuert_und_haelt_den_alten_stand() {
 
 /// Eine Assertion mit fremdem Schlüssel (für die Gegenprobe des Nachbaus).
 fn fremder_token(basis: &str, x5t: &str, alg: Algorithm) -> String {
-    let mut rng = rand08::thread_rng();
-    let key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA");
+    let mut rng = getrandom::SysRng;
+    let key = PrivateKey::new(&mut rng, 2048).expect("RSA");
     let mut kopf = Header::new(alg);
     kopf.x5t_s256 = Some(x5t.to_string());
     let jetzt = OffsetDateTime::now_utc().unix_timestamp();
@@ -2604,9 +2613,7 @@ fn fremder_token(basis: &str, x5t: &str, alg: Algorithm) -> String {
         "iat": jetzt - 10,
         "exp": jetzt + 200,
     });
-    let pem = key
-        .to_pkcs1_pem(rsa_alt::pkcs1::LineEnding::LF)
-        .expect("PEM");
+    let pem = key.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).expect("PEM");
     encode(
         &kopf,
         &claims,
@@ -3308,6 +3315,75 @@ async fn zugriffstoken_steht_in_keiner_ausgabe() {
         assert!(!gruppen.text.contains(GRAPH_TOKEN));
         let benutzer = p.admin("GET", "/admin/benutzer", None).await;
         assert!(!benutzer.text.contains(GRAPH_TOKEN));
+    })
+    .await;
+}
+
+/// Die beiden ändernden Verwaltungsrouten, die es nur mit Entra gibt, stehen
+/// auch in der Prüfspur – wer, was, Ziel.
+///
+/// Ohne Entra antworten sie 404; deshalb steht der erfolgreiche Weg hier und
+/// nicht in `tests/server.rs` (dort läuft die Tabelle
+/// `quiver_server::spur::AENDERNDE_ROUTEN` durch).
+#[tokio::test]
+async fn nachpruefen_und_aufnehmen_schreiben_in_die_pruefspur() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let _login = p.geraet_anmelden("A", 51234).await;
+
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+
+        let weg = p
+            .admin("DELETE", &format!("/admin/gruppen/{GRUPPE_ENTRA}"), None)
+            .await;
+        assert_eq!(weg.status, StatusCode::NO_CONTENT, "{}", weg.text);
+        let aufgenommen = p
+            .admin(
+                "PUT",
+                &format!("/admin/entra-gruppen/{GRUPPE_ENTRA}"),
+                Some(json!({"aufnehmen": true})),
+            )
+            .await;
+        assert_eq!(aufgenommen.status, StatusCode::OK, "{}", aufgenommen.text);
+
+        let spur = p.admin("GET", "/admin/pruefspur?limit=200", None).await;
+        assert_eq!(spur.status, StatusCode::OK);
+        let eintraege: Vec<(String, String)> = spur
+            .json
+            .as_array()
+            .expect("Liste")
+            .iter()
+            .filter(|eintrag| eintrag["art"] == "verwaltung")
+            .map(|eintrag| {
+                (
+                    eintrag["text"].as_str().unwrap_or_default().to_string(),
+                    eintrag["akteur"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        for (methode, pfad) in [
+            ("POST", "/api/v1/admin/benutzer/{oid}/pruefen"),
+            ("PUT", "/api/v1/admin/entra-gruppen/{id}"),
+        ] {
+            assert!(
+                eintraege
+                    .iter()
+                    .any(|(text, _)| text.contains(methode) && text.contains(pfad)),
+                "{methode} {pfad} fehlt: {eintraege:?}"
+            );
+        }
+        assert!(
+            eintraege.iter().all(|(_, akteur)| akteur == ROOT_EMAIL),
+            "der Akteur steht dabei: {eintraege:?}"
+        );
+        // Die Verwaltungs-Einträge tragen keine Werte: nur Methode, Pfad, Aktion.
+        for (text, _) in &eintraege {
+            assert!(!text.contains(GRUPPE_ENTRA), "keine Id im Klartext: {text}");
+            assert!(!text.contains("Test Person"), "kein Name: {text}");
+        }
     })
     .await;
 }

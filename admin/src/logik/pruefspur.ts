@@ -17,6 +17,8 @@ export interface ArtEintrag {
  * sie bekommt ihren rohen Wert als Titel, statt zu verschwinden.
  */
 export const ARTEN: readonly ArtEintrag[] = [
+  // Jede ändernde Route der Verwaltung (wer, was, Ziel); die Wache schreibt sie.
+  { wert: "verwaltung", titel: "Verwaltung", ton: "akzent" },
   { wert: "anmeldung", titel: "Anmeldung", ton: "gut" },
   { wert: "fehlschlag", titel: "Fehlschlag", ton: "warnung" },
   { wert: "rolle", titel: "Rolle", ton: "akzent" },

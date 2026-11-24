@@ -6,6 +6,26 @@ on:
   pull_request:
 
 jobs:
+  lieferkette:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      # Sicherheitslücken (auch eingestellte Kisten), Lizenzen, Herkunft
+      # (nur crates.io), doppelte Krypto-Kisten: die Regeln stehen in
+      # `deny.toml`, jede Ausnahme mit Grund und Weg im Baum.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses sources bans
+      # Die Verwaltung ist die zweite Hälfte der Lieferkette.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit
+        working-directory: admin
+        run: npm audit --audit-level=high
+
   rust:
     strategy:
       fail-fast: false
@@ -38,6 +58,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

@@ -25,7 +25,6 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -92,19 +91,21 @@ impl DateiTresor {
     // ------------------------------------------------------------ innen
 
     fn ordner_anlegen(&self) -> anyhow::Result<()> {
-        fs::create_dir_all(&self.ordner)?;
-        rechte(&self.ordner, 0o700);
+        crate::rechte::ordner_anlegen(&self.ordner)?;
         Ok(())
     }
 
     /// Eine Sperre über alle Prozesse (`tresor.sperre`), solange der Wert lebt.
     fn sperren(&self) -> anyhow::Result<File> {
         self.ordner_anlegen()?;
+        let pfad = self.ordner.join("tresor.sperre");
         let datei = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(self.ordner.join("tresor.sperre"))?;
+            .open(&pfad)?;
+        // Auch die Sperrdatei gehört nur dem Benutzer (0644 wäre zu offen).
+        crate::rechte::datei_schuetzen(&pfad);
         datei.lock()?;
         Ok(datei)
     }
@@ -180,36 +181,11 @@ impl DateiTresor {
 /// Erst in eine temporäre Datei (0600), dann umbenennen – nie halb geschrieben.
 ///
 /// Auch der Export der Einstellungen (Aufgabe 15) schreibt so: die Datei
-/// gehört von Anfang an nur dem Benutzer.
+/// gehört von Anfang an nur dem Benutzer. Die Umsetzung steht in
+/// [`crate::rechte::schreiben_atomar`], damit es nur einen Weg gibt.
 pub(crate) fn schreiben_atomar(pfad: &Path, inhalt: &[u8]) -> anyhow::Result<()> {
-    let mut zwischen = pfad.as_os_str().to_owned();
-    zwischen.push(format!(".{}.neu", std::process::id()));
-    let zwischen = PathBuf::from(zwischen);
-    {
-        let mut optionen = OpenOptions::new();
-        optionen.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            optionen.mode(0o600);
-        }
-        let mut datei = optionen.open(&zwischen)?;
-        datei.write_all(inhalt)?;
-        datei.sync_all()?;
-    }
-    fs::rename(&zwischen, pfad)?;
-    rechte(pfad, 0o600);
-    Ok(())
+    crate::rechte::schreiben_atomar(pfad, inhalt)
 }
-
-#[cfg(unix)]
-fn rechte(pfad: &Path, modus: u32) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(pfad, fs::Permissions::from_mode(modus));
-}
-
-#[cfg(not(unix))]
-fn rechte(_pfad: &Path, _modus: u32) {}
 
 #[cfg(test)]
 mod tests {

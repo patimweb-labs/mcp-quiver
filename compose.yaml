@@ -1,0 +1,64 @@
+# mcp-quiver: ein Container, ein Port (8740), ein Volume (/daten).
+#
+# Diese Datei ist der **Betriebsweg** und gleichzeitig die Vorlage für die
+# Prüfung: `tools/container-pruefung.sh` startet denselben Container mit
+# eigenem Namen, eigenem Volume und freiem Port und räumt ihn wieder ab.
+#
+#   cp .env.example .env      # Werte eintragen, keine Geheimnisse ins Repo
+#   docker compose up -d
+#   docker exec quiver quiver-server root-setzen --stdin   # Ersteinrichtung
+#
+# Der Container läuft so eng wie möglich:
+#   read_only        das Dateisystem ist nicht beschreibbar
+#   tmpfs /tmp       nur der Zwischenspeicher ist flüchtig beschreibbar
+#   cap_drop ALL     keine zusätzlichen Rechte im Kernel
+#   no-new-privileges  kein Aufstieg über setuid
+#   mem_limit        eine Obergrenze gegen Ausuferung
+#   pids_limit       eine Obergrenze gegen Prozess-Vermehrung
+#   logging          Rotation, damit das Log die Platte nicht füllt
+#
+# Was der Container **nicht** mehr hat: eine Shell und eine Paketverwaltung
+# (distroless). `docker exec quiver quiver-server …` geht weiterhin.
+
+services:
+  quiver:
+    image: ${QUIVER_IMAGE:-mcp-quiver-server:dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quiver
+    restart: unless-stopped
+    user: "10001:999"
+    ports:
+      # Nur Loopback: davor steht der Proxy, der TLS beendet.
+      - "127.0.0.1:${QUIVER_PORT:-8740}:8740"
+    env_file:
+      - .env
+    environment:
+      QUIVER_DATEN: /daten
+      QUIVER_ADMIN_DIST: /opt/quiver/admin
+    volumes:
+      - quiver-daten:/daten
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/quiver-server", "gesund"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  quiver-daten:

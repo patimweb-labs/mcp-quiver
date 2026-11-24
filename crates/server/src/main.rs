@@ -9,11 +9,15 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use quiver_server::{app_mit_hintergrund, benutzer, unterbefehl, Konfig};
+use quiver_server::{app_mit_hintergrund, benutzer, betrieb, rechte, unterbefehl, Konfig};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Vor allem anderen: neue Dateien gehören von der ersten Sekunde an nur
+    // dem Eigentümer (Datenbank, `-wal`, `-shm`, Schlüssel, Sicherungen).
+    rechte::umask_setzen();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -22,6 +26,11 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if unterbefehl::ist_unterbefehl(&args) {
+        if unterbefehl::ist_gesund(&args) {
+            return unterbefehl::gesund()
+                .await
+                .inspect_err(|fehler| eprintln!("{fehler:#}"));
+        }
         return unterbefehl::ausfuehren(&args).inspect_err(|fehler| eprintln!("{fehler:#}"));
     }
     if !args.is_empty() {
@@ -67,13 +76,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("quiver-server lauscht auf http://{adresse}");
     println!("quiver-server lauscht auf http://{adresse}");
 
-    axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(herunterfahren())
-    .await?;
-    Ok(())
+    betrieb::bedienen(listener, router, herunterfahren()).await
 }
 
 async fn herunterfahren() {

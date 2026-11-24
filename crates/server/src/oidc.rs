@@ -606,9 +606,9 @@ mod tests {
     use base64::Engine;
     use jsonwebtoken::jwk::{CommonParameters, Jwk};
     use jsonwebtoken::{encode, EncodingKey, Header};
-    use rsa_alt::pkcs1::EncodeRsaPrivateKey;
-    use rsa_alt::traits::PublicKeyParts;
-    use rsa_alt::RsaPrivateKey;
+    use rsa::pkcs1::EncodeRsaPrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use rsa::PrivateKey;
     use serde_json::json;
 
     const TENANT: &str = "11111111-2222-3333-4444-555555555555";
@@ -618,14 +618,14 @@ mod tests {
     const NONCE: &str = "nonce-fuer-den-test";
 
     struct Schluessel {
-        privat: RsaPrivateKey,
+        privat: PrivateKey,
         kid: String,
     }
 
     impl Schluessel {
         fn neu(kid: &str) -> Self {
-            let mut rng = rand08::thread_rng();
-            let privat = RsaPrivateKey::new(&mut rng, 2048).expect("RSA-Schlüssel");
+            let mut rng = getrandom::SysRng;
+            let privat = PrivateKey::new(&mut rng, 2048).expect("RSA-Schlüssel");
             Self {
                 privat,
                 kid: kid.to_string(),
@@ -634,15 +634,15 @@ mod tests {
 
         fn pem(&self) -> Vec<u8> {
             self.privat
-                .to_pkcs1_pem(rsa_alt::pkcs1::LineEnding::LF)
+                .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
                 .expect("PEM")
                 .as_bytes()
                 .to_vec()
         }
 
         fn jwk(&self) -> Jwk {
-            let n = URL_SAFE_NO_PAD.encode(self.privat.n().to_bytes_be());
-            let e = URL_SAFE_NO_PAD.encode(self.privat.e().to_bytes_be());
+            let n = URL_SAFE_NO_PAD.encode(self.privat.n().to_be_bytes_trimmed_vartime());
+            let e = URL_SAFE_NO_PAD.encode(self.privat.e().to_be_bytes_trimmed_vartime());
             Jwk {
                 common: CommonParameters {
                     key_id: Some(self.kid.clone()),

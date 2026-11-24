@@ -63,6 +63,22 @@ impl FehlerAntwort {
         Self::neu(StatusCode::CONFLICT, text)
     }
 
+    /// 408 – der Client sendet den Rumpf nicht zu Ende (Zeitlimit).
+    pub fn zeitlimit() -> Self {
+        Self::neu(
+            StatusCode::REQUEST_TIMEOUT,
+            "der Rumpf kam nicht rechtzeitig; bitte erneut senden",
+        )
+    }
+
+    /// 413 – der Rumpf ist größer als die Grenze dieser Route.
+    ///
+    /// Die Grenze selbst steht in der Route (64 KB, für Einträge 256 KB) und
+    /// wird hier nicht wiederholt: die Antwort soll knapp bleiben.
+    pub fn zu_gross() -> Self {
+        Self::neu(StatusCode::PAYLOAD_TOO_LARGE, "der Rumpf ist zu groß")
+    }
+
     /// 410 – der Code ist abgelaufen.
     pub fn abgelaufen(text: impl Into<String>) -> Self {
         Self::neu(StatusCode::GONE, text)
@@ -92,6 +108,23 @@ impl IntoResponse for FehlerAntwort {
 /// Ergebnis eines Aufrufs im Vertrag.
 pub type Ergebnis<T> = Result<T, FehlerAntwort>;
 
+/// Steckt in der Ursachenkette ein Fehler vom Typ `T`?
+///
+/// Gebraucht für die beiden Fälle, die ein Extraktor nicht selbst
+/// unterscheiden kann: Rumpf zu groß (413) und Rumpf zu langsam (408).
+pub(crate) fn ursache_ist<T: std::error::Error + 'static>(
+    fehler: &(dyn std::error::Error + 'static),
+) -> bool {
+    let mut quelle = Some(fehler);
+    while let Some(jetzt) = quelle {
+        if jetzt.is::<T>() {
+            return true;
+        }
+        quelle = jetzt.source();
+    }
+    false
+}
+
 /// JSON-Rumpf, dessen Ablehnung als [`FehlerAntwort`] herauskommt.
 ///
 /// `axum::Json` würde bei kaputtem JSON 422 mit Text beantworten; der Vertrag
@@ -108,7 +141,20 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(wert) = Json::<T>::from_request(req, state)
             .await
-            .map_err(|fehler| FehlerAntwort::ungueltig(format!("Rumpf nicht lesbar: {fehler}")))?;
+            .map_err(|fehler| {
+                // Zu groß ist kein Formfehler, sondern 413 (die Grenze steht in
+                // `RUMPF_STANDARD` bzw. `RUMPF_EINTRAEGE`).
+                if fehler.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    return FehlerAntwort::zu_gross();
+                }
+                // Ein Client, der den Rumpf nicht zu Ende sendet, bekommt 408 und
+                // nicht 400: das Zeitlimit hat gegriffen, der Aufruf ist nicht
+                // falsch (er ist nur nicht fertig geworden).
+                if ursache_ist::<tower_http::timeout::TimeoutError>(&fehler) {
+                    return FehlerAntwort::zeitlimit();
+                }
+                FehlerAntwort::ungueltig(format!("Rumpf nicht lesbar: {fehler}"))
+            })?;
         Ok(Koerper(wert))
     }
 }

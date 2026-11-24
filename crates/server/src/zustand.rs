@@ -20,6 +20,14 @@ use crate::krypto::Schluessel;
 use crate::oidc::Oidc;
 use crate::Konfig;
 
+/// So viele Ereignis-Ströme darf ein Gerät gleichzeitig offen halten.
+///
+/// Ein Client braucht einen; ein zweiter ist ein Neustart, der den alten noch
+/// nicht geschlossen hat. Mehr ist ein Fehler und soll den Server nicht binden.
+pub const STROEME_JE_GERAET: usize = 4;
+/// So viele Ereignis-Ströme dürfen insgesamt offen sein.
+pub const STROEME_GESAMT: usize = 200;
+
 /// Der gemeinsame Zustand aller Aufrufe.
 pub(crate) struct Zustand {
     /// Eine Verbindung, von einer blockierenden Aufgabe gehalten.
@@ -85,9 +93,17 @@ impl Zustand {
         let _ = self.geaendert.send(());
     }
 
-    pub(crate) fn strom_auf(&self, id: &GeraetId) {
+    pub(crate) fn strom_auf(&self, id: &GeraetId) -> bool {
         let mut karte = crate::sperre(&self.verbunden);
-        *karte.entry(id.clone()).or_insert(0) += 1;
+        if karte.values().sum::<usize>() >= STROEME_GESAMT {
+            return false;
+        }
+        let anzahl = karte.entry(id.clone()).or_insert(0);
+        if *anzahl >= STROEME_JE_GERAET {
+            return false;
+        }
+        *anzahl += 1;
+        true
     }
 
     pub(crate) fn strom_zu(&self, id: &GeraetId) {
@@ -142,9 +158,12 @@ pub(crate) struct Stromwaechter {
 }
 
 impl Stromwaechter {
-    pub(crate) fn neu(zustand: Arc<Zustand>, id: GeraetId) -> Self {
-        zustand.strom_auf(&id);
-        Self { zustand, id }
+    /// `None`, wenn die Grenze erreicht ist (je Gerät oder insgesamt).
+    pub(crate) fn neu(zustand: Arc<Zustand>, id: GeraetId) -> Option<Self> {
+        if !zustand.strom_auf(&id) {
+            return None;
+        }
+        Some(Self { zustand, id })
     }
 }
 

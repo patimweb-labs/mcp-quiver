@@ -151,6 +151,12 @@ pub fn oeffnen(pfad: &Path) -> anyhow::Result<Connection> {
                 sicherung.display()
             )
         })?;
+        // Die Sicherung enthält dieselben Daten wie die Datenbank: nur der
+        // Eigentümer darf sie lesen. Und es bleiben die letzten drei.
+        crate::rechte::datei_schuetzen(&sicherung);
+        if let Some(ordner) = pfad.parent() {
+            crate::rechte::sicherungen_kuerzen(ordner);
+        }
         tracing::info!(
             "Datenbank gesichert: {} → {}",
             pfad.display(),
@@ -161,6 +167,15 @@ pub fn oeffnen(pfad: &Path) -> anyhow::Result<Connection> {
     let conn =
         Connection::open(pfad).with_context(|| format!("Datenbank {} öffnen", pfad.display()))?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")?;
+    if ist_datei {
+        // `-wal` und `-shm` entstehen genau hier und tragen dieselben Daten wie
+        // die Datenbank: nur der Eigentümer darf sie lesen.
+        for anhang in ["", "-wal", "-shm"] {
+            let mut name = pfad.as_os_str().to_owned();
+            name.push(anhang);
+            crate::rechte::datei_schuetzen(Path::new(&name));
+        }
+    }
     migrieren(&conn)?;
     Ok(conn)
 }
@@ -179,25 +194,36 @@ fn migrieren(conn: &Connection) -> anyhow::Result<()> {
     }
     conn.execute_batch(SCHEMA_V1)?;
     // Alte `geraete`-Tabelle (Stand vor Aufgabe 20) hat die neuen Spalten nicht.
+    //
+    // `ALTER TABLE … ADD COLUMN oid` geht nicht mehr: `oid` ist in SQLite ein
+    // Name der rowid, und eine solche Spalte lässt sich nicht nachträglich
+    // anhängen („cannot add rowid alias“). Deshalb wird die Tabelle neu
+    // aufgebaut – der Weg, den SQLite für Schemaänderungen ohnehin vorsieht.
     let mut manuell_neu = false;
-    for (name, typ, vorgabe) in [
-        ("oid", "TEXT", None),
-        ("tid", "TEXT", None),
-        ("manuell_json", "TEXT", Some("'[]'")),
-    ] {
-        if !spalte_existiert(conn, GERAETE, name)? {
-            let zusatz = match vorgabe {
-                Some(wert) => format!(" DEFAULT {wert}"),
-                None => String::new(),
-            };
-            conn.execute(
-                &format!("ALTER TABLE {GERAETE} ADD COLUMN {name} {typ}{zusatz}"),
-                [],
-            )?;
-            if name == "manuell_json" {
-                manuell_neu = true;
-            }
-        }
+    if ["oid", "tid", "manuell_json"]
+        .iter()
+        .any(|spalte| !spalte_existiert(conn, GERAETE, spalte).unwrap_or(false))
+    {
+        manuell_neu = !spalte_existiert(conn, GERAETE, "manuell_json")?;
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS geraete_neu;
+             ALTER TABLE geraete RENAME TO geraete_alt;
+             CREATE TABLE geraete (
+                 id              TEXT PRIMARY KEY,
+                 json            TEXT NOT NULL,
+                 token_hash      TEXT NOT NULL UNIQUE,
+                 zuletzt_gesehen TEXT,
+                 meldung_json    TEXT,
+                 oid             TEXT,
+                 tid             TEXT,
+                 manuell_json    TEXT NOT NULL DEFAULT '[]'
+             );
+             INSERT INTO geraete
+                 (id, json, token_hash, zuletzt_gesehen, meldung_json, oid, tid, manuell_json)
+                 SELECT id, json, token_hash, zuletzt_gesehen, meldung_json, NULL, NULL, '[]'
+                 FROM geraete_alt;
+             DROP TABLE geraete_alt;",
+        )?;
     }
     // Aufgabe 23 und 30: alte `entra_gruppen` kennen die neuen Spalten nicht.
     // Jede Stufe ist wiederholbar und einzeln nachholbar.
@@ -1662,6 +1688,52 @@ pub fn data_version(conn: &Connection) -> anyhow::Result<i64> {
 mod tests {
     use super::*;
     use quiver_domain::{Herkunft, Laufzeit, SatzId};
+
+    /// Die SQLite-Fassung, die mindestens mitgebaut werden muss.
+    ///
+    /// rusqlite 0.43 bringt 3.54.1 mit. Der Test hält die Grenze fest: wer
+    /// rusqlite zurückdreht, merkt es hier und nicht erst im Betrieb.
+    const SQLITE_MINDESTENS: i32 = 3_054_001;
+
+    #[test]
+    fn sqlite_fassung_ist_mindestens_die_behobene() {
+        let conn = gedaechtnis();
+        let text: String = conn
+            .query_row("SELECT sqlite_version()", [], |zeile| zeile.get(0))
+            .expect("Version lesbar");
+        let teile: Vec<i32> = text
+            .split('.')
+            .map(|teil| teil.parse().unwrap_or(0))
+            .collect();
+        assert_eq!(teile.len(), 3, "unerwartete Form: {text}");
+        let nummer = teile[0] * 1_000_000 + teile[1] * 1_000 + teile[2];
+        assert!(
+            nummer >= SQLITE_MINDESTENS,
+            "SQLite {text} ist älter als die behobene Fassung"
+        );
+        // Die Fassung, gegen die gebaut wurde, ist dieselbe wie die im Betrieb.
+        assert_eq!(rusqlite::version(), text);
+        assert!(rusqlite::version_number() >= SQLITE_MINDESTENS);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn datenbank_und_anhaenge_gehoeren_nur_dem_eigentuemer() {
+        use std::os::unix::fs::PermissionsExt;
+        let ordner = ordner("rechte");
+        let pfad = ordner.join("quiver.db");
+        crate::rechte::umask_setzen();
+        let _conn = oeffnen(&pfad).expect("Datenbank");
+        assert!(pfad.exists(), "die Datenbank liegt da");
+        for anhang in ["", "-wal", "-shm"] {
+            let datei = ordner.join(format!("quiver.db{anhang}"));
+            let Ok(meta) = std::fs::metadata(&datei) else {
+                continue;
+            };
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600, "{datei:?}");
+        }
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
 
     fn eintrag(id: &str) -> Eintrag {
         Eintrag {

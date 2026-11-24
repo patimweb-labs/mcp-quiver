@@ -480,7 +480,7 @@ impl Protokoll {
     fn anhaengen(&self, art: &str, zeile: &str) {
         let tag = tag_heute();
         let pfad = self.ordner.join(format!("{art}-{tag}.jsonl"));
-        if let Err(fehler) = std::fs::create_dir_all(&self.ordner) {
+        if let Err(fehler) = crate::rechte::ordner_anlegen(&self.ordner) {
             tracing::warn!("Protokollordner nicht anlegbar: {fehler}");
             return;
         }
@@ -493,6 +493,8 @@ impl Protokoll {
         }
         match optionen.open(&pfad) {
             Ok(mut datei) => {
+                // Eine schon vorhandene Datei könnte offener sein; angleichen.
+                crate::rechte::datei_schuetzen(&pfad);
                 if let Err(fehler) = writeln!(datei, "{zeile}") {
                     tracing::warn!("Protokoll nicht schreibbar: {fehler}");
                 }
@@ -751,12 +753,18 @@ mod tests {
     use serde_json::json;
 
     fn ordner() -> PathBuf {
+        // Der Zeitstempel allein reicht nicht (Mikrosekunden-Takt): gleichzeitig
+        // startende Tests bekämen denselben Ordner.
+        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let stempel = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
-        let pfad =
-            std::env::temp_dir().join(format!("quiver-protokoll-{}-{stempel}", std::process::id()));
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let pfad = std::env::temp_dir().join(format!(
+            "quiver-protokoll-{}-{stempel}-{nummer}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&pfad).expect("Ordner");
         pfad
     }

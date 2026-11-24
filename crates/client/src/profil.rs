@@ -10,7 +10,7 @@
 //! Geheimnisse stehen **nicht** hier, sondern im [`Tresor`](crate::Tresor).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use quiver_domain::{Geraet, Soll, Werte};
 use serde::{Deserialize, Serialize};
@@ -84,35 +84,34 @@ impl Profil {
         }
     }
 
-    /// Datei schreiben (erst nebenhin, dann umbenennen).
+    /// Datei schreiben: atomar, mit 0600 im Ordner 0700.
+    ///
+    /// Der Zwischenweg über [`crate::rechte::schreiben_atomar`] sorgt dafür,
+    /// dass die Datei nie halb und nie für andere lesbar auf der Platte liegt.
     pub fn speichern(&self, ordner: &Path) -> anyhow::Result<()> {
-        std::fs::create_dir_all(ordner)?;
         let ziel = ordner.join("zustand.json");
-        let zwischen = zwischenpfad(&ziel);
         let text = serde_json::to_vec_pretty(self)?;
-        std::fs::write(&zwischen, text)?;
-        std::fs::rename(&zwischen, &ziel)?;
-        Ok(())
+        crate::rechte::schreiben_atomar(&ziel, &text)
     }
-}
-
-fn zwischenpfad(ziel: &Path) -> PathBuf {
-    let mut name = ziel.file_name().unwrap_or_default().to_os_string();
-    name.push(".neu");
-    ziel.with_file_name(name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn ordner() -> PathBuf {
+        // Der Zeitstempel allein reicht nicht: die Uhr dieses Systems tickt in
+        // Mikrosekunden, und Tests, die gleichzeitig starten, bekommen denselben
+        // Wert. Ein Zähler macht den Namen eindeutig.
+        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let stempel = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pfad = std::env::temp_dir().join(format!(
-            "quiver-client-profil-{}-{stempel}",
+            "quiver-client-profil-{}-{stempel}-{nummer}",
             std::process::id()
         ));
         std::fs::create_dir_all(&pfad).expect("Ordner");

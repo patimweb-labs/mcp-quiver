@@ -28,6 +28,7 @@ mod admin;
 mod anmeldung;
 mod auth;
 pub mod benutzer;
+pub mod betrieb;
 mod config;
 mod drossel;
 mod einrichtung;
@@ -36,25 +37,31 @@ mod fehler;
 mod geraet;
 mod graph;
 mod hilfen;
+mod host;
 mod kopfzeilen;
 mod krypto;
 mod oidc;
+pub mod rechte;
 mod refresh;
 mod seiten;
 mod sitzung;
 mod speicher;
+pub mod spur;
 pub mod unterbefehl;
 mod zustand;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{get, post, put};
 use axum::Router;
 use quiver_domain::{Geraet, GeraetId, Soll};
 use rusqlite::Connection;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::timeout::RequestBodyTimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use zustand::Zustand;
@@ -62,7 +69,16 @@ use zustand::Zustand;
 pub use config::{Ausweis, EntraKonfig, Konfig, Uhr, GRAPH_BASIS, GRAPH_SCOPE};
 pub use entra_schluessel::{EntraSchluessel, ZertifikatStand};
 pub use fehler::{Ergebnis, FehlerAntwort};
+pub use host::GESUND;
 pub use krypto::Schluessel;
+pub use zustand::{STROEME_GESAMT, STROEME_JE_GERAET};
+
+/// Rumpfgrenze für alle Wege außer Einträgen.
+pub const RUMPF_STANDARD: usize = 64 * 1024;
+/// Rumpfgrenze für Einträge: `server.json` ist größer als 64 KB.
+pub const RUMPF_EINTRAEGE: usize = 256 * 1024;
+/// So lange darf ein Client an einem Rumpf senden.
+pub const RUMPF_ZEIT: Duration = Duration::from_secs(30);
 
 /// Alles aufbauen, was der Server braucht; der Aufrufer bindet selbst.
 ///
@@ -83,7 +99,7 @@ pub async fn app_mit_hintergrund(konfig: Konfig) -> anyhow::Result<Router> {
 }
 
 async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
-    std::fs::create_dir_all(&konfig.daten)?;
+    rechte::ordner_anlegen(&konfig.daten)?;
     let conn = speicher::oeffnen(&konfig.daten.join("quiver.db"))?;
     let schluessel = Schluessel::laden(&konfig.daten)?;
     let oidc = match konfig.entra.clone() {
@@ -113,10 +129,22 @@ async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
     let dummy = tokio::task::spawn_blocking(benutzer::dummy_hash_erzeugen)
         .await
         .map_err(|fehler| anyhow::anyhow!("Dummy-Hash nicht baubar: {fehler}"))??;
+    let daten = konfig.daten.clone();
+    let rumpf_zeit = konfig.rumpf_zeit;
     let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc, graph, dummy));
-    let router = router(zustand.clone(), dist).layer(middleware::from_fn(move |req, next| {
-        kopfzeilen::sicherheits_kopfzeilen(ist_https, req, next)
-    }));
+    // Erst jetzt, wenn Datenbank, `-wal`, `-shm` und Schlüssel da sind: die
+    // Rechte nachziehen (Symlinks werden nicht verfolgt).
+    if let Err(fehler) = rechte::daten_pruefen(&daten) {
+        tracing::warn!("Rechte in {} nicht prüfbar: {fehler}", daten.display());
+    }
+    let wache = zustand.clone();
+    let router = router(zustand.clone(), dist)
+        .layer(DefaultBodyLimit::max(RUMPF_STANDARD))
+        .layer(RequestBodyTimeoutLayer::new(rumpf_zeit))
+        .layer(middleware::from_fn_with_state(wache, host::host_wache))
+        .layer(middleware::from_fn(move |req, next| {
+            kopfzeilen::sicherheits_kopfzeilen(ist_https, req, next)
+        }));
     Ok((router, zustand))
 }
 
@@ -164,12 +192,17 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
 
     let verwaltung = Router::new()
         .route("/eintraege", get(admin::eintraege_liste))
-        .route("/eintraege/import", post(admin::eintrag_importieren))
+        // Einträge dürfen größer sein als alles andere (server.json).
+        .route(
+            "/eintraege/import",
+            post(admin::eintrag_importieren).layer(DefaultBodyLimit::max(RUMPF_EINTRAEGE)),
+        )
         .route(
             "/eintraege/{id}",
             get(admin::eintrag_holen)
                 .put(admin::eintrag_setzen)
-                .delete(admin::eintrag_loeschen),
+                .delete(admin::eintrag_loeschen)
+                .layer(DefaultBodyLimit::max(RUMPF_EINTRAEGE)),
         )
         .route("/saetze", get(admin::saetze_liste))
         .route(
@@ -203,6 +236,12 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         .route("/entra-gruppen/{id}", put(benutzer::entra_gruppe_setzen))
         .route("/pruefspur", get(benutzer::pruefspur))
         .method_not_allowed_fallback(methode_falsch)
+        // Erst die Spur, dann die Sitzung: die Sitzung ist außen und legt den
+        // Benutzer in die Anfrage, den die Spur braucht.
+        .route_layer(middleware::from_fn_with_state(
+            zustand.clone(),
+            spur::spur_wache,
+        ))
         .route_layer(middleware::from_fn_with_state(
             zustand.clone(),
             sitzung::verwaltung_wache,
@@ -228,6 +267,8 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
     let app = Router::new()
         .merge(browser)
         .nest("/api", api)
+        // Der Weg für den Container selbst; nur über Loopback (siehe `host`).
+        .route(host::GESUND, get(host::gesund))
         .with_state(zustand);
 
     match dist {

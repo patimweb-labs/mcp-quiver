@@ -52,12 +52,37 @@ Vue und sieht genauso aus wie der Client.
 
 ## Server starten (Docker)
 
+Das Abbild ist für den engen Betrieb gebaut: die Laufzeit besteht aus dem
+Programm und sonst nichts – **keine Shell, keine Paketverwaltung** (distroless),
+Benutzer `10001:999`, alle Basis-Abbilder auf einen Digest festgelegt. Im
+Container gibt es keine Shell, über die sich etwas ausnutzen ließe.
+
 ```bash
 docker build -t mcp-quiver-server .
 docker run -d --name quiver -p 127.0.0.1:8740:8740 \
   -e QUIVER_OEFFENTLICH=http://localhost:8740 \
+  --read-only --tmpfs /tmp:size=32m,mode=1777 \
+  --cap-drop=ALL --security-opt=no-new-privileges:true \
+  --memory 512m --pids-limit 256 \
+  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   -v quiver-daten:/daten mcp-quiver-server
 ```
+
+Werte, Grenzen und Tests: [docs/haertung.md](docs/haertung.md).
+`compose.yaml` ist derselbe Aufruf als Datei (`docker compose up -d`), und
+`tools/container-pruefung.sh` startet genau so einen Container unter eigenem
+Namen und Volume (`quiver-pruefung-*`) auf einem freien Port, prüft ihn und
+räumt ihn wieder ab. Der Container meldet seine Gesundheit über
+`quiver-server gesund`; der Unterbefehl fragt den Server nur über Loopback.
+`docker exec quiver quiver-server …` geht ohne Shell weiterhin.
+
+Vorhandene Volumes laufen weiter: der Datenordner gehört `10001:999` (UID
+**und** GID), ein Volume aus einer früheren Fassung öffnet also ohne `chown`
+von Hand. Im Volume ist der Datenordner `0700` und `quiver.db`, `-wal`, `-shm`,
+die Sicherungen (`.vor-*`), `entra-*` und `schluessel` sind `0600`; von den
+Sicherungen bleiben die letzten drei. Der Prozess setzt seine umask beim Start,
+damit die Rechte von der ersten Sekunde an gelten; ein Neustart zieht Dateien
+nach, deren Rechte von Hand verstellt wurden (Symlinks werden nicht verfolgt).
 
 Danach `http://localhost:8740` öffnen. Die erste Seite ist die
 **Ersteinrichtung**: sie fragt E-Mail und Passwort des einen Root-Benutzers ab
@@ -178,6 +203,10 @@ aufnehmen. Höchstens 200 Gruppen legt der Server auf diesem Weg an.
 ```bash
 # alles prüfen (vor jedem Commit)
 cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace
+# Lieferkette: Sicherheitslücken (auch eingestellte Kisten), Lizenzen, Herkunft
+# (nur crates.io), keine doppelten Krypto-Kisten — Regeln in `deny.toml`
+cargo deny check
+npm --prefix admin audit --audit-level=high
 ```
 
 Die Token-Dateien in `tokens/` sind die einzige Quelle für Farben, Maße und
@@ -378,8 +407,17 @@ grenzen nach Eintrag, Werkzeug, Agent, Zeitraum (letzte Stunde, heute, 7 Tage)
 und „nur Fehler“ ein.
 
 Alles bleibt auf dem Gerät: `<profil>/protokoll/aufrufe-JJJJ-MM-TT.jsonl` und
-`prozesse-JJJJ-MM-TT.jsonl`, Dateirechte 0600, nach 7 Tagen gelöscht und
-insgesamt höchstens 50 MB. Der Server bekommt keine Aufrufe.
+`prozesse-JJJJ-MM-TT.jsonl`, nach 7 Tagen gelöscht und insgesamt höchstens
+50 MB. Der Server bekommt keine Aufrufe.
+
+**Wer es lesen darf.** Der Profilordner ist `0700`; alles darin – der Stand
+(`zustand.json`), die Fenster-Einstellungen (`oberflaeche.json`), die
+Protokolle, die Dateien des Tresors und die Sperrdatei – ist `0600`. Das gilt
+beim Anlegen (atomar: eine Zwischendatei neben dem Ziel, dann umbenennen; nie
+halb geschrieben, und ein Symlink am Ziel wird ersetzt statt verfolgt) und bei
+jedem Start erneut, der von Hand verstellte Rechte nachzieht. Unter Windows
+gibt es diese Bits nicht; dort hält die Vererbung der ACL des Benutzerprofils
+andere Konten fern, deshalb liegt das Profil im eigenen `%APPDATA%`.
 
 **Immer maskiert:** Schlüssel, deren Name `pass`, `token`, `secret`, `key`,
 `pat`, `auth` oder `cookie` enthält, werden zu `<verborgen>`, und jeder Wert aus

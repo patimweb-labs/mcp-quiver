@@ -1,0 +1,208 @@
+# Lieferkette (cargo-deny): Sicherheitslücken, Lizenzen, Herkunft, Doppelungen.
+#
+# Der Lauf gehört zum Prüfen: `cargo deny check` (siehe `.github/workflows`).
+# Alles, was hier steht, ist eine **Festlegung**, keine Bequemlichkeit: jede
+# Ausnahme nennt Grund und Weg im Baum.
+#
+# Prüfen: `cargo deny check advisories licenses sources bans`
+
+[graph]
+# Gebaut wird auf genau diesen Plattformen (Client-Fenster und Server).
+# Was nur in `--target all` auftaucht (etwa die GTK-Abhängigkeiten von
+# `tray-icon`, die wir nur für macOS und Windows ziehen), gehört nicht dazu.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+
+[advisories]
+version = 2
+# Auch „eingestellt“ (unmaintained) zählt: eine Kiste ohne Pflege bekommt keine
+# Fehlerbehebungen mehr, auch wenn heute nichts offen ist.
+unmaintained = "all"
+# Was nicht gebaut wird, kann nicht schaden; diese Kisten sind trotzdem hier
+# vermerkt, damit ein späterer Leser den Weg sieht.
+ignore = [
+    # paste ist eingestellt (RUSTSEC-2024-0436). Weg: image → ravif → rav1e
+    # (AV1-Kodierer). `image` ist über egui_extras, eframe und arboard im Baum;
+    # welche Formate es bauen darf, entscheiden deren Merkmale, nicht wir.
+    # Kein eigener Code benutzt paste. Raus, sobald eine dieser Kisten kein
+    # avif mehr zieht.
+    { id = "RUSTSEC-2024-0436", reason = "paste kommt nur über image → ravif → rav1e; nicht abschaltbar, kein eigener Code" },
+    # chrono ist eingestellt (RUSTSEC-2026-0543). Weg: quiver-client → rmcp →
+    # schemars (Merkmal `chrono04`). Wir benutzen `time`, nicht `chrono`; raus,
+    # sobald rmcp/schemars darauf verzichten.
+    { id = "RUSTSEC-2026-0543", reason = "chrono kommt nur über rmcp → schemars (chrono04); eigener Code nutzt time" },
+    # proc-macro-error ist eingestellt (RUSTSEC-2024-0370). Weg: gtk3-macros →
+    # gtk → libappindicator/muda → tray-icon. tray-icon ziehen wir nur für
+    # macOS und Windows; auf keinem Ziel in `[graph] targets` wird gtk gebaut
+    # (`cargo tree -i gtk --target <Ziel>` ist leer). Die Prüfung sieht es
+    # trotzdem, weil sie den ganzen Sperrbaum kennt – daher die Ausnahme.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error nur über die Linux-Zweige von tray-icon; auf keinem Ziel gebaut" },
+    # rustybuzz und ttf-parser sind eingestellt (RUSTSEC-2026-0206,
+    # RUSTSEC-2026-0192). Weg: resvg → usvg (Textformung in SVG). `egui_extras`
+    # (Merkmal `svg`) zieht usvg mit `text`/`system-fonts`; die Merkmale lassen
+    # sich nicht abschalten, weil sie dort gesetzt sind. Wir rastern nur ein
+    # Zeichen ohne Text. Raus, sobald egui_extras/usvg andere Wege geht.
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz über resvg → usvg (Textformung), Merkmale von egui_extras erzwungen" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser über resvg → usvg (Schriften), Merkmale von egui_extras erzwungen" },
+    # zbus_names, zvariant und zvariant_derive gelten einzeln als eingestellt
+    # (RUSTSEC-2026-0371, -0370, -0372), sind aber Teile von zbus. Weg:
+    # accesskit_unix → atspi → zbus (Bedienungshilfen unter Linux, über
+    # eframe). Abschalten hieße: keine Bildschirmleser-Unterstützung.
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names gehört zu zbus (accesskit → atspi, Bedienungshilfen Linux)" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant gehört zu zbus (accesskit → atspi, Bedienungshilfen Linux)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive gehört zu zbus (accesskit → atspi, Bedienungshilfen Linux)" },
+]
+
+[licenses]
+# Erlaubt sind die üblichen freien Lizenzen; alles andere ist ein Fehler und
+# wird mit Grund hier eingetragen.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    # Windows-Zwischenablage (arboard → clipboard-win) und ksni (Infobereich
+    # unter Linux): beide frei und ohne Bedingungen, nur nicht in der Liste oben.
+    "BSL-1.0",
+    "Unlicense",
+    # Wurzelzertifikate für rustls (webpki-roots): reine Daten, freigegeben.
+    "CDLA-Permissive-2.0",
+]
+# Nur die Lizenzen prüfen, die wirklich gelten (keine `OR`-Ketten als Ganzes).
+confidence-threshold = 0.9
+
+[sources]
+# Nur crates.io. Ein Git-Zweig oder ein fremder Server wäre eine Hintertür in
+# die Lieferkette und muss einzeln begründet werden.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[bans]
+# Doppelte Fassungen sind ein Sicherheitsrisiko (die alte bleibt oft ungepatcht)
+# und ein Zeichen für veraltete Zweige. Neue Doppelungen sind verboten; die
+# bekannten stehen unten mit Grund. Diese Liste darf nur kürzer werden.
+multiple-versions = "deny"
+# Pfad-Abhängigkeiten im eigenen Arbeitsbereich tragen keine Fassung; sie
+# werden nie veröffentlicht, also ist das kein Wildcard-Risiko.
+allow-wildcard-paths = true
+wildcards = "deny"
+deny = [
+    # Eine RSA-Fassung, und zwar die aktuelle: die alte (0.9) verschwindet.
+    { name = "rsa", version = "<0.10" },
+    # Kein `openssl`: TLS und Schlüssel sind reines Rust (ring/rustls).
+    { name = "openssl" },
+    { name = "openssl-sys" },
+]
+
+# Krypto (bekannt, soll schrumpfen)
+[[bans.skip]]
+name = "base64"   # 0.22.1/0.23.1
+[[bans.skip]]
+name = "block-buffer"   # 0.10.4/0.12.1
+[[bans.skip]]
+name = "chacha20"   # 0.10.2/0.9.1
+[[bans.skip]]
+name = "cpufeatures"   # 0.2.17/0.3.1
+[[bans.skip]]
+name = "crypto-common"   # 0.1.7/0.2.2
+[[bans.skip]]
+name = "digest"   # 0.10.7/0.11.3
+[[bans.skip]]
+name = "getrandom"   # 0.2.17/0.3.4/0.4.3
+[[bans.skip]]
+name = "rand"   # 0.10.4/0.9.5
+[[bans.skip]]
+name = "rand_core"   # 0.10.1/0.6.4/0.9.5
+[[bans.skip]]
+name = "sha2"   # 0.10.9/0.11.1
+[[bans.skip]]
+name = "pastey"   # 0.1.1/0.2.3
+
+# Bindungen der Plattformen (nur je ein Ziel gebaut)
+[[bans.skip]]
+name = "objc2"   # 0.5.3/0.6.5
+[[bans.skip]]
+name = "objc2-app-kit"   # 0.2.2/0.3.2
+[[bans.skip]]
+name = "objc2-foundation"   # 0.2.2/0.3.2
+[[bans.skip]]
+name = "core-foundation"   # 0.10.1/0.9.4
+[[bans.skip]]
+name = "block2"   # 0.5.1/0.6.2
+[[bans.skip]]
+name = "windows-sys"   # 0.52.0/0.59.0/0.61.2
+[[bans.skip]]
+name = "linux-raw-sys"   # 0.12.1/0.4.15
+[[bans.skip]]
+name = "rustix"   # 0.38.44/1.1.6
+[[bans.skip]]
+name = "libloading"   # 0.7.4/0.8.9
+[[bans.skip]]
+name = "smithay-client-toolkit"   # 0.19.2/0.20.0
+[[bans.skip]]
+name = "calloop"   # 0.13.0/0.14.5
+[[bans.skip]]
+name = "calloop-wayland-source"   # 0.3.0/0.4.1
+
+# Oberfläche und Grafik (egui, resvg, image)
+[[bans.skip]]
+name = "kurbo"   # 0.11.3/0.13.1
+[[bans.skip]]
+name = "png"   # 0.17.16/0.18.1
+[[bans.skip]]
+name = "gif"   # 0.13.3/0.14.2
+[[bans.skip]]
+name = "miniz_oxide"   # 0.8.9/0.9.1
+[[bans.skip]]
+name = "zune-core"   # 0.4.12/0.5.3
+[[bans.skip]]
+name = "zune-jpeg"   # 0.4.21/0.5.15
+[[bans.skip]]
+name = "foldhash"   # 0.1.5/0.2.0
+[[bans.skip]]
+name = "hashbrown"   # 0.15.5/0.16.1/0.17.2
+
+# Bauzeit und Formate
+[[bans.skip]]
+name = "syn"   # 1.0.109/2.0.119/3.0.10
+[[bans.skip]]
+name = "proc-macro-crate"   # 1.3.1/2.0.2/3.5.0
+[[bans.skip]]
+name = "heck"   # 0.4.1/0.5.0
+[[bans.skip]]
+name = "itertools"   # 0.14.0/0.15.0
+[[bans.skip]]
+name = "toml_datetime"   # 0.6.3/1.1.3
+[[bans.skip]]
+name = "toml_edit"   # 0.19.15/0.20.2/0.25.20
+[[bans.skip]]
+name = "winnow"   # 0.5.40/1.0.5
+[[bans.skip]]
+name = "thiserror"   # 1.0.69/2.0.21
+[[bans.skip]]
+name = "thiserror-impl"   # 1.0.69/2.0.21
+[[bans.skip]]
+name = "bitflags"   # 1.3.2/2.13.2
+[[bans.skip]]
+name = "dirs"   # 6.0.0/7.0.0
+[[bans.skip]]
+name = "reqwest"   # 0.12.28/0.13.5
+
+# Was in der Liste oben steht, ist bekannt und unvermeidbar, solange die
+# jeweilige Kiste im Baum hängt. Wer eine Zeile entfernt, muss `cargo deny
+# check bans` laufen lassen – es ist die Probe, ob die Doppelung weg ist.

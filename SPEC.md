@@ -1,7 +1,7 @@
 # SPEC – mcp-quiver
 
 > Stand: Entwurf 0, 2026-11-23. Jede Festlegung mit Begründung und Preis.
-> Offene Punkte stehen in §11 und werden als ADR in `docs/adr/` entschieden.
+> Offene Punkte stehen in §12 und werden als ADR in `docs/adr/` entschieden.
 
 ## 0. MVP (Stand 2026-11-23)
 
@@ -375,7 +375,46 @@ Prozesszeilen gibt es erst, wenn der User im Fenster unter „Agenten“
 gespeichert). Fehlertexte sind auch dann maskiert. Die Aufrufe der beiden
 eigenen Werkzeuge landen nicht im Protokoll (keine Rückkopplung).
 
-## 11. Offene Punkte
+## 11. Härtung im Betrieb
+
+Diese Festlegungen gelten ohne Schalter; wer sie ändern will, ändert Code und
+Tests. Werte, Grenzen und Fundstellen: [docs/haertung.md](docs/haertung.md).
+
+- **Festlegung: der `Host` gehört zur Basis-URL.** Jede Antwort außer dem
+  Gesundheitsweg über Loopback prüft ihn; passt er nicht, gibt es 421 ohne
+  Inhalt. *Preis:* Wer den Server unter zwei Namen erreichen will, braucht einen
+  zweiten Server (oder einen Proxy, der den Kopf richtig setzt).
+- **Festlegung: Grenzen statt Großzügigkeit.** Rumpf 64 KB (Einträge 256 KB,
+  darüber 413), Kopfzeilen 10 s, Rumpf 30 s (danach 408), höchstens 256
+  Verbindungen und 4 Ereignis-Ströme je Gerät (200 gesamt, darüber 429).
+  *Preis:* Ein sehr großer `server.json`-Eintrag über 256 KB wird abgewiesen;
+  ein Client mit vielen parallelen Strömen bekommt 429 und muss aufräumen.
+- **Festlegung: die Prüfspur entsteht in einer Wache.** Jede ändernde
+  Verwaltungsroute schreibt wer/was/Ziel (Methode, Pfadmuster, Aktion), nie
+  Werte. *Preis:* Doppelte Zeilen dort, wo eine Ansicht zusätzlich fachlich
+  schreibt; und eine fehlgeschlagene Änderung steht nicht in der Spur.
+- **Festlegung: Dateirechte 0700/0600, beim Anlegen und beim Start.** Server:
+  Datenordner, Datenbank samt `-wal`/`-shm`, Sicherungen, `entra-*`,
+  `schluessel`; Client: Profilordner, Stand, Fenster-Einstellungen, Protokolle,
+  Tresor und Sperrdatei. Symlinks werden nicht verfolgt, von den Sicherungen
+  bleiben drei. Unter Windows gilt die ACL-Vererbung des Benutzerprofils.
+  *Preis:* Ein Betreiber, der Rechte absichtlich weiter öffnet (etwa für ein
+  Backup-Werkzeug), findet sie beim nächsten Start wieder zu.
+- **Festlegung: die Laufzeit ist das Programm.** Container ohne Shell und ohne
+  Paketverwaltung (distroless), Benutzer 10001:999, Basis-Abbilder auf Digests
+  festgelegt, `--read-only`, `--cap-drop=ALL`, `no-new-privileges`,
+  `--memory`, `--pids-limit`, Log-Rotation. *Preis:* kein `docker exec sh`, kein
+  Debuggen von Hand im Container; Hilfe kommt über Unterbefehle
+  (`quiver-server benutzer`, `… gesund`).
+- **Festlegung: die Lieferkette wird geprüft.** `cargo-deny` (Sicherheitslücken
+  auch für eingestellte Kisten, Lizenzen, nur crates.io, keine doppelten
+  Krypto-Kisten) und `npm audit` laufen in der CI; jede Ausnahme steht mit Grund
+  und Weg im Baum in `deny.toml`. Genau eine RSA-Fassung (0.10), rusqlite mit
+  SQLite nicht älter als die behobene Fassung – beides hält ein Test fest.
+  *Preis:* Neue Abhängigkeiten und Doppelfassungen kosten eine Zeile Begründung,
+  und ein Abbild-Basiswechsel kostet einen neuen Digest.
+
+## 12. Offene Punkte
 
 1. Formate für eigene Tools: nur WASM, oder von Anfang an auch native Binaries?
 2. ~~Admin-Rechte: Wer darf die Bibliothek pflegen?~~ Entschieden in Aufgabe 20:

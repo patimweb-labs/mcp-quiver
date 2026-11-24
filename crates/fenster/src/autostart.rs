@@ -222,8 +222,10 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
+        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pfad = std::env::temp_dir().join(format!(
-            "quiver-autostart-{}-{tag}-{stempel}",
+            "quiver-autostart-{}-{tag}-{stempel}-{nummer}",
             std::process::id()
         ));
         std::fs::create_dir_all(&pfad).expect("Ordner");

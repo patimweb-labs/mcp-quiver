@@ -50,12 +50,36 @@ and looks exactly like the client.
 
 ## Run the server (Docker)
 
+The image is built for lean operation: the runtime is the program and nothing
+else — **no shell, no package manager** (distroless), user `10001:999`, all base
+images pinned by digest. There is no shell inside to be exploited.
+
 ```bash
 docker build -t mcp-quiver-server .
 docker run -d --name quiver -p 127.0.0.1:8740:8740 \
   -e QUIVER_OEFFENTLICH=http://localhost:8740 \
+  --read-only --tmpfs /tmp:size=32m,mode=1777 \
+  --cap-drop=ALL --security-opt=no-new-privileges:true \
+  --memory 512m --pids-limit 256 \
+  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   -v quiver-daten:/daten mcp-quiver-server
 ```
+
+Details, Werte und Tests: [docs/haertung.md](docs/haertung.md).
+`compose.yaml` is the same call in a file (`docker compose up -d`), and
+`tools/container-pruefung.sh` starts exactly such a container under its own
+name and volume (`quiver-pruefung-*`) on a free port, checks it and removes it
+again. The container reports its health through `quiver-server gesund`, which
+asks the server over loopback only; `docker exec quiver quiver-server …` keeps
+working without a shell.
+
+Existing volumes keep working: the data directory belongs to `10001:999` (UID
+*and* GID), so a volume created by an earlier version opens without a manual
+`chown`. Inside the volume the data directory is `0700` and `quiver.db`,
+`-wal`, `-shm`, the backups (`.vor-*`), `entra-*` and `schluessel` are `0600`;
+only the last three backups are kept. The process sets its umask at start-up,
+so these permissions apply from the first second, and a restart corrects files
+that were changed by hand (symlinks are not followed).
 
 Then open `http://localhost:8740`. The first page is the **initial setup**: it
 asks for the e-mail and password of the one root user (12 to 256 characters,
@@ -172,6 +196,10 @@ it again. At most 200 groups are created this way.
 ```bash
 # check everything (before every commit)
 cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace
+# supply chain: vulnerabilities (including unmaintained crates), licences,
+# sources (crates.io only), no duplicate crypto crates — rules in `deny.toml`
+cargo deny check
+npm --prefix admin audit --audit-level=high
 ```
 
 The token files in `tokens/` are the single source of colours, sizes and fonts —
@@ -364,8 +392,18 @@ and a preview of the response. Filters narrow by entry, tool, agent, period
 (last hour, today, 7 days) and errors only.
 
 Everything stays on the device: `<profil>/protokoll/aufrufe-YYYY-MM-DD.jsonl` and
-`prozesse-YYYY-MM-DD.jsonl`, file mode 0600, deleted after 7 days and never more
-than 50 MB in total. The server receives no calls.
+`prozesse-YYYY-MM-DD.jsonl`, deleted after 7 days and never more than 50 MB in
+total. The server receives no calls.
+
+**Who may read it.** The profile folder is `0700`; everything inside — the
+profile state (`zustand.json`), the window settings (`oberflaeche.json`), the
+protocols, the vault files and the lock file — is `0600`. That holds when the
+files are created (atomic write: a temporary file next to the target, then a
+rename, so nothing is ever half written and a symlink at the target is replaced
+rather than followed) and again at every start, which corrects files that were
+changed by hand. On Windows these mode bits do not exist; there the ACL
+inheritance of the user profile is what keeps other accounts out, so the profile
+lives in the user's own `%APPDATA%`.
 
 **Masked, always:** keys whose name contains `pass`, `token`, `secret`, `key`,
 `pat`, `auth` or `cookie` become `<verborgen>`, and every value from the vault

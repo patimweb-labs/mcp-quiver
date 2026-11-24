@@ -19,7 +19,7 @@ use quiver_domain::{
 };
 use quiver_protocol::{
     Anmelden, AnmeldenAntwort, Code, CodeAnlegen, EintragZustand, GeraetAendern, GeraetStand,
-    Meldung, Ueberblick,
+    Meldung, PruefspurEintrag, Ueberblick,
 };
 use quiver_server::{app, benutzer, Konfig};
 use serde::de::DeserializeOwned;
@@ -29,6 +29,8 @@ use tower::ServiceExt;
 const ROOT_EMAIL: &str = "root@example.test";
 const ROOT_PASSWORT: &str = "ein-sehr-langes-testpasswort";
 const OEFFENTLICH: &str = "http://127.0.0.1:8740";
+/// Der `Host`-Kopf, der zu [`OEFFENTLICH`] passt (Port gehört dazu).
+const HOST: &str = "127.0.0.1:8740";
 /// Ein Token, das zu keinem Gerät gehört.
 const FALSCH: &str = "kein-gueltiges-token";
 
@@ -73,6 +75,7 @@ impl Pruefung {
         let anfrage = Request::builder()
             .method("POST")
             .uri("/api/v1/auth/root")
+            .header("host", HOST)
             .header("content-type", "application/json")
             .header("origin", OEFFENTLICH)
             .header("x-quiver", "1")
@@ -117,6 +120,7 @@ impl Pruefung {
         let mut bauer = Request::builder()
             .method(methode)
             .uri(format!("/api/v1{pfad}"))
+            .header("host", HOST)
             .header("content-type", "application/json");
         if let Some(token) = token {
             bauer = bauer.header("authorization", format!("Bearer {token}"));
@@ -147,6 +151,7 @@ impl Pruefung {
                 Request::builder()
                     .method(methode)
                     .uri(format!("/api/v1{pfad}"))
+                    .header("host", HOST)
                     .header("content-type", "application/json")
                     .header("cookie", &self.cookie)
                     .header("origin", OEFFENTLICH)
@@ -269,6 +274,7 @@ impl Pruefung {
     async fn roh(&self, pfad: &str) -> (StatusCode, String) {
         let anfrage = Request::builder()
             .uri(pfad)
+            .header("host", HOST)
             .body(Body::empty())
             .expect("Anfrage");
         let antwort = self.router.clone().oneshot(anfrage).await.expect("Antwort");
@@ -817,6 +823,7 @@ async fn ereignisse_melden_nur_was_dieses_geraet_betrifft() {
 
     let anfrage = Request::builder()
         .uri("/api/v1/geraet/ereignisse")
+        .header("host", HOST)
         .header("authorization", format!("Bearer {}", antwort.token))
         .body(Body::empty())
         .expect("Anfrage");
@@ -874,6 +881,7 @@ async fn abgeschalteter_eintrag_verlaesst_soll_und_meldet_sich() {
     // Ereignisstrom öffnen: zuerst kommt die aktuelle Revision.
     let anfrage = Request::builder()
         .uri("/api/v1/geraet/ereignisse")
+        .header("host", HOST)
         .header("authorization", format!("Bearer {}", antwort.token))
         .body(Body::empty())
         .expect("Anfrage");
@@ -1071,4 +1079,339 @@ async fn ein_fremder_zustand_wird_nicht_abgelehnt() {
         staende[0].meldung.as_ref().expect("Meldung").eintraege[1].1,
         EintragZustand::AmGeraetAus
     );
+}
+
+// ------------------------------------------------- Grenzen und Prüfspur
+
+/// Ein Eintrag, dessen Beschreibung `bytes` Zeichen lang ist.
+fn grosser_eintrag(id: &str, bytes: usize) -> Eintrag {
+    let mut eintrag = eintrag(id);
+    eintrag.beschreibung = "x".repeat(bytes);
+    eintrag
+}
+
+/// Ein `server.json`, wie es die MCP-Registry liefert.
+fn server_json(name: &str) -> Value {
+    json!({
+        "name": name,
+        "title": "Wetterdienst",
+        "description": "Wetterdaten über MCP",
+        "version": "1.2.3",
+        "packages": [{
+            "registryType": "npm",
+            "identifier": "@jemand/wetterdienst",
+            "version": "1.2.3",
+            "transport": { "type": "stdio" }
+        }]
+    })
+}
+
+/// Eine Zeile in `benutzer`, damit die Benutzer-Routen der Verwaltung etwas
+/// zum Ändern haben. Ohne Entra entsteht kein Benutzer; der Test legt ihn
+/// deshalb in der Datenbank an (nur Testdaten, keine echten Konten).
+async fn benutzer_anlegen(p: &Pruefung, oid: &str) {
+    let pfad = p.ordner.join("quiver.db");
+    let conn = rusqlite::Connection::open(&pfad).expect("Datenbank");
+    conn.execute(
+        "INSERT OR REPLACE INTO benutzer
+            (oid, tid, email, name, rolle, entra_json, token_stand, erstellt)
+         VALUES (?1, 'tenant', 'test@example.test', 'Test Person', 'benutzer', '[]', 'gueltig', '2026-01-01T00:00:00Z')",
+        rusqlite::params![oid],
+    )
+    .expect("Benutzer angelegt");
+}
+
+/// Ein Verwaltungsaufruf mit vollem Pfad (die Tabelle nennt ihn vollständig).
+async fn admin_voll(
+    p: &Pruefung,
+    methode: &str,
+    pfad: &str,
+    rumpf: Option<Value>,
+) -> (StatusCode, Value) {
+    let koerper = match rumpf {
+        Some(wert) => Body::from(serde_json::to_vec(&wert).expect("JSON")),
+        None => Body::empty(),
+    };
+    let antwort = p
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(methode)
+                .uri(pfad)
+                .header("host", HOST)
+                .header("content-type", "application/json")
+                .header("cookie", &p.cookie)
+                .header("origin", OEFFENTLICH)
+                .header("x-quiver", "1")
+                .body(koerper)
+                .expect("Anfrage"),
+        )
+        .await
+        .expect("Antwort");
+    auspacken(antwort).await
+}
+
+#[tokio::test]
+async fn rumpfgrenze_je_route() {
+    let p = Pruefung::neu().await;
+
+    // Standard: 64 KB. Ein größerer Rumpf auf einer gewöhnlichen Route → 413.
+    let zu_gross =
+        json!({ "gruppen": [], "minuten": 5, "unbegrenzt": false, "x": "y".repeat(70 * 1024) });
+    let (status, rumpf) = p.admin("POST", "/admin/codes", Some(zu_gross)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{rumpf}");
+
+    // Auch der Weg mit eigener Rumpfbehandlung (`anmelden`) antwortet so.
+    let zu_gross = json!({ "code": "ABCD-EFGH", "name": "x".repeat(70 * 1024) });
+    let (status, rumpf) = p.anfrage("POST", "/anmelden", None, Some(zu_gross)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{rumpf}");
+
+    // Einträge dürfen 256 KB: 100 KB gehen durch, 300 KB nicht.
+    let gross = grosser_eintrag("gross", 100 * 1024);
+    assert_eq!(
+        p.put_eintrag(&gross).await.0,
+        StatusCode::OK,
+        "100 KB sind für einen Eintrag in Ordnung"
+    );
+    let zu_gross = grosser_eintrag("zu-gross", 300 * 1024);
+    let (status, rumpf) = p.put_eintrag(&zu_gross).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{rumpf}");
+}
+
+#[tokio::test]
+async fn ereignis_stroeme_sind_begrenzt() {
+    let p = Pruefung::neu().await;
+    let geraet = p.aufbau().await;
+
+    let mut offen = Vec::new();
+    for nummer in 0..quiver_server::STROEME_JE_GERAET {
+        let anfrage = Request::builder()
+            .uri("/api/v1/geraet/ereignisse")
+            .header("host", HOST)
+            .header("authorization", format!("Bearer {}", geraet.token))
+            .body(Body::empty())
+            .expect("Anfrage");
+        let antwort = p.router.clone().oneshot(anfrage).await.expect("Antwort");
+        assert_eq!(antwort.status(), StatusCode::OK, "Strom {nummer}");
+        offen.push(antwort);
+    }
+
+    // Einer mehr: 429 statt eines weiteren offenen Stroms.
+    let anfrage = Request::builder()
+        .uri("/api/v1/geraet/ereignisse")
+        .header("host", HOST)
+        .header("authorization", format!("Bearer {}", geraet.token))
+        .body(Body::empty())
+        .expect("Anfrage");
+    let antwort = p.router.clone().oneshot(anfrage).await.expect("Antwort");
+    assert_eq!(antwort.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // Wird einer geschlossen, ist wieder Platz.
+    offen.pop();
+    let anfrage = Request::builder()
+        .uri("/api/v1/geraet/ereignisse")
+        .header("host", HOST)
+        .header("authorization", format!("Bearer {}", geraet.token))
+        .body(Body::empty())
+        .expect("Anfrage");
+    let antwort = p.router.clone().oneshot(anfrage).await.expect("Antwort");
+    assert_eq!(antwort.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn jede_aendernde_verwaltungsroute_schreibt_in_die_pruefspur() {
+    let p = Pruefung::neu().await;
+    let geraet = p.aufbau().await;
+    const BENUTZER: &str = "99999999-8888-7777-6666-555555555555";
+    benutzer_anlegen(&p, BENUTZER).await;
+
+    for (methode, pfad, aktion) in quiver_server::spur::AENDERNDE_ROUTEN {
+        // Jede Route wird so aufgerufen, wie sie im Betrieb aufgerufen wird.
+        let status = match (*methode, *pfad) {
+            ("POST", "/api/v1/admin/eintraege/import") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    pfad,
+                    Some(server_json("io.github.jemand/wetterdienst")),
+                )
+                .await
+                .0
+            }
+            ("PUT", "/api/v1/admin/eintraege/{id}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    "/api/v1/admin/eintraege/weg",
+                    Some(json!(eintrag("weg"))),
+                )
+                .await
+                .0
+            }
+            ("DELETE", "/api/v1/admin/eintraege/{id}") => {
+                admin_voll(&p, methode, "/api/v1/admin/eintraege/weg", None)
+                    .await
+                    .0
+            }
+            ("PUT", "/api/v1/admin/saetze/{id}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    "/api/v1/admin/saetze/weg",
+                    Some(json!(satz("weg", "wetter", json!({ "PFAD": "/tmp" })))),
+                )
+                .await
+                .0
+            }
+            ("DELETE", "/api/v1/admin/saetze/{id}") => {
+                admin_voll(&p, methode, "/api/v1/admin/saetze/weg", None)
+                    .await
+                    .0
+            }
+            ("PUT", "/api/v1/admin/gruppen/{id}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    "/api/v1/admin/gruppen/weg",
+                    Some(json!(gruppe("weg", &["basis"]))),
+                )
+                .await
+                .0
+            }
+            ("DELETE", "/api/v1/admin/gruppen/{id}") => {
+                admin_voll(&p, methode, "/api/v1/admin/gruppen/weg", None)
+                    .await
+                    .0
+            }
+            ("PUT", "/api/v1/admin/geraete/{id}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/geraete/{}", geraet.geraet.id),
+                    Some(json!(GeraetAendern {
+                        name: "Anderer Name".into(),
+                        gruppen: Vec::new(),
+                        gesperrt: false,
+                    })),
+                )
+                .await
+                .0
+            }
+            ("DELETE", "/api/v1/admin/geraete/{id}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/geraete/{}", geraet.geraet.id),
+                    None,
+                )
+                .await
+                .0
+            }
+            ("POST", "/api/v1/admin/codes") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    pfad,
+                    Some(json!(CodeAnlegen {
+                        gruppen: Vec::new(),
+                        minuten: Some(5),
+                        unbegrenzt: false,
+                    })),
+                )
+                .await
+                .0
+            }
+            ("PUT", "/api/v1/admin/benutzer/{oid}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/benutzer/{BENUTZER}"),
+                    Some(json!({ "rolle": "admin", "gesperrt": false })),
+                )
+                .await
+                .0
+            }
+            ("DELETE", "/api/v1/admin/benutzer/{oid}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/benutzer/{BENUTZER}"),
+                    None,
+                )
+                .await
+                .0
+            }
+            // Ohne Entra gibt es nichts nachzuprüfen und keine gesehene
+            // Entra-Gruppe; beide Routen antworten 404 und schreiben nichts.
+            // Der erfolgreiche Weg steht in `tests/entra.rs`
+            // (`nachpruefen_und_aufnehmen_schreiben_in_die_pruefspur`).
+            ("POST", "/api/v1/admin/benutzer/{oid}/pruefen") => {
+                let (status, _) = admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/benutzer/{BENUTZER}/pruefen"),
+                    None,
+                )
+                .await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{methode} {pfad}");
+                continue;
+            }
+            ("PUT", "/api/v1/admin/entra-gruppen/{id}") => {
+                const GRUPPE: &str = "12345678-1234-1234-1234-123456789012";
+                let (status, _) = admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/entra-gruppen/{GRUPPE}"),
+                    Some(json!({ "aufnehmen": true })),
+                )
+                .await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{methode} {pfad}");
+                continue;
+            }
+            (andere, pfad) => panic!("kein Aufruf für {andere} {pfad} hinterlegt"),
+        };
+        assert!(
+            status.is_success(),
+            "{methode} {pfad} muss gelingen, war {status}"
+        );
+
+        // Und der Eintrag steht in der Prüfspur: wer, was, Ziel.
+        let (status, rumpf) = p.admin("GET", "/admin/pruefspur?limit=200", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let eintraege: Vec<PruefspurEintrag> = als(&rumpf);
+        let treffer = eintraege.iter().any(|eintrag| {
+            eintrag.art == "verwaltung"
+                && eintrag.text.contains(methode)
+                && eintrag.text.contains(pfad)
+                && eintrag.text.contains(aktion)
+        });
+        assert!(
+            treffer,
+            "kein Eintrag für {methode} {pfad} ({aktion}) in der Prüfspur: {:?}",
+            eintraege
+                .iter()
+                .filter(|e| e.art == "verwaltung")
+                .map(|e| e.text.clone())
+                .collect::<Vec<_>>()
+        );
+        let akteur = eintraege
+            .iter()
+            .find(|eintrag| eintrag.art == "verwaltung" && eintrag.text.contains(pfad))
+            .map(|eintrag| eintrag.akteur.clone())
+            .expect("Akteur");
+        assert_eq!(akteur, ROOT_EMAIL, "wer es war, steht dabei");
+    }
+
+    // Und die Spur enthält keine Werte: kein Titel, kein Passwort, kein Token.
+    let (_, rumpf) = p.admin("GET", "/admin/pruefspur?limit=200", None).await;
+    let texte = als::<Vec<PruefspurEintrag>>(&rumpf)
+        .into_iter()
+        .filter(|eintrag| eintrag.art == "verwaltung")
+        .map(|eintrag| eintrag.text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    for verboten in ["Titel weg", "Test Person", "ein-sehr-langes", "Bearer"] {
+        assert!(!texte.contains(verboten), "{verboten} steht in der Spur");
+    }
 }

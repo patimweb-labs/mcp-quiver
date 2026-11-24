@@ -33,9 +33,17 @@ pub(crate) async fn anmelden(
     }
     let ip = crate::sitzung::aufrufer(&req, &zustand);
     let (_, rumpf) = req.into_parts();
-    let bytes = axum::body::to_bytes(rumpf, 64 * 1024)
+    let bytes = axum::body::to_bytes(rumpf, crate::RUMPF_STANDARD)
         .await
-        .map_err(|_| FehlerAntwort::ungueltig("Rumpf nicht lesbar"))?;
+        .map_err(|fehler| {
+            if ist_zu_gross(&fehler) {
+                FehlerAntwort::zu_gross()
+            } else if crate::fehler::ursache_ist::<tower_http::timeout::TimeoutError>(&fehler) {
+                FehlerAntwort::zeitlimit()
+            } else {
+                FehlerAntwort::ungueltig("Rumpf nicht lesbar")
+            }
+        })?;
     let anfrage: Anmelden = serde_json::from_slice(&bytes)
         .map_err(|_| FehlerAntwort::ungueltig("Rumpf ist kein JSON mit code und name"))?;
 
@@ -67,6 +75,14 @@ pub(crate) async fn anmelden(
         }
     }
     ergebnis
+}
+
+/// Ist der Rumpf an der Grenze gescheitert (und nicht an der Leitung)?
+fn ist_zu_gross(fehler: &axum::Error) -> bool {
+    use std::error::Error as _;
+    fehler
+        .source()
+        .is_some_and(|quelle| quelle.is::<http_body_util::LengthLimitError>())
 }
 
 async fn anmelden_intern(
@@ -176,13 +192,25 @@ pub(crate) async fn meldung(
 }
 
 /// Ereignis-Strom: sofort die aktuelle Revision, danach nur bei Änderung.
+///
+/// Die Zahl der offenen Ströme ist begrenzt (je Gerät und insgesamt): ein
+/// Client, der immer neu verbindet, ohne zu schließen, bekommt 429.
 pub(crate) async fn ereignisse(
     State(zustand): State<Arc<Zustand>>,
     Extension(id): Extension<GeraetId>,
 ) -> Ergebnis<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>> {
+    let Some(waechter) = Stromwaechter::neu(zustand.clone(), id.clone()) else {
+        return Err(FehlerAntwort::neu(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "zu viele offene Ereignis-Ströme (je Gerät höchstens {}, insgesamt {})",
+                crate::zustand::STROEME_JE_GERAET,
+                crate::zustand::STROEME_GESAMT
+            ),
+        ));
+    };
     let start = soll_fuer(&zustand, &id).await?.revision;
     let empfaenger = zustand.geaendert.subscribe();
-    let waechter = Stromwaechter::neu(zustand.clone(), id.clone());
 
     let weitere = futures_util::stream::unfold(
         (

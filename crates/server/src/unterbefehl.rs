@@ -27,6 +27,7 @@ pub const UNTERBEFEHLE: &[&str] = &[
     "eintraege",
     "saetze",
     "entra-schluessel",
+    "gesund",
 ];
 
 /// Ist das erste Argument ein Unterbefehl?
@@ -41,8 +42,46 @@ fn daten() -> PathBuf {
 
 fn datenbank() -> anyhow::Result<rusqlite::Connection> {
     let ordner = daten();
-    std::fs::create_dir_all(&ordner)?;
-    speicher::oeffnen(&ordner.join("quiver.db"))
+    crate::rechte::ordner_anlegen(&ordner)?;
+    let conn = speicher::oeffnen(&ordner.join("quiver.db"))?;
+    if let Err(fehler) = crate::rechte::daten_pruefen(&ordner) {
+        tracing::warn!("Rechte in {} nicht prüfbar: {fehler}", ordner.display());
+    }
+    Ok(conn)
+}
+
+/// Ist der Aufruf der Gesundheitsweg (`gesund`)?
+pub fn ist_gesund(args: &[String]) -> bool {
+    args.len() == 1 && args[0] == "gesund"
+}
+
+/// `quiver-server gesund`: fragt den **eigenen** Server über Loopback.
+///
+/// Gedacht für `HEALTHCHECK` im Container: kein Netzzugriff nach außen, kein
+/// Wissen über die öffentliche Adresse – nur `127.0.0.1` und der Port aus
+/// `QUIVER_ADRESSE`. Antwortet der Server mit 200, ist alles gut.
+pub async fn gesund() -> anyhow::Result<()> {
+    let port = std::env::var("QUIVER_ADRESSE")
+        .ok()
+        .and_then(|adresse| adresse.parse::<std::net::SocketAddr>().ok())
+        .map(|adresse| adresse.port())
+        .unwrap_or(8740);
+    let ziel = format!("http://127.0.0.1:{port}{}", crate::GESUND);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        // Kein Proxy aus der Umgebung: der Weg bleibt auf diesem Rechner.
+        .no_proxy()
+        .build()
+        .context("Prüfclient baubar")?;
+    let antwort = client
+        .get(&ziel)
+        .send()
+        .await
+        .with_context(|| format!("Server antwortet nicht auf {ziel}"))?;
+    if !antwort.status().is_success() {
+        anyhow::bail!("Server antwortet auf {ziel} mit {}", antwort.status());
+    }
+    Ok(())
 }
 
 /// Führt einen Unterbefehl aus; `Err` bedeutet Exit-Code 1.
@@ -331,5 +370,8 @@ mod tests {
         );
         assert!(ist_unterbefehl(&["root-setzen".into()]));
         assert!(!ist_unterbefehl(&["--hilfe".into()]));
+        assert!(ist_gesund(&["gesund".into()]));
+        assert!(!ist_gesund(&["gesund".into(), "x".into()]));
+        assert!(!ist_gesund(&["root-setzen".into()]));
     }
 }

@@ -38,6 +38,7 @@ mod hilfen;
 mod laufzeit;
 mod profil;
 pub mod protokoll;
+pub mod rechte;
 mod server_anmeldung;
 mod sse;
 mod tresor;
@@ -1754,6 +1755,17 @@ impl Kern {
             anyhow::bail!(
                 "Der MCP-Endpunkt darf nur lokal lauschen, nicht auf {}",
                 konfig.mcp_adresse
+            );
+        }
+        // Zuerst die Rechte: der Profilordner gehört 0700, was darin liegt
+        // 0600 – auch das, was eine ältere Fassung offener hinterlassen hat.
+        // Ein Fehler ist kein Startfehler (ein gesperrter Ordner soll den
+        // Client nicht hindern), er steht im Protokoll.
+        rechte::umask_setzen();
+        if let Err(fehler) = rechte::profil_pruefen(&konfig.profil) {
+            tracing::warn!(
+                "Rechte in {} nicht prüfbar: {fehler}",
+                konfig.profil.display()
             );
         }
         let gespeichert = profil::Profil::laden(&konfig.profil)?;

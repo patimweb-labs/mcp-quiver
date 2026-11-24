@@ -411,7 +411,7 @@ async fn host_origin_und_x_quiver_sind_pflicht() {
         let p = Pruefung::neu().await;
         let rumpf = serde_json::to_vec(&Pruefung::rumpf(EMAIL, PASSWORT, None)).expect("JSON");
 
-        // Fremder Host (DNS-Rebinding): 403, auch beim Stand.
+        // Fremder Host: 421 ohne Inhalt, noch vor jedem Handler – auch beim Stand.
         let fremd = Request::builder()
             .method("POST")
             .uri("/auth/einrichten")
@@ -421,17 +421,23 @@ async fn host_origin_und_x_quiver_sind_pflicht() {
             .header("content-type", "application/json")
             .body(Body::from(rumpf.clone()))
             .expect("Anfrage");
-        let antwort = auspacken(p.router.clone().oneshot(fremd).await.expect("Antwort")).await;
-        assert_eq!(antwort.status, StatusCode::FORBIDDEN);
-        assert!(antwort.text.contains("Host"));
+        let antwort = p.router.clone().oneshot(fremd).await.expect("Antwort");
+        assert_eq!(antwort.status(), StatusCode::MISDIRECTED_REQUEST);
+        let inhalt = antwort
+            .into_body()
+            .collect()
+            .await
+            .expect("Rumpf")
+            .to_bytes();
+        assert!(inhalt.is_empty(), "421 antwortet ohne Inhalt");
 
         let stand = Request::builder()
             .uri("/auth/stand")
             .header(header::HOST, "evil.example.test")
             .body(Body::empty())
             .expect("Anfrage");
-        let antwort = auspacken(p.router.clone().oneshot(stand).await.expect("Antwort")).await;
-        assert_eq!(antwort.status, StatusCode::FORBIDDEN);
+        let antwort = p.router.clone().oneshot(stand).await.expect("Antwort");
+        assert_eq!(antwort.status(), StatusCode::MISDIRECTED_REQUEST);
 
         // Fremder Origin.
         let antwort = p
