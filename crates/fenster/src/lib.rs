@@ -16,6 +16,7 @@
 pub mod ansichten;
 pub mod app;
 pub mod autostart;
+pub mod datei;
 pub mod instanz;
 pub mod kern;
 pub mod logik;

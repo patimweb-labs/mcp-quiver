@@ -152,6 +152,17 @@ address in the default browser — nothing else, no login, no listener.
 
 ![Settings dialog with a help link](docs/bilder/fenster-dark-angaben.png)
 
+The settings of a device can be **backed up and restored on another device**:
+the tools page carries *Exportieren* and *Importieren* in its header. The file
+`quiver-einstellungen-<date>.json` holds the values and connection lists of all
+tools; on request also the secrets — then encrypted with XChaCha20-Poly1305 and a
+key derived with Argon2id (password of at least eight characters, file mode
+0600). The device token, agent tokens and the tools' own sign-ins are never part
+of it; they belong to the device and to the sign-in. An import first shows a
+preview (new, changes, skipped), then merges instead of replacing — what exists
+only on this device stays — and restarts the affected entries. Entries this
+device does not have are skipped; a wrong password changes nothing.
+
 Environment (all optional):
 
 | Variable | Meaning |

@@ -15,7 +15,8 @@ use std::rc::Rc;
 use egui_kittest::kittest::{By, NodeT, Queryable};
 use egui_kittest::Harness;
 use quiver_client::{
-    AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung,
+    AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, Vorschau,
+    VorschauArt, VorschauEintrag, Zusammenfassung,
 };
 use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldLink, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
@@ -37,6 +38,9 @@ struct Attrappe {
     modell: Rc<RefCell<Modell>>,
     meldungen: Rc<RefCell<Vec<Meldung>>>,
     beendet: Rc<Cell<bool>>,
+    /// Führt die Sicherung im Test Geheimnisse? Dann wartet der Import-Dialog
+    /// auf ein Passwort (Aufgabe 15).
+    sicherung_mit_geheimnissen: Rc<Cell<bool>>,
 }
 
 impl Attrappe {
@@ -46,6 +50,7 @@ impl Attrappe {
             modell: Rc::new(RefCell::new(modell)),
             meldungen: Rc::default(),
             beendet: Rc::default(),
+            sicherung_mit_geheimnissen: Rc::default(),
         }
     }
 }
@@ -57,6 +62,29 @@ impl KernZugang for Attrappe {
                 name: name.clone(),
                 token: TOKEN.to_string(),
             });
+        }
+        // Eine geprüfte Sicherung kommt als Vorschau zurück (Aufgabe 15).
+        if let Aktion::EinstellungenPruefen { pfad } = &aktion {
+            self.meldungen
+                .borrow_mut()
+                .push(Meldung::EinstellungenVorschau {
+                    pfad: pfad.clone(),
+                    vorschau: sicherung_vorschau(self.sicherung_mit_geheimnissen.get()),
+                });
+        }
+        if let Aktion::EinstellungenExportieren { .. } = &aktion {
+            self.meldungen
+                .borrow_mut()
+                .push(Meldung::EinstellungenFertig {
+                    importiert: false,
+                    zusammenfassung: Zusammenfassung {
+                        eintraege: 6,
+                        werte: 9,
+                        zugaenge: 2,
+                        geheimnisse: 1,
+                        uebersprungen: Vec::new(),
+                    },
+                });
         }
         self.aktionen.borrow_mut().push(aktion);
     }
@@ -798,6 +826,281 @@ fn hand_cursor_ueber_jedem_knopf_der_toolsseite() {
             "„{name}\": kein Hand-Cursor"
         );
     }
+}
+
+// ------------------------------------------------- Einstellungen (Aufgabe 15)
+
+/// Der Pfad, den der Datei-Dialog im Test liefert: er steht in der Sicht,
+/// damit kein nativer Dialog aufgeht.
+const SICHERUNG: &str = "/tmp/quiver-einstellungen-test.json";
+
+/// Eine Vorschau, wie sie der Kern nach dem Prüfen liefert.
+fn sicherung_vorschau(hat_geheimnisse: bool) -> Vorschau {
+    Vorschau {
+        eintraege: vec![
+            VorschauEintrag {
+                id: "echo".into(),
+                titel: "Echo".into(),
+                art: VorschauArt::Neu,
+                neue: 2,
+                geaenderte: 0,
+                zugaenge: 0,
+            },
+            VorschauEintrag {
+                id: "dateien".into(),
+                titel: "Dateien".into(),
+                art: VorschauArt::Aendert,
+                neue: 1,
+                geaenderte: 2,
+                zugaenge: 1,
+            },
+            VorschauEintrag {
+                id: "weg".into(),
+                titel: "weg".into(),
+                art: VorschauArt::Uebersprungen,
+                neue: 0,
+                geaenderte: 0,
+                zugaenge: 0,
+            },
+        ],
+        hat_geheimnisse,
+    }
+}
+
+/// Die beiden Knöpfe stehen in der Kopfzeile der Tools-Seite.
+#[test]
+fn exportieren_und_importieren_stehen_auf_der_toolsseite() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    for name in ["Exportieren", "Importieren"] {
+        let knopf = h
+            .query_by_role_and_label(Role::Button, name)
+            .unwrap_or_else(|| panic!("{name} fehlt in der Kopfzeile"));
+        knopf.hover();
+        h.run();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            CursorIcon::PointingHand,
+            "„{name}“: kein Hand-Cursor"
+        );
+    }
+}
+
+/// Der Export-Dialog: die Passwortfelder gibt es erst mit dem Schalter
+/// „Geheimnisse mitnehmen“.
+#[test]
+fn export_dialog_zeigt_die_passwortfelder_erst_mit_dem_schalter() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.state_mut().0.sicht.datei = Some(PathBuf::from(SICHERUNG));
+    h.get_by_role_and_label(Role::Button, "Exportieren").click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Export {
+            pfad, geheimnisse, ..
+        } => {
+            assert_eq!(pfad, &PathBuf::from(SICHERUNG));
+            assert!(!geheimnisse, "der Schalter beginnt aus");
+        }
+        anderer => panic!("kein Export-Dialog: {anderer:?}"),
+    }
+    assert_eq!(
+        h.query_all(By::new().role(Role::PasswordInput)).count(),
+        0,
+        "ohne Geheimnisse braucht es kein Passwort"
+    );
+
+    // Schalter an: zwei Passwortfelder kommen dazu.
+    h.get_by_role_and_label(Role::CheckBox, "Geheimnisse mitnehmen")
+        .click();
+    h.run();
+    assert!(matches!(
+        h.state().0.sicht.dialog,
+        Dialog::Export {
+            geheimnisse: true,
+            ..
+        }
+    ));
+    assert_eq!(
+        h.query_all(By::new().role(Role::PasswordInput)).count(),
+        2,
+        "Passwort und Wiederholung"
+    );
+
+    // Zu kurz: „Sichern“ bleibt gesperrt.
+    if let Dialog::Export { passwort, .. } = &mut h.state_mut().0.sicht.dialog {
+        *passwort = "kurz".into();
+    }
+    h.run();
+    assert!(h.query_by_label("Mindestens 8 Zeichen.").is_some());
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Sichern")
+            .accesskit_node()
+            .is_disabled(),
+        "ein zu kurzes Passwort lässt sich nicht sichern"
+    );
+
+    // Lang genug, aber nicht gleich: der Hinweis nennt es.
+    if let Dialog::Export {
+        passwort,
+        wiederholung,
+        ..
+    } = &mut h.state_mut().0.sicht.dialog
+    {
+        *passwort = "ein-langes-passwort".into();
+        *wiederholung = "etwas-anderes".into();
+    }
+    h.run();
+    assert!(h
+        .query_by_label("Die Passwörter stimmen nicht überein.")
+        .is_some());
+
+    // Gleich: es geht weiter, mit dem Passwort.
+    if let Dialog::Export { wiederholung, .. } = &mut h.state_mut().0.sicht.dialog {
+        *wiederholung = "ein-langes-passwort".into();
+    }
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Sichern").click();
+    h.run();
+    let aktionen = h.state().1.aktionen.borrow();
+    let Some(Aktion::EinstellungenExportieren { pfad, passwort }) = aktionen.last() else {
+        panic!("kein Export: {aktionen:?}");
+    };
+    assert_eq!(pfad, &PathBuf::from(SICHERUNG));
+    assert_eq!(passwort.as_deref(), Some("ein-langes-passwort"));
+    assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+/// Der Import-Dialog zeigt die Vorschau; das Passwort fragt er nur, wenn die
+/// Datei Geheimnisse führt.
+#[test]
+fn import_dialog_zeigt_die_vorschau() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.state_mut().0.sicht.datei = Some(PathBuf::from(SICHERUNG));
+    h.get_by_role_and_label(Role::Button, "Importieren").click();
+    h.run();
+    h.run();
+    assert!(
+        matches!(&h.state().0.sicht.dialog, Dialog::Import { pfad, .. } if pfad == &PathBuf::from(SICHERUNG)),
+        "kein Import-Dialog: {:?}",
+        h.state().0.sicht.dialog
+    );
+    // Je Eintrag: was neu ist, was sich ändert, was übersprungen wird. (Die
+    // Titel stehen auch auf den Karten der Seite – deshalb wird gezählt.)
+    for zeile in ["Echo", "Dateien", "weg"] {
+        assert!(
+            h.query_all(By::new().label(zeile)).count() >= 1,
+            "{zeile} fehlt"
+        );
+    }
+    assert!(h.query_by_label("neu · 2 neu").is_some());
+    assert!(h
+        .query_by_label("ändert · 1 neu · 2 geändert · 1 Zugänge")
+        .is_some());
+    assert!(h
+        .query_by_label("übersprungen – auf diesem Gerät nicht vorhanden")
+        .is_some());
+    assert_eq!(
+        h.query_all(By::new().role(Role::PasswordInput)).count(),
+        0,
+        "eine offene Sicherung braucht kein Passwort"
+    );
+
+    h.get_by_role_and_label(Role::Button, "Übernehmen").click();
+    h.run();
+    let aktionen = h.state().1.aktionen.borrow();
+    let Some(Aktion::EinstellungenImportieren { pfad, passwort }) = aktionen.last() else {
+        panic!("kein Import: {aktionen:?}");
+    };
+    assert_eq!(pfad, &PathBuf::from(SICHERUNG));
+    assert_eq!(passwort, &None);
+}
+
+/// Eine Sicherung mit Geheimnissen: ein Passwortfeld, und „Übernehmen“ wartet
+/// auf mindestens acht Zeichen.
+#[test]
+fn import_dialog_fragt_nach_dem_passwort() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.state().1.sicherung_mit_geheimnissen.set(true);
+    h.run();
+    h.state_mut().0.sicht.datei = Some(PathBuf::from(SICHERUNG));
+    h.get_by_role_and_label(Role::Button, "Importieren").click();
+    h.run();
+    h.run();
+    assert!(matches!(h.state().0.sicht.dialog, Dialog::Import { .. }));
+    assert!(h
+        .query_by_label(
+            "Diese Sicherung enthält Geheimnisse. Dafür wird das Passwort von damals gebraucht."
+        )
+        .is_some());
+    assert_eq!(
+        h.query_all(By::new().role(Role::PasswordInput)).count(),
+        1,
+        "ein Passwortfeld"
+    );
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Übernehmen")
+            .accesskit_node()
+            .is_disabled(),
+        "ohne Passwort wird nichts übernommen"
+    );
+
+    if let Dialog::Import { passwort, .. } = &mut h.state_mut().0.sicht.dialog {
+        *passwort = "ein-langes-passwort".into();
+    }
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Übernehmen").click();
+    h.run();
+    let aktionen = h.state().1.aktionen.borrow();
+    let Some(Aktion::EinstellungenImportieren { passwort, .. }) = aktionen.last() else {
+        panic!("kein Import: {aktionen:?}");
+    };
+    assert_eq!(passwort.as_deref(), Some("ein-langes-passwort"));
+}
+
+/// Nach dem Export steht das Ergebnis als Hinweis oben auf der Seite.
+#[test]
+fn das_ergebnis_steht_oben_auf_der_seite() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.state_mut().0.sicht.datei = Some(PathBuf::from(SICHERUNG));
+    h.get_by_role_and_label(Role::Button, "Exportieren").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Sichern").click();
+    h.run();
+    h.run();
+    assert!(
+        h.query_by_label("6 Einträge exportiert (mit Geheimnissen)")
+            .is_some(),
+        "der Hinweis fehlt: {:?}",
+        h.state().0.sicht.ergebnis
+    );
 }
 
 /// Wohin die Bildschirmfotos gehen. Ein relativer Pfad gilt ab dem

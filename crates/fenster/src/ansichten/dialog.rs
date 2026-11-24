@@ -528,6 +528,229 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                         }
                     });
                 }
+                // Die Einstellungen sichern (Aufgabe 15): erst der Schalter
+                // „Geheimnisse mitnehmen“, dann – nur dann – zwei
+                // Passwortfelder und die Prüfung auf Gleichheit und Länge.
+                Dialog::Export {
+                    pfad,
+                    geheimnisse,
+                    passwort,
+                    wiederholung,
+                } => {
+                    ui.label(RichText::new(t(sprache, "einstellungen.export_titel")).heading());
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            t(sprache, "einstellungen.export_text"),
+                            Ton::Leise,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_2);
+                    ui.add(
+                        egui::Label::new(
+                            text(
+                                &f,
+                                tf(sprache, "einstellungen.datei", &[&pfad.display()]),
+                                Ton::Blass,
+                            )
+                            .small(),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    bausteine::haken(
+                        ui,
+                        geheimnisse,
+                        &t(sprache, "einstellungen.mit_geheimnissen_schalter"),
+                    );
+                    let mut fehler = None;
+                    if *geheimnisse {
+                        ui.add_space(thema::SPACE_2);
+                        let hinweis = t(sprache, "einstellungen.passwort_hinweis");
+                        bausteine::feld(
+                            ui,
+                            &f,
+                            &t(sprache, "einstellungen.passwort"),
+                            Some(&hinweis),
+                            |ui| {
+                                ui.add(
+                                    bausteine::eingabefeld(passwort)
+                                        .password(true)
+                                        .desired_width(bausteine::feldbreite(ui)),
+                                )
+                            },
+                        );
+                        bausteine::feld(
+                            ui,
+                            &f,
+                            &t(sprache, "einstellungen.passwort_wiederholen"),
+                            None,
+                            |ui| {
+                                ui.add(
+                                    bausteine::eingabefeld(wiederholung)
+                                        .password(true)
+                                        .desired_width(bausteine::feldbreite(ui)),
+                                )
+                            },
+                        );
+                        fehler = logik::export_passwort_fehler(passwort, wiederholung)
+                            .map(|schluessel| t(sprache, schluessel));
+                    }
+                    if let Some(fehler) = &fehler {
+                        ui.add_space(thema::SPACE_1);
+                        ui.add(egui::Label::new(text(&f, fehler, Ton::Fehler)).wrap());
+                    }
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        let geklickt = ui
+                            .add_enabled_ui(fehler.is_none(), |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Herunterladen,
+                                    &t(sprache, "einstellungen.sichern"),
+                                )
+                            })
+                            .inner
+                            .clicked();
+                        if geklickt {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
+                // Eine Sicherung einspielen (Aufgabe 15): die Vorschau sagt je
+                // Eintrag, was neu ist, was sich ändert und was übersprungen
+                // wird; ein Passwort gibt es nur, wenn die Datei Geheimnisse
+                // führt.
+                Dialog::Import {
+                    pfad,
+                    vorschau,
+                    passwort,
+                } => {
+                    ui.label(RichText::new(t(sprache, "einstellungen.import_titel")).heading());
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            t(sprache, "einstellungen.import_text"),
+                            Ton::Leise,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_2);
+                    ui.add(
+                        egui::Label::new(
+                            text(
+                                &f,
+                                tf(sprache, "einstellungen.datei", &[&pfad.display()]),
+                                Ton::Blass,
+                            )
+                            .small(),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_2);
+                    ui.add(
+                        egui::Label::new(
+                            text(
+                                &f,
+                                tf(
+                                    sprache,
+                                    "einstellungen.vorschau_summe",
+                                    &[&vorschau.uebernommen(), &vorschau.uebersprungen()],
+                                ),
+                                Ton::Leise,
+                            )
+                            .small(),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_2);
+                    // Die Liste scrollt, wenn die Datei viele Einträge hat.
+                    egui::ScrollArea::vertical()
+                        .id_salt("dialog-import")
+                        .max_height(felder_hoehe)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            if vorschau.eintraege.is_empty() {
+                                ui.add(
+                                    egui::Label::new(text(
+                                        &f,
+                                        t(sprache, "einstellungen.vorschau_leer"),
+                                        Ton::Blass,
+                                    ))
+                                    .wrap(),
+                                );
+                            }
+                            for eintrag in &vorschau.eintraege {
+                                let ton = match eintrag.art {
+                                    quiver_client::VorschauArt::Uebersprungen => Ton::Blass,
+                                    quiver_client::VorschauArt::Neu => Ton::Gut,
+                                    _ => Ton::Warnung,
+                                };
+                                let detail = logik::vorschau_detail(sprache, eintrag);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(&eintrag.titel).strong());
+                                    ui.add(
+                                        egui::Label::new(text(&f, detail, ton).small())
+                                            .selectable(false),
+                                    );
+                                });
+                            }
+                        });
+                    let mut fehler = None;
+                    if vorschau.hat_geheimnisse {
+                        ui.add_space(thema::SPACE_2);
+                        let hinweis = t(sprache, "einstellungen.passwort_datei");
+                        bausteine::feld(
+                            ui,
+                            &f,
+                            &t(sprache, "einstellungen.passwort"),
+                            Some(&hinweis),
+                            |ui| {
+                                ui.add(
+                                    bausteine::eingabefeld(passwort)
+                                        .password(true)
+                                        .desired_width(bausteine::feldbreite(ui)),
+                                )
+                            },
+                        );
+                        fehler = logik::import_passwort_fehler(passwort)
+                            .map(|schluessel| t(sprache, schluessel));
+                    }
+                    if let Some(fehler) = &fehler {
+                        ui.add_space(thema::SPACE_1);
+                        ui.add(egui::Label::new(text(&f, fehler, Ton::Fehler)).wrap());
+                    }
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        let bereit = fehler.is_none() && !vorschau.eintraege.is_empty();
+                        let geklickt = ui
+                            .add_enabled_ui(bereit, |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Haken,
+                                    &t(sprache, "einstellungen.uebernehmen"),
+                                )
+                            })
+                            .inner
+                            .clicked();
+                        if geklickt {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
                 Dialog::AnmeldungBeenden { titel, .. } => {
                     ui.label(RichText::new(t(sprache, "anmeldung.beenden_titel")).heading());
                     ui.add(

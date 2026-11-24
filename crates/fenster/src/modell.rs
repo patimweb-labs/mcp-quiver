@@ -7,8 +7,9 @@
 //! (AGENTS.md §2.1); die Ansichten lesen ihn und legen Aktionen ab.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
-use quiver_client::{EintragSicht, Modell};
+use quiver_client::{EintragSicht, Modell, Vorschau, Zusammenfassung};
 use quiver_domain::{EintragId, FeldLink};
 
 use crate::app::Aktion;
@@ -112,6 +113,21 @@ pub enum Dialog {
         name: String,
         einzahl: String,
     },
+    /// Die Einstellungen sichern (Aufgabe 15). `geheimnisse` ist der Schalter
+    /// „Geheimnisse mitnehmen“; nur dann gibt es ein Passwort.
+    Export {
+        pfad: PathBuf,
+        geheimnisse: bool,
+        passwort: String,
+        wiederholung: String,
+    },
+    /// Eine Sicherung einspielen (Aufgabe 15): Vorschau, Passwort (nur wenn die
+    /// Datei Geheimnisse führt) und „Übernehmen“.
+    Import {
+        pfad: PathBuf,
+        vorschau: Vorschau,
+        passwort: String,
+    },
 }
 
 /// Was in den Eingabefeldern der Verbindungsseite steht.
@@ -126,6 +142,13 @@ pub struct Eingaben {
 pub enum Meldung {
     /// Ein Agent wurde gekoppelt; das Token ist **einmal** sichtbar.
     Token { name: String, token: String },
+    /// Eine Sicherung ist geprüft: der Import-Dialog zeigt die Vorschau.
+    EinstellungenVorschau { pfad: PathBuf, vorschau: Vorschau },
+    /// Export oder Import sind durch: der Hinweis oben sagt, was geschah.
+    EinstellungenFertig {
+        importiert: bool,
+        zusammenfassung: Zusammenfassung,
+    },
     /// Etwas ist schiefgegangen — der Text steht über der Seite.
     Fehler(String),
 }
@@ -146,6 +169,12 @@ pub struct Sicht {
     pub eingaben: Eingaben,
     /// Was der Kern zuletzt gemeldet hat (Fehler), oben auf jeder Seite.
     pub hinweis: Option<String>,
+    /// Was die letzte Aktion ergeben hat („6 Einträge exportiert“), oben auf
+    /// jeder Seite (Aufgabe 15).
+    pub ergebnis: Option<String>,
+    /// Ein Pfad für den nächsten Datei-Dialog. Im Betrieb leer; im Test steht
+    /// hier die Datei, damit kein nativer Dialog aufgeht (Aufgabe 15).
+    pub datei: Option<PathBuf>,
     /// Startet quiver beim Anmelden? Der Wert kommt aus dem System
     /// ([`crate::autostart::aktiv`]) und wird dorthin zurückgeschrieben.
     pub autostart: bool,
@@ -163,6 +192,8 @@ impl Sicht {
             zugaenge_offen: BTreeSet::new(),
             eingaben: Eingaben::default(),
             hinweis: None,
+            ergebnis: None,
+            datei: None,
             autostart: false,
         }
     }
@@ -176,8 +207,47 @@ impl Sicht {
     pub fn melden(&mut self, meldung: Meldung) {
         match meldung {
             Meldung::Token { name, token } => self.dialog = Dialog::Token { name, token },
+            Meldung::EinstellungenVorschau { pfad, vorschau } => {
+                self.dialog = Dialog::Import {
+                    pfad,
+                    vorschau,
+                    passwort: String::new(),
+                };
+            }
+            Meldung::EinstellungenFertig {
+                importiert,
+                zusammenfassung,
+            } => {
+                self.ergebnis = Some(logik::ergebnis_text(
+                    self.sprache,
+                    importiert,
+                    &zusammenfassung,
+                ));
+            }
             Meldung::Fehler(text) => self.hinweis = Some(text),
         }
+    }
+
+    /// Den Pfad für eine Sicherung wählen: im Test steht er in der Sicht
+    /// ([`Sicht::datei`]), im Betrieb kommt er aus dem Datei-Dialog.
+    /// `speichern` öffnet den Speichern- statt des Öffnen-Dialogs.
+    pub fn datei_waehlen(&mut self, speichern: bool) -> Option<PathBuf> {
+        if let Some(pfad) = self.datei.take() {
+            return Some(pfad);
+        }
+        let titel = crate::texte::t(
+            self.sprache,
+            if speichern {
+                "einstellungen.export_titel"
+            } else {
+                "einstellungen.import_titel"
+            },
+        );
+        crate::datei::waehlen(
+            speichern,
+            &titel,
+            &quiver_client::einstellungen::dateiname(),
+        )
     }
 
     /// Ein neues Modell des Kerns übernehmen. Wechselt die Verbindung, folgt
@@ -297,6 +367,38 @@ impl Sicht {
             Dialog::ZugangEntfernen { eintrag, name, .. } => {
                 return Some(Aktion::ZugangLoeschen { eintrag, name })
             }
+            Dialog::Export {
+                pfad,
+                geheimnisse,
+                passwort,
+                wiederholung,
+            } => {
+                // Der Knopf ist gesperrt, solange etwas fehlt; hier steht die
+                // Prüfung noch einmal, damit nichts Halbes hinausgeht.
+                if geheimnisse && logik::export_passwort_fehler(&passwort, &wiederholung).is_some()
+                {
+                    return None;
+                }
+                return Some(Aktion::EinstellungenExportieren {
+                    pfad,
+                    passwort: geheimnisse.then(|| passwort.trim().to_string()),
+                });
+            }
+            Dialog::Import {
+                pfad,
+                vorschau,
+                passwort,
+            } => {
+                if vorschau.hat_geheimnisse && logik::import_passwort_fehler(&passwort).is_some() {
+                    return None;
+                }
+                return Some(Aktion::EinstellungenImportieren {
+                    pfad,
+                    passwort: vorschau
+                        .hat_geheimnisse
+                        .then(|| passwort.trim().to_string()),
+                });
+            }
         }
         None
     }
@@ -305,7 +407,7 @@ impl Sicht {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quiver_client::Verbindung;
+    use quiver_client::{Verbindung, Vorschau};
 
     fn leeres_modell() -> Modell {
         Modell {
@@ -341,6 +443,77 @@ mod tests {
         neu.endpunkt = "http://127.0.0.1:9/mcp".into();
         sicht.modell_setzen(neu);
         assert_eq!(sicht.hinweis, None);
+    }
+
+    #[test]
+    fn export_und_import_bestaetigen_nur_vollstaendig() {
+        let pfad = PathBuf::from("/tmp/quiver-einstellungen.json");
+        let mut sicht = Sicht::neu(leeres_modell(), &Einstellungen::default());
+
+        // Ohne Geheimnisse braucht der Export kein Passwort.
+        sicht.dialog = Dialog::Export {
+            pfad: pfad.clone(),
+            geheimnisse: false,
+            passwort: String::new(),
+            wiederholung: String::new(),
+        };
+        assert_eq!(
+            sicht.dialog_bestaetigen(),
+            Some(Aktion::EinstellungenExportieren {
+                pfad: pfad.clone(),
+                passwort: None,
+            })
+        );
+        assert_eq!(sicht.dialog, Dialog::Keiner);
+
+        // Mit Geheimnissen, aber ohne Passwort: nichts geht hinaus.
+        sicht.dialog = Dialog::Export {
+            pfad: pfad.clone(),
+            geheimnisse: true,
+            passwort: String::new(),
+            wiederholung: String::new(),
+        };
+        assert_eq!(sicht.dialog_bestaetigen(), None);
+
+        // Eine offene Sicherung wird ohne Passwort übernommen.
+        sicht.dialog = Dialog::Import {
+            pfad: pfad.clone(),
+            vorschau: Vorschau::default(),
+            passwort: "egal".into(),
+        };
+        assert_eq!(
+            sicht.dialog_bestaetigen(),
+            Some(Aktion::EinstellungenImportieren {
+                pfad: pfad.clone(),
+                passwort: None,
+            })
+        );
+
+        // Führt die Datei Geheimnisse, muss das Passwort lang genug sein.
+        sicht.dialog = Dialog::Import {
+            pfad: pfad.clone(),
+            vorschau: Vorschau {
+                eintraege: Vec::new(),
+                hat_geheimnisse: true,
+            },
+            passwort: "kurz".into(),
+        };
+        assert_eq!(sicht.dialog_bestaetigen(), None);
+        sicht.dialog = Dialog::Import {
+            pfad,
+            vorschau: Vorschau {
+                eintraege: Vec::new(),
+                hat_geheimnisse: true,
+            },
+            passwort: "ein-langes-passwort".into(),
+        };
+        assert_eq!(
+            sicht.dialog_bestaetigen(),
+            Some(Aktion::EinstellungenImportieren {
+                pfad: PathBuf::from("/tmp/quiver-einstellungen.json"),
+                passwort: Some("ein-langes-passwort".into()),
+            })
+        );
     }
 
     #[test]

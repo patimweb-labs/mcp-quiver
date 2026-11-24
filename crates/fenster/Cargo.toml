@@ -39,6 +39,9 @@ serde_json.workspace = true
 # Tray-Symbol: das Lucide-Zeichen `package` in 32 und 64 px rastern. Liegt
 # über `egui_extras` (SVG-Icons) ohnehin schon im Baum.
 resvg = "0.45"
+# Datei-Dialoge für Export und Import der Einstellungen (Aufgabe 15): reines
+# Rust, ohne Bindung an die Werkzeuge einer Plattform.
+rfd = "0.18"
 
 # Menüleiste (macOS) und Infobereich (Windows).
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]

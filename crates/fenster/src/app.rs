@@ -86,6 +86,20 @@ pub enum Aktion {
         name: String,
         feld: String,
     },
+    /// Eine Sicherung der Einstellungen schreiben (Aufgabe 15). Ohne Passwort
+    /// gehen nur die offenen Werte und Zugänge in die Datei.
+    EinstellungenExportieren {
+        pfad: PathBuf,
+        passwort: Option<String>,
+    },
+    /// Eine Sicherung prüfen: der Kern antwortet mit
+    /// [`Meldung::EinstellungenVorschau`].
+    EinstellungenPruefen { pfad: PathBuf },
+    /// Eine geprüfte Sicherung übernehmen.
+    EinstellungenImportieren {
+        pfad: PathBuf,
+        passwort: Option<String>,
+    },
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -235,8 +249,10 @@ impl<K: KernZugang> Fenster<K> {
 
         for aktion in render(ui, &mut self.sicht) {
             // Ein neuer Versuch räumt den alten Fehler weg: er ist nicht mehr
-            // der Stand der Dinge.
+            // der Stand der Dinge. Ein Ergebnis gilt genauso nur bis zur
+            // nächsten Aktion.
             self.sicht.hinweis = None;
+            self.sicht.ergebnis = None;
             // Einen Hilfe-Link öffnet das Fenster selbst: der Standardbrowser
             // hängt am Fenster (egui-winit führt `OpenUrl` aus), nicht am Kern.
             // Damit braucht es keine weitere Abhängigkeit.

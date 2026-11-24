@@ -120,4 +120,3 @@ mod tests {
         assert_eq!(entmultipliziert(&[9, 8, 7, 255]), vec![9, 8, 7, 255]);
     }
 }
-

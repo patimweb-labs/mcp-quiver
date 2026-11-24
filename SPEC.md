@@ -119,6 +119,20 @@ Standard des Eintrags  →  Werte des Satzes (Admin)  →  Werte am Gerät (User
 | `client` | User am Gerät | Client-Konfiguration |
 | `geheim` | User am Gerät | Tresor-Datei des Clients, verlässt das Gerät nie |
 
+**Festlegung: Sicherung der Geräte-Angaben.** Export und Import schreiben eine
+JSON-Datei (`format: mcp-quiver/einstellungen`, `version: 1`) mit den Werten und
+Zugangslisten je Eintrag; mit Passwort zusätzlich die Geheimnisse aus dem
+Tresor, verschlüsselt mit XChaCha20-Poly1305 unter einem Schlüssel aus Argon2id
+(m = 64 MiB, t = 3, p = 1, Salz 16 Byte, Passwort mindestens 8 Zeichen). Die
+Datei wird mit den Rechten 0600 geschrieben. Geräte-Token, Agent-Tokens und die
+Anmeldungen der Tools selbst sind nie enthalten — sie gehören zum Gerät bzw. zur
+Anmeldung. Der Import mischt statt zu ersetzen, überspringt Einträge, die das
+Gerät nicht kennt, und startet die betroffenen Einträge neu.
+
+*Preis:* eine zusätzliche Abhängigkeit (`argon2`) und ein Dateiformat, das
+versioniert bleibt. Wer das Passwort vergisst, kommt an die Geheimnisse der
+Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
+
 ## 7. Authentifizierung
 
 1. **Agent → Client:** Der Client lauscht nur lokal. Jeder Agent bekommt beim

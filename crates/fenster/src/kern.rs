@@ -134,6 +134,36 @@ impl KernZugang for EchterKern {
                     name,
                     feld,
                 } => kern.zugang_geheim_loeschen(&eintrag, &name, &feld).await,
+                // Einstellungen sichern und einspielen (Aufgabe 15).
+                Aktion::EinstellungenExportieren { pfad, passwort } => kern
+                    .einstellungen_exportieren(&pfad, passwort.as_deref())
+                    .map(|zusammenfassung| {
+                        meldungen.lock().unwrap_or_else(|e| e.into_inner()).push(
+                            Meldung::EinstellungenFertig {
+                                importiert: false,
+                                zusammenfassung,
+                            },
+                        );
+                    }),
+                Aktion::EinstellungenPruefen { pfad } => {
+                    kern.einstellungen_pruefen(&pfad, None).map(|vorschau| {
+                        meldungen
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(Meldung::EinstellungenVorschau { pfad, vorschau });
+                    })
+                }
+                Aktion::EinstellungenImportieren { pfad, passwort } => kern
+                    .einstellungen_importieren(&pfad, passwort.as_deref())
+                    .await
+                    .map(|zusammenfassung| {
+                        meldungen.lock().unwrap_or_else(|e| e.into_inner()).push(
+                            Meldung::EinstellungenFertig {
+                                importiert: true,
+                                zusammenfassung,
+                            },
+                        );
+                    }),
                 // Den Browser öffnet das Fenster selbst (siehe `Fenster::bild`):
                 // hier gibt es nichts zu tun.
                 Aktion::LinkOeffnen(_) => Ok(()),

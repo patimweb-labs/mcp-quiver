@@ -32,6 +32,7 @@ mod abgleich;
 mod anmeldung;
 mod dateitresor;
 mod einrichtung;
+pub mod einstellungen;
 mod endpunkt;
 mod hilfen;
 mod laufzeit;
@@ -41,7 +42,7 @@ mod tresor;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -58,6 +59,7 @@ use tokio::sync::{watch, Notify};
 
 pub use anmeldung::AnmeldeZustand;
 pub use einrichtung::EinrichtZustand;
+pub use einstellungen::{Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung};
 use hilfen::Abbruch;
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 
@@ -478,6 +480,89 @@ fn zugaenge_json(
         })
         .collect();
     serde_json::to_string(&liste).expect("Zugänge sind serialisierbar")
+}
+
+/// Was in eine Sicherung geht (Aufgabe 15): die offenen Werte und Zugänge je
+/// Eintrag und – nur mit Passwort – die Geheimnisse aus dem Tresor.
+/// Geräte-Token, Agent-Tokens und die Anmeldungen der Tools bleiben draußen.
+fn export_daten(
+    stand: &Stand,
+    mit_geheimnissen: bool,
+) -> (
+    BTreeMap<String, einstellungen::EintragTeil>,
+    Option<einstellungen::Geheimnisse>,
+) {
+    let mut ids: BTreeSet<String> = stand
+        .lokale_werte
+        .keys()
+        .map(|id| id.als_str().to_string())
+        .collect();
+    ids.extend(stand.zugaenge.keys().map(|id| id.als_str().to_string()));
+    if mit_geheimnissen {
+        // Geheimnisse gehören zu einem Eintrag – auch wenn er sonst nichts
+        // Offenes hat, soll er in der Datei stehen.
+        for (id, werte) in &stand.geheim {
+            if !werte.is_empty() {
+                ids.insert(id.als_str().to_string());
+            }
+        }
+        for (id, liste) in &stand.zugang_geheim {
+            if liste.values().any(|werte| !werte.is_empty()) {
+                ids.insert(id.als_str().to_string());
+            }
+        }
+    }
+    let mut eintraege: BTreeMap<String, einstellungen::EintragTeil> = BTreeMap::new();
+    for id in &ids {
+        let eintrag_id = EintragId::neu(id.clone());
+        let mut teil = einstellungen::EintragTeil::default();
+        if let Some(werte) = stand.lokale_werte.get(&eintrag_id) {
+            teil.werte = werte
+                .iter()
+                .filter(|(_, wert)| !wert.trim().is_empty())
+                .map(|(name, wert)| (name.clone(), wert.clone()))
+                .collect();
+        }
+        if let Some(liste) = stand.zugaenge.get(&eintrag_id) {
+            teil.zugaenge = liste.clone();
+        }
+        eintraege.insert(id.clone(), teil);
+    }
+    if !mit_geheimnissen {
+        return (eintraege, None);
+    }
+    let mut geheimnisse = einstellungen::Geheimnisse::default();
+    for id in &ids {
+        let eintrag_id = EintragId::neu(id.clone());
+        if let Some(werte) = stand.geheim.get(&eintrag_id) {
+            let werte: Werte = werte
+                .iter()
+                .filter(|(_, wert)| !wert.trim().is_empty())
+                .map(|(name, wert)| (name.clone(), wert.clone()))
+                .collect();
+            if !werte.is_empty() {
+                geheimnisse.eintraege.insert(id.clone(), werte);
+            }
+        }
+        if let Some(liste) = stand.zugang_geheim.get(&eintrag_id) {
+            let liste: BTreeMap<String, Werte> = liste
+                .iter()
+                .map(|(name, werte)| {
+                    let werte: Werte = werte
+                        .iter()
+                        .filter(|(_, wert)| !wert.trim().is_empty())
+                        .map(|(feld, wert)| (feld.clone(), wert.clone()))
+                        .collect();
+                    (name.clone(), werte)
+                })
+                .filter(|(_, werte)| !werte.is_empty())
+                .collect();
+            if !liste.is_empty() {
+                geheimnisse.zugaenge.insert(id.clone(), liste);
+            }
+        }
+    }
+    (eintraege, Some(geheimnisse))
 }
 
 /// Innerei des Kerns; geteilt zwischen Fassade, Abgleich und Endpunkt.
@@ -1598,6 +1683,196 @@ impl Kern {
         self.innen.speichern();
         self.innen.neu_starten(eintrag).await;
         Ok(())
+    }
+
+    /// Die Angaben dieses Geräts sichern (Aufgabe 15).
+    ///
+    /// Ohne Passwort gehen nur die offenen Werte und Zugänge in die Datei
+    /// (`"geheim": null`); mit Passwort kommen die Geheimnisse aus dem Tresor
+    /// verschlüsselt dazu. Geräte-Token, Agent-Tokens und Anmeldungen der Tools
+    /// sind nie dabei.
+    pub fn einstellungen_exportieren(
+        &self,
+        pfad: &Path,
+        passwort: Option<&str>,
+    ) -> anyhow::Result<Zusammenfassung> {
+        let passwort = passwort.map(str::trim).filter(|wert| !wert.is_empty());
+        let (eintraege, geheimnisse) = {
+            let stand = self.innen.stand();
+            export_daten(&stand, passwort.is_some())
+        };
+        einstellungen::schreiben(pfad, eintraege, geheimnisse.as_ref(), passwort)
+    }
+
+    /// Was ein Import täte – ohne etwas zu ändern (Vorschau im Fenster).
+    pub fn einstellungen_pruefen(
+        &self,
+        pfad: &Path,
+        passwort: Option<&str>,
+    ) -> anyhow::Result<Vorschau> {
+        let gelesen = einstellungen::lesen(pfad, passwort)?;
+        let stand = self.innen.stand();
+        Ok(einstellungen::vorschau(
+            &gelesen,
+            &stand.soll,
+            &stand.lokale_werte,
+            &stand.zugaenge,
+        ))
+    }
+
+    /// Eine Sicherung übernehmen (Aufgabe 15).
+    ///
+    /// Gemischt wird, nicht ersetzt: Werte aus der Datei überschreiben
+    /// gleichnamige, was nur am Gerät steht, bleibt; Zugänge werden über den
+    /// Namen zusammengeführt. Einträge, die es hier nicht gibt (nicht im Soll),
+    /// werden übersprungen. Ein falsches Passwort ist ein Fehler, bevor
+    /// irgendetwas geschrieben wird. Danach starten die betroffenen Einträge
+    /// neu, wie bei [`Kern::werte_setzen`].
+    pub async fn einstellungen_importieren(
+        &self,
+        pfad: &Path,
+        passwort: Option<&str>,
+    ) -> anyhow::Result<Zusammenfassung> {
+        let passwort = passwort.map(str::trim).filter(|wert| !wert.is_empty());
+        let gelesen = einstellungen::lesen(pfad, passwort)?;
+        if gelesen.hat_geheimnisse && gelesen.geheimnisse.is_none() {
+            anyhow::bail!("Die Sicherung enthält Geheimnisse – dafür wird das Passwort gebraucht");
+        }
+        let mut zusammenfassung = Zusammenfassung::default();
+        let mut betroffen: Vec<EintragId> = Vec::new();
+        let mut neue_werte: Vec<(EintragId, Werte)> = Vec::new();
+        let mut neue_zugaenge: Vec<(EintragId, BTreeMap<String, Werte>)> = Vec::new();
+        let mut schreibungen: Vec<(String, String)> = Vec::new();
+        let bekannt: BTreeMap<String, EintragId> = {
+            let stand = self.innen.stand();
+            stand
+                .soll
+                .eintraege
+                .iter()
+                .map(|eintrag| {
+                    (
+                        eintrag.eintrag.id.als_str().to_string(),
+                        eintrag.eintrag.id.clone(),
+                    )
+                })
+                .collect()
+        };
+        {
+            let stand = self.innen.stand();
+            for (id, teil) in &gelesen.eintraege {
+                let Some(eintrag) = bekannt.get(id) else {
+                    zusammenfassung.uebersprungen.push(id.clone());
+                    continue;
+                };
+                let vorher = stand.lokale_werte.get(eintrag).cloned().unwrap_or_default();
+                zusammenfassung.werte += teil
+                    .werte
+                    .iter()
+                    .filter(|(name, wert)| {
+                        !wert.trim().is_empty() && vorher.get(*name) != Some(*wert)
+                    })
+                    .count();
+                zusammenfassung.zugaenge += teil.zugaenge.len();
+                zusammenfassung.eintraege += 1;
+                neue_werte.push((
+                    eintrag.clone(),
+                    einstellungen::werte_mischen(&vorher, &teil.werte),
+                ));
+                let leer = BTreeMap::new();
+                let vorher_zugaenge = stand.zugaenge.get(eintrag).unwrap_or(&leer);
+                neue_zugaenge.push((
+                    eintrag.clone(),
+                    einstellungen::zugaenge_mischen(vorher_zugaenge, &teil.zugaenge),
+                ));
+                betroffen.push(eintrag.clone());
+            }
+        }
+        // Geheimnisse gehören nur zu Einträgen, die es hier gibt.
+        if let Some(geheimnisse) = &gelesen.geheimnisse {
+            for (id, werte) in &geheimnisse.eintraege {
+                let Some(eintrag) = bekannt.get(id) else {
+                    continue;
+                };
+                for (feld, wert) in werte {
+                    if !wert.trim().is_empty() {
+                        schreibungen.push((geheim_schluessel(eintrag, feld), wert.clone()));
+                    }
+                }
+            }
+            for (id, liste) in &geheimnisse.zugaenge {
+                let Some(eintrag) = bekannt.get(id) else {
+                    continue;
+                };
+                for (name, werte) in liste {
+                    for (feld, wert) in werte {
+                        if !wert.trim().is_empty() {
+                            schreibungen.push((
+                                zugang_geheim_schluessel(eintrag, name, feld),
+                                wert.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        zusammenfassung.geheimnisse = schreibungen.len();
+        // Erst schreiben, wenn alles geprüft ist: ein Fehler ändert nichts.
+        for (schluessel, wert) in &schreibungen {
+            self.innen.konfig.tresor.schreiben(schluessel, wert)?;
+        }
+        {
+            let mut stand = self.innen.stand();
+            for (eintrag, werte) in neue_werte {
+                if werte.is_empty() {
+                    stand.lokale_werte.remove(&eintrag);
+                } else {
+                    stand.lokale_werte.insert(eintrag, werte);
+                }
+            }
+            for (eintrag, liste) in neue_zugaenge {
+                if liste.is_empty() {
+                    stand.zugaenge.remove(&eintrag);
+                } else {
+                    stand.zugaenge.insert(eintrag, liste);
+                }
+            }
+            if let Some(geheimnisse) = &gelesen.geheimnisse {
+                for (id, werte) in &geheimnisse.eintraege {
+                    let Some(eintrag) = bekannt.get(id) else {
+                        continue;
+                    };
+                    let gespeichert = stand.geheim.entry(eintrag.clone()).or_default();
+                    for (feld, wert) in werte {
+                        if !wert.trim().is_empty() {
+                            gespeichert.insert(feld.clone(), wert.clone());
+                        }
+                    }
+                }
+                for (id, liste) in &geheimnisse.zugaenge {
+                    let Some(eintrag) = bekannt.get(id) else {
+                        continue;
+                    };
+                    for (name, werte) in liste {
+                        let gespeichert = stand
+                            .zugang_geheim
+                            .entry(eintrag.clone())
+                            .or_default()
+                            .entry(name.clone())
+                            .or_default();
+                        for (feld, wert) in werte {
+                            if !wert.trim().is_empty() {
+                                gespeichert.insert(feld.clone(), wert.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.innen.speichern();
+        for eintrag in &betroffen {
+            self.innen.neu_starten(eintrag).await;
+        }
+        Ok(zusammenfassung)
     }
 
     /// Einen Zugang anlegen oder ändern (Aufgabe 14).

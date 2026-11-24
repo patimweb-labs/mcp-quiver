@@ -6,7 +6,7 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::ansichten::{abstand, hinweis, leer, seitenkopf, text};
+use crate::ansichten::{abstand, ergebnis, hinweis, leer, text};
 use crate::app::Aktion;
 use crate::bausteine::{self, Icon};
 use crate::logik;
@@ -17,21 +17,18 @@ use quiver_client::EintragSicht;
 use quiver_protocol::EintragZustand;
 
 pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
-    let sprache = sicht.sprache;
+    let mut exportieren = false;
+    let mut importieren = false;
     bausteine::seite(ui, |ui| {
         hinweis(ui, sicht);
-        seitenkopf(
-            ui,
-            sicht,
-            &t(sprache, "nav.tools"),
-            &t(sprache, "tools.sub"),
-        );
+        ergebnis(ui, sicht);
+        kopfzeile(ui, sicht, &mut exportieren, &mut importieren);
         if sicht.modell.eintraege.is_empty() {
             leer(
                 ui,
                 sicht,
-                &t(sprache, "tools.leer"),
-                &t(sprache, "tools.leer_text"),
+                &t(sicht.sprache, "tools.leer"),
+                &t(sicht.sprache, "tools.leer_text"),
             );
             return;
         }
@@ -40,6 +37,68 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
             abstand(ui);
         }
     });
+    if exportieren {
+        // Der Pfad kommt zuerst: erst dann fragt der Dialog nach dem Passwort.
+        if let Some(pfad) = sicht.datei_waehlen(true) {
+            sicht.dialog = Dialog::Export {
+                pfad,
+                geheimnisse: false,
+                passwort: String::new(),
+                wiederholung: String::new(),
+            };
+        }
+    }
+    if importieren {
+        if let Some(pfad) = sicht.datei_waehlen(false) {
+            // Der Kern liest und prüft; die Vorschau kommt als Meldung zurück
+            // und öffnet den Dialog ([`crate::modell::Sicht::melden`]).
+            aktionen.push(Aktion::EinstellungenPruefen { pfad });
+        }
+    }
+}
+
+/// Die Kopfzeile der Seite: Titel und Unterzeile links, „Exportieren“ und
+/// „Importieren“ rechts (Aufgabe 15).
+fn kopfzeile(ui: &mut egui::Ui, sicht: &Sicht, exportieren: &mut bool, importieren: &mut bool) {
+    let f = *sicht.thema.farben();
+    let sprache = sicht.sprache;
+    ui.add_space(thema::SPACE_4);
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = thema::SPACE_1;
+                ui.label(
+                    RichText::new(t(sprache, "nav.tools"))
+                        .font(egui::FontId::new(thema::FONT_SIZE_2XL, thema::fett())),
+                );
+                ui.label(text(&f, t(sprache, "tools.sub"), Ton::Leise));
+            });
+        },
+        |ui| {
+            if bausteine::knopf(
+                ui,
+                &f,
+                Icon::Herunterladen,
+                &t(sprache, "einstellungen.exportieren"),
+            )
+            .clicked()
+            {
+                *exportieren = true;
+            }
+            if bausteine::knopf(
+                ui,
+                &f,
+                Icon::Hochladen,
+                &t(sprache, "einstellungen.importieren"),
+            )
+            .clicked()
+            {
+                *importieren = true;
+            }
+        },
+    );
+    ui.add_space(thema::SPACE_5);
 }
 
 fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen: &mut Vec<Aktion>) {

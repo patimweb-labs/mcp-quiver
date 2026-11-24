@@ -44,6 +44,23 @@ pub fn hinweis(ui: &mut egui::Ui, sicht: &Sicht) {
     ui.add_space(crate::thema::SPACE_4);
 }
 
+/// Das Ergebnis der letzten Aktion (Export oder Import, Aufgabe 15), oben auf
+/// jeder Seite. Es steht in der Grundfarbe „gut“ — es ist eine Rückmeldung,
+/// kein Fehler.
+pub fn ergebnis(ui: &mut egui::Ui, sicht: &Sicht) {
+    let Some(text) = &sicht.ergebnis else {
+        return;
+    };
+    let f = sicht.thema.farben();
+    bausteine::kasten(ui, f, |ui| {
+        ui.horizontal(|ui| {
+            bausteine::icon(ui, f, Icon::Haken, Ton::Gut);
+            ui.add(egui::Label::new(bausteine::text(f, text, Ton::Gut)).wrap());
+        });
+    });
+    ui.add_space(crate::thema::SPACE_4);
+}
+
 /// Ein Abschnitt mit Abstand darunter — Karten stehen nie aneinander. Die
 /// 8 px plus den Abstand zwischen zwei Elementen (8 px) ergeben die 16 px,
 /// die `.seite` in der Verwaltung zwischen zwei Karten setzt.

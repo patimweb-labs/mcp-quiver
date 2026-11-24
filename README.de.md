@@ -159,6 +159,18 @@ Standardbrowser — sonst nichts, keine Anmeldung, kein Lauscher.
 
 ![Angaben-Dialog mit Hilfe-Link](docs/bilder/fenster-dark-angaben.png)
 
+Die Angaben eines Geräts lassen sich **sichern und auf einem anderen Gerät
+wieder einspielen**: Auf der Tools-Seite stehen dafür *Exportieren* und
+*Importieren* in der Kopfzeile. Die Datei `quiver-einstellungen-<datum>.json`
+enthält die Werte und die Zugangslisten aller Tools; auf Wunsch auch die
+Geheimnisse — dann verschlüsselt mit XChaCha20-Poly1305 und einem Schlüssel aus
+Argon2id (Passwort mit mindestens acht Zeichen, Dateirechte 0600). Geräte-Token,
+Agent-Tokens und die Anmeldungen der Tools selbst sind nie dabei, die gehören zum
+Gerät bzw. zur Anmeldung. Der Import zeigt erst eine Vorschau (neu, ändert,
+übersprungen), mischt dann statt zu ersetzen — was nur am Gerät steht, bleibt —
+und startet die betroffenen Einträge neu. Einträge, die es hier nicht gibt,
+werden übersprungen; ein falsches Passwort ändert nichts.
+
 Umgebung (alles optional):
 
 | Variable | Bedeutung |

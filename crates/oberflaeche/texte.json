@@ -502,5 +502,129 @@
   "zugaenge.geheim_loeschen": {
     "de": "Geheimnis löschen",
     "en": "Remove secret"
+  },
+  "einstellungen.sichern": {
+    "de": "Sichern",
+    "en": "Save"
+  },
+  "einstellungen.exportieren": {
+    "de": "Exportieren",
+    "en": "Export"
+  },
+  "einstellungen.importieren": {
+    "de": "Importieren",
+    "en": "Import"
+  },
+  "einstellungen.export_titel": {
+    "de": "Einstellungen sichern",
+    "en": "Back up settings"
+  },
+  "einstellungen.export_text": {
+    "de": "Werte und Zugänge aller Tools in eine Datei. Ohne Geheimnisse bleibt sie offen lesbar.",
+    "en": "Values and access lists of all tools in one file. Without secrets it stays readable."
+  },
+  "einstellungen.import_titel": {
+    "de": "Einstellungen einspielen",
+    "en": "Restore settings"
+  },
+  "einstellungen.import_text": {
+    "de": "Die Vorschau zeigt, was neu ist, was sich ändert und was übersprungen wird. Was nur hier steht, bleibt.",
+    "en": "The preview shows what is new, what changes and what is skipped. What exists only here stays."
+  },
+  "einstellungen.datei": {
+    "de": "Datei: {}",
+    "en": "File: {}"
+  },
+  "einstellungen.mit_geheimnissen_schalter": {
+    "de": "Geheimnisse mitnehmen",
+    "en": "Include secrets"
+  },
+  "einstellungen.passwort": {
+    "de": "Passwort",
+    "en": "Password"
+  },
+  "einstellungen.passwort_wiederholen": {
+    "de": "Passwort wiederholen",
+    "en": "Repeat password"
+  },
+  "einstellungen.passwort_hinweis": {
+    "de": "Mindestens 8 Zeichen. Ohne dieses Passwort lässt sich die Sicherung nicht mehr öffnen.",
+    "en": "At least 8 characters. Without this password the backup cannot be opened again."
+  },
+  "einstellungen.passwort_datei": {
+    "de": "Diese Sicherung enthält Geheimnisse. Dafür wird das Passwort von damals gebraucht.",
+    "en": "This backup contains secrets. It needs the password from back then."
+  },
+  "einstellungen.passwort_fehlt": {
+    "de": "Passwort fehlt.",
+    "en": "Password is missing."
+  },
+  "einstellungen.passwort_kurz": {
+    "de": "Mindestens 8 Zeichen.",
+    "en": "At least 8 characters."
+  },
+  "einstellungen.passwort_ungleich": {
+    "de": "Die Passwörter stimmen nicht überein.",
+    "en": "The passwords do not match."
+  },
+  "einstellungen.uebernehmen": {
+    "de": "Übernehmen",
+    "en": "Apply"
+  },
+  "einstellungen.vorschau_summe": {
+    "de": "{} übernommen · {} übersprungen",
+    "en": "{} applied · {} skipped"
+  },
+  "einstellungen.vorschau_leer": {
+    "de": "Die Datei enthält keine Einträge.",
+    "en": "The file contains no entries."
+  },
+  "einstellungen.vorschau_neu": {
+    "de": "neu",
+    "en": "new"
+  },
+  "einstellungen.vorschau_aendert": {
+    "de": "ändert",
+    "en": "changes"
+  },
+  "einstellungen.vorschau_uebersprungen": {
+    "de": "übersprungen – auf diesem Gerät nicht vorhanden",
+    "en": "skipped – not on this device"
+  },
+  "einstellungen.neue_werte": {
+    "de": "{} neu",
+    "en": "{} new"
+  },
+  "einstellungen.geaenderte_werte": {
+    "de": "{} geändert",
+    "en": "{} changed"
+  },
+  "einstellungen.zugaenge_anzahl": {
+    "de": "{} Zugänge",
+    "en": "{} access entries"
+  },
+  "einstellungen.exportiert": {
+    "de": "{} Einträge exportiert",
+    "en": "{} entries exported"
+  },
+  "einstellungen.exportiert_einer": {
+    "de": "1 Eintrag exportiert",
+    "en": "1 entry exported"
+  },
+  "einstellungen.importiert": {
+    "de": "{} Einträge importiert",
+    "en": "{} entries imported"
+  },
+  "einstellungen.importiert_einer": {
+    "de": "1 Eintrag importiert",
+    "en": "1 entry imported"
+  },
+  "einstellungen.mit_geheimnissen": {
+    "de": "(mit Geheimnissen)",
+    "en": "(with secrets)"
+  },
+  "einstellungen.uebersprungen": {
+    "de": "{} übersprungen",
+    "en": "{} skipped"
   }
 }

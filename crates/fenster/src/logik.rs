@@ -6,7 +6,8 @@
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
 use quiver_client::{
-    AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, ZugaengeSicht, ZugangSicht,
+    AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, VorschauArt,
+    VorschauEintrag, ZugaengeSicht, ZugangSicht, Zusammenfassung,
 };
 use quiver_domain::{link_aufloesen, zugangsname_gueltig, FehlendesFeld, FeldLink, Quelle, Werte};
 use quiver_protocol::EintragZustand;
@@ -487,6 +488,98 @@ pub fn zugang_name_fehler(name: &str, vorhandene: &[String]) -> Option<&'static 
         return Some("zugaenge.name_doppelt");
     }
     None
+}
+
+/// Warum das Passwort nicht reicht – `None` heißt: es geht (Aufgabe 15).
+///
+/// Die Regel steht an einer Stelle: mindestens `PASSWORT_MIN` Zeichen, sonst
+/// lässt sich die Sicherung später nicht mehr öffnen.
+pub fn export_passwort_fehler(passwort: &str, wiederholung: &str) -> Option<&'static str> {
+    let passwort = passwort.trim();
+    if passwort.is_empty() {
+        return Some("einstellungen.passwort_fehlt");
+    }
+    if passwort.chars().count() < quiver_client::einstellungen::PASSWORT_MIN {
+        return Some("einstellungen.passwort_kurz");
+    }
+    if passwort != wiederholung.trim() {
+        return Some("einstellungen.passwort_ungleich");
+    }
+    None
+}
+
+/// Wie [`export_passwort_fehler`], aber ohne Wiederholung: beim Import gibt es
+/// nur ein Feld.
+pub fn import_passwort_fehler(passwort: &str) -> Option<&'static str> {
+    let passwort = passwort.trim();
+    if passwort.is_empty() {
+        return Some("einstellungen.passwort_fehlt");
+    }
+    if passwort.chars().count() < quiver_client::einstellungen::PASSWORT_MIN {
+        return Some("einstellungen.passwort_kurz");
+    }
+    None
+}
+
+/// Eine Zeile der Import-Vorschau: was neu ist, was sich ändert, was
+/// übersprungen wird (Aufgabe 15).
+pub fn vorschau_detail(sprache: Sprache, eintrag: &VorschauEintrag) -> String {
+    if eintrag.art == VorschauArt::Uebersprungen {
+        return t(sprache, "einstellungen.vorschau_uebersprungen");
+    }
+    let mut teile = vec![t(
+        sprache,
+        match eintrag.art {
+            VorschauArt::Neu => "einstellungen.vorschau_neu",
+            _ => "einstellungen.vorschau_aendert",
+        },
+    )];
+    if eintrag.neue > 0 {
+        teile.push(tf(sprache, "einstellungen.neue_werte", &[&eintrag.neue]));
+    }
+    if eintrag.geaenderte > 0 {
+        teile.push(tf(
+            sprache,
+            "einstellungen.geaenderte_werte",
+            &[&eintrag.geaenderte],
+        ));
+    }
+    if eintrag.zugaenge > 0 {
+        teile.push(tf(
+            sprache,
+            "einstellungen.zugaenge_anzahl",
+            &[&eintrag.zugaenge],
+        ));
+    }
+    teile.join(" · ")
+}
+
+/// Der Hinweis nach Export oder Import, z. B.
+/// „6 Einträge exportiert (mit Geheimnissen)“.
+pub fn ergebnis_text(
+    sprache: Sprache,
+    importiert: bool,
+    zusammenfassung: &Zusammenfassung,
+) -> String {
+    let mut text = match (importiert, zusammenfassung.eintraege) {
+        (false, 1) => t(sprache, "einstellungen.exportiert_einer"),
+        (false, anzahl) => tf(sprache, "einstellungen.exportiert", &[&anzahl]),
+        (true, 1) => t(sprache, "einstellungen.importiert_einer"),
+        (true, anzahl) => tf(sprache, "einstellungen.importiert", &[&anzahl]),
+    };
+    if !importiert && zusammenfassung.mit_geheimnissen() {
+        text.push(' ');
+        text.push_str(&t(sprache, "einstellungen.mit_geheimnissen"));
+    }
+    if !zusammenfassung.uebersprungen.is_empty() {
+        text.push_str(" · ");
+        text.push_str(&tf(
+            sprache,
+            "einstellungen.uebersprungen",
+            &[&zusammenfassung.uebersprungen.len()],
+        ));
+    }
+    text
 }
 
 /// Der Befehl für pi 1.5 (`pi mcp add --help`: `--url <url>`, `--header <KEY=VALUE>`).
@@ -1378,6 +1471,127 @@ mod tests {
                 assert_ne!(t(sprache, schluessel), schluessel, "{schluessel}");
             }
         }
+    }
+
+    #[test]
+    fn passwortregeln_fuer_die_sicherung() {
+        // Leer, zu kurz und nicht gleich sind eigene Meldungen – Export und
+        // Import teilen sich die Mindestlänge (Aufgabe 15).
+        assert_eq!(
+            export_passwort_fehler("", ""),
+            Some("einstellungen.passwort_fehlt")
+        );
+        assert_eq!(
+            export_passwort_fehler("   ", "   "),
+            Some("einstellungen.passwort_fehlt")
+        );
+        assert_eq!(
+            export_passwort_fehler("kurz", "kurz"),
+            Some("einstellungen.passwort_kurz")
+        );
+        assert_eq!(
+            export_passwort_fehler("ein-langes-passwort", "etwas-anderes"),
+            Some("einstellungen.passwort_ungleich")
+        );
+        // Leerzeichen am Rand zählen nicht; acht Zeichen genügen.
+        assert_eq!(
+            export_passwort_fehler(" ein-langes-passwort ", "ein-langes-passwort"),
+            None
+        );
+        assert_eq!(export_passwort_fehler("12345678", "12345678"), None);
+
+        assert_eq!(
+            import_passwort_fehler(""),
+            Some("einstellungen.passwort_fehlt")
+        );
+        assert_eq!(
+            import_passwort_fehler("1234567"),
+            Some("einstellungen.passwort_kurz")
+        );
+        assert_eq!(import_passwort_fehler("12345678"), None);
+
+        // Die Meldungen gibt es in beiden Sprachen.
+        for schluessel in [
+            "einstellungen.passwort_fehlt",
+            "einstellungen.passwort_kurz",
+            "einstellungen.passwort_ungleich",
+        ] {
+            for sprache in Sprache::ALLE {
+                assert_ne!(t(sprache, schluessel), schluessel, "{schluessel}");
+            }
+        }
+    }
+
+    #[test]
+    fn das_ergebnis_zaehlt_und_uebersetzt() {
+        let alle = Zusammenfassung {
+            eintraege: 6,
+            werte: 9,
+            zugaenge: 2,
+            geheimnisse: 3,
+            uebersprungen: vec!["weg".to_string()],
+        };
+        assert_eq!(
+            ergebnis_text(Sprache::De, false, &alle),
+            "6 Einträge exportiert (mit Geheimnissen) · 1 übersprungen"
+        );
+        // Ohne Geheimnisse steht der Zusatz nicht da.
+        let offen = Zusammenfassung {
+            geheimnisse: 0,
+            uebersprungen: Vec::new(),
+            ..alle
+        };
+        assert_eq!(
+            ergebnis_text(Sprache::De, false, &offen),
+            "6 Einträge exportiert"
+        );
+        // Einzahl und Import.
+        let eins = Zusammenfassung {
+            eintraege: 1,
+            ..Zusammenfassung::default()
+        };
+        assert_eq!(
+            ergebnis_text(Sprache::De, false, &eins),
+            "1 Eintrag exportiert"
+        );
+        assert_eq!(
+            ergebnis_text(Sprache::De, true, &eins),
+            "1 Eintrag importiert"
+        );
+        assert_eq!(ergebnis_text(Sprache::En, true, &eins), "1 entry imported");
+        assert_eq!(
+            ergebnis_text(Sprache::En, false, &offen),
+            "6 entries exported"
+        );
+    }
+
+    #[test]
+    fn die_vorschau_zeile_nennt_was_sich_aendert() {
+        let zeile =
+            |art: VorschauArt, neue: usize, geaenderte: usize, zugaenge: usize| VorschauEintrag {
+                id: "echo".into(),
+                titel: "Echo".into(),
+                art,
+                neue,
+                geaenderte,
+                zugaenge,
+            };
+        assert_eq!(
+            vorschau_detail(Sprache::De, &zeile(VorschauArt::Neu, 2, 0, 0)),
+            "neu · 2 neu"
+        );
+        assert_eq!(
+            vorschau_detail(Sprache::De, &zeile(VorschauArt::Aendert, 1, 2, 1)),
+            "ändert · 1 neu · 2 geändert · 1 Zugänge"
+        );
+        assert_eq!(
+            vorschau_detail(Sprache::De, &zeile(VorschauArt::Uebersprungen, 0, 0, 0)),
+            "übersprungen – auf diesem Gerät nicht vorhanden"
+        );
+        assert_eq!(
+            vorschau_detail(Sprache::En, &zeile(VorschauArt::Neu, 2, 0, 0)),
+            "new · 2 new"
+        );
     }
 
     #[test]

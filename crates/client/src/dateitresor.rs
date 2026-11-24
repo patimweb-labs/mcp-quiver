@@ -178,7 +178,10 @@ impl DateiTresor {
 }
 
 /// Erst in eine temporäre Datei (0600), dann umbenennen – nie halb geschrieben.
-fn schreiben_atomar(pfad: &Path, inhalt: &[u8]) -> anyhow::Result<()> {
+///
+/// Auch der Export der Einstellungen (Aufgabe 15) schreibt so: die Datei
+/// gehört von Anfang an nur dem Benutzer.
+pub(crate) fn schreiben_atomar(pfad: &Path, inhalt: &[u8]) -> anyhow::Result<()> {
     let mut zwischen = pfad.as_os_str().to_owned();
     zwischen.push(format!(".{}.neu", std::process::id()));
     let zwischen = PathBuf::from(zwischen);
