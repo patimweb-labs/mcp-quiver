@@ -46,7 +46,6 @@ jobs:
 
   admin:
     runs-on: ubuntu-latest
-    if: hashFiles('admin/package.json') != ''
     defaults:
       run:
         working-directory: admin

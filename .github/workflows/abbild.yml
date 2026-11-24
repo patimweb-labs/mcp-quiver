@@ -1,0 +1,121 @@
+# Container-Abbild `docker.io/<benutzer>/mcp-quiver-server` (amd64 + arm64).
+#
+#   Push auf main        -> sha-<commit>
+#   Tag v1.2.3           -> 1.2.3, 1.2, latest, sha-<commit>
+#   „Run workflow“       -> sha-<commit>
+#
+# Bis PR #1 gemergt ist, baut auch `feat/grundgeruest` (für den ersten Server).
+# Angemeldet wird mit den Repo-Secrets DOCKERHUB_USERNAME und DOCKERHUB_TOKEN;
+# fehlen sie, wird nichts gebaut und der Lauf sagt es.
+name: Abbild
+
+on:
+  push:
+    branches: [main, feat/grundgeruest]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: abbild-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  zugang:
+    name: Zugang zu Docker Hub
+    runs-on: ubuntu-24.04
+    outputs:
+      da: ${{ steps.frage.outputs.da }}
+    steps:
+      - id: frage
+        env:
+          BENUTZER: ${{ secrets.DOCKERHUB_USERNAME }}
+          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$BENUTZER" ] && [ -n "$TOKEN" ]; then
+            echo "da=ja" >> "$GITHUB_OUTPUT"
+          else
+            echo "da=nein" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME oder DOCKERHUB_TOKEN fehlt, es wird kein Abbild gebaut."
+          fi
+
+  bauen:
+    name: Bauen (${{ matrix.kurz }})
+    needs: zugang
+    if: needs.zugang.outputs.da == 'ja'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, plattform: linux/amd64, kurz: amd64 }
+          - { os: ubuntu-24.04-arm, plattform: linux/arm64, kurz: arm64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      ABBILD: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mcp-quiver-server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Erst nur nach Prüfsumme hochladen; die Namen bekommt das gemeinsame
+      # Verzeichnis beider Architekturen im nächsten Job.
+      - id: bau
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.plattform }}
+          labels: |
+            org.opencontainers.image.title=mcp-quiver-server
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=${{ env.ABBILD }},push-by-digest=true,name-canonical=true,push=true
+      - name: Prüfsumme merken
+        env:
+          DIGEST: ${{ steps.bau.outputs.digest }}
+          KURZ: ${{ matrix.kurz }}
+        run: |
+          mkdir -p digests
+          echo "$DIGEST" > "digests/$KURZ"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.kurz }}
+          path: digests/*
+          retention-days: 1
+
+  benennen:
+    name: Benennen
+    needs: bauen
+    runs-on: ubuntu-24.04
+    env:
+      ABBILD: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mcp-quiver-server
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Ein Name, zwei Architekturen
+        run: |
+          set -euo pipefail
+          namen=(-t "${ABBILD}:sha-${GITHUB_SHA::7}")
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v([0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+            namen+=(-t "${ABBILD}:${GITHUB_REF_NAME#v}" -t "${ABBILD}:${BASH_REMATCH[1]}" -t "${ABBILD}:latest")
+          fi
+          quellen=()
+          for d in digests/*; do quellen+=("${ABBILD}@$(cat "$d")"); done
+          docker buildx imagetools create "${namen[@]}" "${quellen[@]}"
+          docker buildx imagetools inspect "${ABBILD}:sha-${GITHUB_SHA::7}"
