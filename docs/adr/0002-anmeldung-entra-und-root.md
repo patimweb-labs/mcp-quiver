@@ -12,7 +12,7 @@ Bisher: ein Admin-Schlüssel für die Verwaltung, Einmal-Codes für Geräte, Gru
 2. **Gruppen aus dem ID-Token** (`groups`, nur der App zugewiesene Gruppen), als **Objekt-Id**. Namen sind änderbar und damit keine Grundlage für Rechte; der Admin gibt einer Id einen Anzeigenamen. Kein Verzeichnis-Leserecht.
 3. **Nachprüfen statt einmal glauben:** Refresh-Token je User (verschlüsselt am Server), stündlich eingelöst; das neue ID-Token bestimmt die Gruppen. Gesperrt, nicht mehr zugewiesen, widerrufen → alle Geräte des Users verlieren sofort ihre Tools.
 4. **Root** (genau einer) über die Kommandozeile des Servers gesetzt, Argon2id. Der Notzugang, wenn Entra ausfällt. Keine offene Ersteinrichtung im Browser, sie könnte jeder übernehmen.
-5. **Admins** sind einzelne Entra-User (Objekt-Id). Anmeldung allein gibt kein Recht auf die Verwaltung.
+5. **Rollen** Root, Admin, Mitarbeiter (Aufgabe 24), vergeben je Benutzer oder je Entra-Gruppe, die höchste gilt. Der Server erzwingt sie bei jeder Anfrage. Wer in keiner Entra-Gruppe ist, hat keinen Zugang.
 6. **Kein Admin-Schlüssel.** Automatisierung läuft über Unterbefehle im Container.
 7. **Geräte-Codes nur ohne eingerichtetes Entra.**
 8. **Ohne zugeordnete Gruppe keine Tools.**
