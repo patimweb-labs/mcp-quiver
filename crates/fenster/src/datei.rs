@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Der Datei-Dialog für Export und Import der Einstellungen (Aufgabe 15).
+//! Der Datei-Dialog: Export und Import der Einstellungen (Aufgabe 15) und die
+//! Ordnerwahl der Angaben (`FeldArt::Ordner`).
 //!
 //! Nativer Dialog über [`rfd`] – reines Rust, auf allen drei Plattformen
 //! derselbe Aufruf. Die Ansicht fragt ihn über
@@ -21,4 +22,17 @@ pub fn waehlen(speichern: bool, titel: &str, vorschlag: &str) -> Option<PathBuf>
     } else {
         dialog.pick_file()
     }
+}
+
+/// Einen Ordner wählen; der Dialog beginnt im bisherigen, wenn es ihn gibt.
+/// Neue Ordner legt der Dialog selbst an. `None` heißt: abgebrochen.
+pub fn ordner_waehlen(titel: &str, bisher: &str) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .set_title(titel)
+        .set_can_create_directories(true);
+    let bisher = PathBuf::from(bisher.trim());
+    if bisher.is_dir() {
+        dialog = dialog.set_directory(bisher);
+    }
+    dialog.pick_folder()
 }

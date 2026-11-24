@@ -639,6 +639,14 @@
     "de": "Ungültige Adresse: {}",
     "en": "Invalid address: {}"
   },
+  "tools.ordner_waehlen": {
+    "de": "Ordner wählen",
+    "en": "Choose folder"
+  },
+  "tools.ordner_titel": {
+    "de": "Ordner auswählen",
+    "en": "Choose a folder"
+  },
   "tools.auswaehlen": {
     "de": "Auswählen …",
     "en": "Select …"

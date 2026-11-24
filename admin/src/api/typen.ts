@@ -71,6 +71,7 @@ export type FeldArt =
   | "zahl"
   | "schalter"
   | "url"
+  | "ordner"
   | { auswahl: { optionen: FeldOption[] } };
 
 /** Ein Konfigurationsfeld eines Eintrags. */
