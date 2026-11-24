@@ -3,8 +3,34 @@
 Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 
 ## Server
-- [ ] Keine Begrenzung der Versuche bei `POST /anmelden` (Codes laufen nach 60 min ab, 32⁸ Möglichkeiten).
-- [ ] Abgelaufene Codes werden nur beim Einlösen entfernt, kein Aufräumen im Hintergrund.
+- [ ] Die Verwaltung (Vue) nutzt noch den alten Admin-Token; die Server-Seite nimmt
+      seit Aufgabe 20 nur noch Sitzungen an. Aufgabe 21 stellt die Anmeldeseite um.
+      Bis dahin funktionieren auch die Bildschirmfotos der Verwaltung nicht mit
+      einem neuen Server.
+- [ ] Der Client nutzt noch den Einmal-Code-Weg; `/api/v1/anmeldearten` und
+      `/api/v1/auth/geraet/tausch` liegen bereit, Aufgabe 22 baut den Browser-Weg.
+- [ ] Discovery wird einmal geholt und nicht erneuert; die JWKS nur bei
+      unbekannter `kid` (höchstens 1×/min). Ein Endpunktwechsel bei Entra mitten
+      im Betrieb braucht einen Neustart.
+- [ ] Zeitlimit und Größenbegrenzung der Entra-Antworten sind eingebaut, aber
+      nicht gegen einen hängenden oder riesigen Nachbau getestet.
+- [ ] Die Drossel liegt im Arbeitsspeicher; ein Neustart vergisst die Versuche.
+      Bei mehreren Instanzen zählt jede für sich.
+- [ ] Die Prüfspur hat noch keine Seite und keine Suche; sie ist nur über
+      `GET /api/v1/admin/pruefspur` lesbar (Aufgabe 21).
+- [ ] Zu offene Rechte an `entra-secret` ergeben eine Warnung, keinen Abbruch.
+- [ ] Die Sitzungs-Id wird nur bei der Anmeldung neu vergeben, nicht laufend
+      rotiert.
+- [ ] `admin-setzen --oid` setzt voraus, dass der Benutzer schon einmal gesehen
+      wurde; die Liste der Benutzer hat keine Suche und keine Seiten.
+- [ ] Der Log-Test deckt den Ablauf Anmeldung/Prüfen/Fehlversuch ab; ein
+      Geheimnis in einer ganz anderen Meldung wäre nicht erfasst.
+- [ ] Ein Gerät, dessen altes Token einem anderen Benutzer gehört, bekommt ein
+      neues Gerät; das alte bleibt in der Verwaltung stehen.
+- [ ] Die Prüfspur der Kommandozeile nennt als Akteur `root-setzen`, nicht die
+      E-Mail des Aufrufers.
+- [ ] Abgelaufene Einmal-Codes und OIDC-Zustände werden beim nächsten Zugriff
+      aufgeräumt, nicht in einem eigenen Lauf.
 
 ## Client
 - [ ] Im Fenster-Modus reagiert der Client nicht auf SIGINT (Strg+C); nur SIGTERM beendet ihn.

@@ -12,6 +12,7 @@ use axum::Json;
 use futures_util::StreamExt;
 use quiver_domain::{Geraet, GeraetId, Soll};
 use quiver_protocol::{Anmelden, AnmeldenAntwort, Meldung, EREIGNIS_SOLL};
+use time::OffsetDateTime;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::fehler::{Ergebnis, FehlerAntwort, Koerper};
@@ -23,7 +24,55 @@ use crate::{db, soll_fuer};
 /// Gerät mit Einmal-Code einbinden; Antwort enthält das Geräte-Token (nur diesmal).
 pub(crate) async fn anmelden(
     State(zustand): State<Arc<Zustand>>,
-    Koerper(anfrage): Koerper<Anmelden>,
+    req: axum::extract::Request,
+) -> Ergebnis<Json<AnmeldenAntwort>> {
+    if zustand.oidc.is_some() {
+        return Err(FehlerAntwort::nicht_gefunden(
+            "dieser Server nutzt Entra; Einmal-Codes gibt es hier nicht (siehe /auth/geraet/start)",
+        ));
+    }
+    let ip = crate::sitzung::aufrufer(&req, &zustand);
+    let (_, rumpf) = req.into_parts();
+    let bytes = axum::body::to_bytes(rumpf, 64 * 1024)
+        .await
+        .map_err(|_| FehlerAntwort::ungueltig("Rumpf nicht lesbar"))?;
+    let anfrage: Anmelden = serde_json::from_slice(&bytes)
+        .map_err(|_| FehlerAntwort::ungueltig("Rumpf ist kein JSON mit code und name"))?;
+
+    let jetzt = zustand.uhr.jetzt();
+    let ip_schluessel = crate::drossel::ip_schluessel(ip);
+    let code_schluessel = format!(
+        "code:{}",
+        anfrage
+            .code
+            .trim()
+            .to_ascii_uppercase()
+            .replace(['-', ' '], "")
+    );
+    for schluessel in [&ip_schluessel, &code_schluessel] {
+        if let Some(sekunden) = zustand.drossel.wartezeit(schluessel, jetzt) {
+            return Err(FehlerAntwort::neu(
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                format!("zu viele Versuche; bitte {sekunden} Sekunden warten"),
+            ));
+        }
+    }
+
+    let ergebnis = anmelden_intern(&zustand, anfrage, jetzt).await;
+    for schluessel in [&ip_schluessel, &code_schluessel] {
+        if ergebnis.is_ok() {
+            zustand.drossel.erfolg(schluessel);
+        } else {
+            zustand.drossel.fehlschlag(schluessel, jetzt);
+        }
+    }
+    ergebnis
+}
+
+async fn anmelden_intern(
+    zustand: &Arc<Zustand>,
+    anfrage: Anmelden,
+    jetzt: OffsetDateTime,
 ) -> Ergebnis<Json<AnmeldenAntwort>> {
     let code = hilfen::code_normalisieren(&anfrage.code)
         .ok_or_else(|| FehlerAntwort::ungueltig("Code hat nicht die Form XXXX-XXXX"))?;
@@ -35,8 +84,8 @@ pub(crate) async fn anmelden(
     let hash = hilfen::hash(&token);
     let kennung = hilfen::geraet_id_erzeugen();
 
-    let antwort = db(&zustand, move |conn| {
-        let gruppen = match speicher::code_einloesen(conn, &code, hilfen::jetzt())? {
+    let antwort = db(zustand, move |conn| {
+        let gruppen = match speicher::code_einloesen(conn, &code, jetzt)? {
             speicher::CodeStand::Unbekannt => {
                 return Ok(Err(FehlerAntwort::ungueltig(
                     "Code unbekannt oder schon benutzt",
@@ -53,7 +102,14 @@ pub(crate) async fn anmelden(
             gruppen,
             gesperrt: false,
         };
-        speicher::lege_geraet_an(conn, &geraet, &hash)?;
+        speicher::lege_geraet_an(conn, &geraet, &hash, None, None, None)?;
+        speicher::pruefspur_schreiben(
+            conn,
+            jetzt,
+            "geraet",
+            "Einmal-Code",
+            &format!("Gerät {} eingebunden", geraet.id),
+        )?;
         Ok(Ok(AnmeldenAntwort { geraet, token }))
     })
     .await??;
@@ -94,21 +150,6 @@ pub(crate) async fn meldung(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Gibt es das Gerät noch, und ist es nicht gesperrt?
-async fn geraet_zugelassen(zustand: &Arc<Zustand>, id: &GeraetId) -> bool {
-    let kennung = id.clone();
-    match db(zustand, move |conn| {
-        speicher::hole_geraet(conn, kennung.als_str())
-    })
-    .await
-    {
-        Ok(Some(zeile)) => !zeile.geraet.gesperrt,
-        Ok(None) => false,
-        // Die Datenbank hakt: lieber offen lassen als grundlos trennen.
-        Err(_) => true,
-    }
-}
-
 /// Ereignis-Strom: sofort die aktuelle Revision, danach nur bei Änderung.
 pub(crate) async fn ereignisse(
     State(zustand): State<Arc<Zustand>>,
@@ -132,7 +173,7 @@ pub(crate) async fn ereignisse(
                 empfaenger.next().await.as_ref()?;
                 // Entfernt oder gesperrt: der Strom endet. Der Client verbindet
                 // neu, bekommt 401/403 und stoppt alle Tools.
-                if !geraet_zugelassen(&zustand, &id).await {
+                if !crate::auth::geraet_erlaubt(&zustand, &id).await {
                     tracing::info!("Gerät {id} entfernt oder gesperrt – Ereignis-Strom endet");
                     return None;
                 }

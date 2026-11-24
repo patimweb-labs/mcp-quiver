@@ -7,6 +7,9 @@
 
 Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
 
+- Der Weg ohne Azure bleibt vollständig: Gruppen liegen lokal auf dem Server,
+  Geräte binden sich mit Einmal-Codes ein. Aufgabe 20 ergänzt den zweiten Weg
+  über Entra ID; er ist optional und ändert den Code-Weg nicht.
 - Gruppen liegen lokal auf dem Server (Admin-Oberfläche), nicht in Entra ID.
 - Geräte binden sich mit einem Einmal-Code ein, den der Admin erzeugt (legt die Gruppen fest).
   Der Code gilt einmal – befristet (Minuten) oder ohne Ablauf, bis ein Gerät ihn einlöst.
@@ -15,7 +18,8 @@ Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
   läuft beim Start nicht an. Lehnt der Server das Gerät ab (401/403 – entfernt oder
   gesperrt), stoppt der Client alle Tools, verwirft das Geräte-Token und bittet ums
   Neu-Einbinden. Der Ereignis-Strom eines entfernten Geräts endet sofort.
-- Admin meldet sich mit einem Admin-Token an.
+- Die Verwaltung meldet sich mit einer Sitzung an (Root per E-Mail/Passwort oder
+  Entra mit Rolle `admin`); einen Admin-Token gibt es seit Aufgabe 20 nicht mehr.
 - Laufzeiten im MVP: `stdio` (eigene Binaries, `npx`, `uvx`, `docker`) und `remote`. WASM folgt.
 - **Abnahmekriterium:** Ein zugewiesenes MCP ist höchstens 5 s später beim Agenten nutzbar
   (Server meldet per SSE, Client gleicht ab und startet, Agenten bekommen `tools/list_changed`).
@@ -55,7 +59,7 @@ Das Datenmodell lässt Platz für `ausfuehrung = zentral` (später, eigenes ADR)
 ## 3. Ablauf
 
 ```
-1. Gerät einbinden   Client → Server: Entra-Login (User) + Geräteschlüssel
+1. Gerät einbinden   Client → Browser → Server: Entra-Login, Einmal-Code → Geräte-Token
 2. Soll berechnen    Server: Gruppen des Users → Sätze → Einträge + Werte
 3. Abgleich          Client: Soll vs. Ist → installieren / aktualisieren / entfernen
 4. Vervollständigen  Client fragt nur fehlende client-/geheim-Felder ab
@@ -140,16 +144,43 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
 1. **Agent → Client:** Der Client lauscht nur lokal. Jeder Agent bekommt beim
    Koppeln im Client-Fenster ein eigenes Token. So weiß der Client, welcher
    Agent fragt, und kann Tools pro Agent filtern.
-2. **Client → Server:** Entra-Login des Users (OAuth mit PKCE) plus ein
-   Geräteschlüssel (Ed25519), der beim Einbinden registriert wird. Geräte
-   lassen sich in der Admin-Oberfläche sperren.
-3. **Tool → Dienst:** Für Microsoft holt der Client Tokens für die Scopes des
+2. **Client → Server, mit Entra:** Der **Server** ist der einzige OIDC-Client
+   (eine Anwendung, ein Mandant, Authorization Code + PKCE, Client-Geheimnis
+   nur am Server). Der Client spricht nie mit Entra: er öffnet die Anmeldung
+   des Servers im Browser, bekommt über `127.0.0.1` einen Einmal-Code und
+   tauscht ihn mit seinem PKCE-Verifier gegen ein Geräte-Token. Identität ist
+   `(tid, oid)`; E-Mail und Name sind nur Anzeige. Gruppen kommen als
+   Objekt-Ids aus dem ID-Token und werden auf lokale Gruppen abgebildet.
+3. **Client → Server, ohne Entra:** Einmal-Code aus der Verwaltung. Beide Wege
+   enden in derselben Gerätebindung; Geräte lassen sich sperren.
+4. **Verwaltung:** Root (genau einer, E-Mail und Passwort, Argon2id) über die
+   Kommandozeile gesetzt; Entra-Benutzer mit Rolle `admin`. Sitzung als
+   HttpOnly-Cookie, 12 h absolut, 60 min ohne Nutzung. Ändernde Anfragen
+   brauchen `Origin` = Basis-URL **und** `X-Quiver: 1`; keine CORS-Freigabe.
+   Rechte werden bei jeder Anfrage frisch aus der Datenbank gelesen. Einen
+   Admin-Schlüssel gibt es nicht mehr.
+5. **Nachprüfen statt einmal glauben:** Das Refresh-Token jedes Benutzers liegt
+   verschlüsselt am Server (XChaCha20-Poly1305, Schlüssel `<daten>/schluessel`,
+   AAD `(tid, oid)`) und wird stündlich mit Streuung eingelöst, beim Verbinden
+   eines Geräts nach mehr als 60 Minuten und auf Knopf. Rotation wird sofort
+   gespeichert. `invalid_grant`/`interaction_required`/fehlende Zuweisung →
+   neu anmelden; Netz-/5xx-Fehler → letzter Stand, höchstens 24 h.
+6. **Tool → Dienst:** Für Microsoft holt der Client Tokens für die Scopes des
    Eintrags (`entra-delegiert`) mit dem Login des Users. Microsoft prüft die
    Rechte, nicht wir. Das Tool bekommt das Token pro Aufruf und speichert es
    nicht.
 
 **Festlegung:** Zugangsdaten werden nie als Umgebungsvariable oder Datei
-abgelegt, die ein Agent lesen könnte.
+abgelegt, die ein Agent lesen könnte. Fehler an ein Gerät tragen einen
+maschinenlesbaren `grund` (`gesperrt`, `neu_anmelden`, `kein_zugriff`);
+unbekannte Gründe gelten als `neu_anmelden`.
+
+*Preis:* Der Server ist nun auch Identity-Provider-Abhängigkeit: ohne Entra
+gilt der letzte Stand höchstens 24 h. Ein Gruppen-Überlauf im Token wird
+abgelehnt statt als „keine Gruppen“ gelesen. Die Anmeldeseite des Servers ist
+schmucklos (kein Inline-Skript, keine Inline-Stile), damit die CSP ohne
+Ausnahme gilt. Die Verwaltung muss ihre Anmeldung auf Sitzungen umstellen
+(Aufgabe 21).
 
 ## 8. Laufzeiten im Client
 
@@ -246,7 +277,8 @@ eigenen Werkzeuge landen nicht im Protokoll (keine Rückkopplung).
 ## 11. Offene Punkte
 
 1. Formate für eigene Tools: nur WASM, oder von Anfang an auch native Binaries?
-2. Admin-Rechte: Wer darf die Bibliothek pflegen? Eigene Entra-Gruppe oder App-Rolle?
+2. ~~Admin-Rechte: Wer darf die Bibliothek pflegen?~~ Entschieden in Aufgabe 20:
+   einzelne Entra-Benutzer mit Rolle `admin`, Root als Notzugang.
 3. Datenbank des Servers: SQLite im Volume (wie sprechwerk) oder Postgres?
 4. Soll der Client auch ohne Server nutzbar sein (nur lokale Einträge)?
 5. pi und Hermes: Schnittstellen der Plugins genau prüfen. pi 1.5 spricht MCP (`pi mcp`), für den MVP reicht das.

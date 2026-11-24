@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! `quiver-server`: liest die Umgebung, baut [`quiver_server::app`], bindet und
-//! fährt bei Strg+C sauber herunter.
+//! `quiver-server`: Unterbefehl oder Server. Liest die Umgebung, baut
+//! [`quiver_server::app_mit_hintergrund`], bindet und fährt bei Strg+C sauber
+//! herunter.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use quiver_server::{admin_token_ermitteln, app, Konfig};
+use quiver_server::{app_mit_hintergrund, benutzer, unterbefehl, Konfig};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -19,30 +20,45 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if unterbefehl::ist_unterbefehl(&args) {
+        return unterbefehl::ausfuehren(&args).inspect_err(|fehler| eprintln!("{fehler:#}"));
+    }
+    if !args.is_empty() {
+        anyhow::bail!(
+            "unbekannter Aufruf {:?}; bekannt sind: {}",
+            args,
+            unterbefehl::UNTERBEFEHLE.join(", ")
+        );
+    }
+
     let daten =
         PathBuf::from(std::env::var("QUIVER_DATEN").unwrap_or_else(|_| String::from("./daten")));
     let adresse: SocketAddr = std::env::var("QUIVER_ADRESSE")
         .unwrap_or_else(|_| String::from("0.0.0.0:8740"))
         .parse()
         .context("QUIVER_ADRESSE ist keine Adresse (Beispiel: 0.0.0.0:8740)")?;
-    let admin_dist = Some(
-        std::env::var("QUIVER_ADMIN_DIST")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("./admin/dist")),
-    );
+    let admin_dist = std::env::var("QUIVER_ADMIN_DIST")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./admin/dist"));
 
-    let (admin_token, neu) = admin_token_ermitteln(&daten)?;
-    if neu {
-        // Das ist die einzige Stelle, an der ein Token im Log landet.
-        tracing::warn!("Admin-Token erzeugt: {admin_token}");
+    // Der alte Admin-Schlüssel gilt nicht mehr; einmal warnen, wenn er noch
+    // in der Umgebung steht.
+    benutzer::admin_token_ignorieren();
+
+    let konfig = Konfig::aus_umgebung(daten)?.mit_admin_dist(Some(admin_dist));
+    tracing::info!("Basis-URL: {}", konfig.oeffentlich);
+    if let Some(entra) = &konfig.entra {
+        tracing::info!(
+            "Entra-Mandant {} (Authority {})",
+            entra.tenant,
+            entra.authority
+        );
+    } else {
+        tracing::warn!("kein Entra konfiguriert: Geräte nutzen Einmal-Codes");
     }
 
-    let router = app(Konfig {
-        daten,
-        admin_token,
-        admin_dist,
-    })
-    .await?;
+    let router = app_mit_hintergrund(konfig).await?;
 
     let listener = tokio::net::TcpListener::bind(adresse)
         .await
@@ -50,9 +66,12 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("quiver-server lauscht auf http://{adresse}");
     println!("quiver-server lauscht auf http://{adresse}");
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(herunterfahren())
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(herunterfahren())
+    .await?;
     Ok(())
 }
 

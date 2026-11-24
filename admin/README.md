@@ -27,8 +27,10 @@ npm run bilder     # Bildschirmfotos: Muster immer, Verwaltung mit Server
 ```
 
 Zum Ausprobieren im Betrieb: `cargo run -p quiver-server` im Wurzelverzeichnis,
-dann `http://127.0.0.1:8740` öffnen. Der Admin-Token steht in
-`daten/admin-token`.
+dann `http://127.0.0.1:8740` öffnen. Seit Aufgabe 20 gibt es keinen
+Admin-Token mehr: die Verwaltung meldet sich mit einer Sitzung an (Root per
+E-Mail/Passwort oder Entra mit Rolle `admin`). Die Anmeldeseite dieser
+Oberfläche wird in Aufgabe 21 darauf umgestellt.
 
 ## Aufbau
 
@@ -109,7 +111,7 @@ Stand gibt es sie nicht.
   Gegenstück erzeugt `QUIVER_BILDER=docs/bilder cargo test -p quiver-oberflaeche
   --test muster`.
 - `admin-{dark,light}-{bibliothek,geraete}.png` — dafür muss ein Server mit
-  Daten laufen und `admin/dist` gebaut sein (`npm run build`). Der Token kommt
-  aus `QUIVER_ADMIN_TOKEN` oder aus `daten/admin-token`; die Adresse aus
-  `QUIVER_BILD_BASIS` (Standard `http://127.0.0.1:8740`). Fehlt der Token,
-  bleiben diese Bilder unverändert.
+  Daten laufen und `admin/dist` gebaut sein (`npm run build`). Die Adresse
+  kommt aus `QUIVER_BILD_BASIS` (Standard `http://127.0.0.1:8740`). Die
+  Anmeldung über eine Sitzung folgt mit Aufgabe 21; bis dahin bleiben diese
+  Bilder unverändert.

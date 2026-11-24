@@ -8,6 +8,7 @@ use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use quiver_protocol::AnmeldeGrund;
 use serde::de::DeserializeOwned;
 
 /// Ein Fehler, wie ihn der Vertrag vorsieht: Status plus [`quiver_protocol::Fehler`].
@@ -15,6 +16,8 @@ use serde::de::DeserializeOwned;
 pub struct FehlerAntwort {
     pub status: StatusCode,
     pub text: String,
+    /// Maschinenlesbarer Grund bei Geräte-Antworten (Aufgabe 20).
+    pub grund: Option<AnmeldeGrund>,
 }
 
 impl FehlerAntwort {
@@ -22,6 +25,16 @@ impl FehlerAntwort {
         Self {
             status,
             text: text.into(),
+            grund: None,
+        }
+    }
+
+    /// Ein Fehler mit maschinenlesbarem Grund für das Gerät.
+    pub fn mit_grund(status: StatusCode, text: impl Into<String>, grund: AnmeldeGrund) -> Self {
+        Self {
+            status,
+            text: text.into(),
+            grund: Some(grund),
         }
     }
 
@@ -68,7 +81,10 @@ impl FehlerAntwort {
 
 impl IntoResponse for FehlerAntwort {
     fn into_response(self) -> Response {
-        let rumpf = Json(quiver_protocol::Fehler { fehler: self.text });
+        let rumpf = Json(quiver_protocol::Fehler {
+            fehler: self.text,
+            grund: self.grund,
+        });
         (self.status, rumpf).into_response()
     }
 }

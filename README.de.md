@@ -54,12 +54,59 @@ Vue und sieht genauso aus wie der Client.
 
 ```bash
 docker build -t mcp-quiver-server .
-docker run -d --name quiver -p 8740:8740 -v quiver-daten:/daten mcp-quiver-server
-docker exec quiver cat /daten/admin-token   # Admin-Token, beim ersten Start erzeugt
+docker run -d --name quiver -p 8740:8740 \
+  -e QUIVER_OEFFENTLICH=http://localhost:8740 \
+  -v quiver-daten:/daten mcp-quiver-server
+docker exec -it quiver quiver-server root-setzen admin@example.test
 ```
 
-Dann `http://localhost:8740` öffnen und mit dem Admin-Token anmelden. Ohne Docker-Hub-Login
-mit `--build-arg BASIS=public.ecr.aws/docker/library` bauen.
+`root-setzen` fragt das Passwort zweimal ab (12 bis 256 Zeichen). Danach
+`http://localhost:8740` öffnen und mit dieser E-Mail und dem Passwort anmelden.
+Einen Admin-Token gibt es nicht mehr; `QUIVER_ADMIN_TOKEN` wird ignoriert und
+`daten/admin-token` verschwindet, sobald ein Root-Benutzer gesetzt ist. Ohne
+Docker-Hub-Login mit `--build-arg BASIS=public.ecr.aws/docker/library` bauen.
+
+### Anmeldung über Entra ID (optional)
+
+Ohne Entra erzeugt die Verwaltung Einmal-Codes für Geräte. Mit Entra melden
+sich Geräte im Browser an, und die Gruppen kommen aus dem Token.
+
+1. In der eigenen Entra-Mandantschaft eine Anwendung registrieren (ein
+   Mandant). `<Basis-URL>/auth/callback` als Weiterleitungsadresse eintragen
+   (Web-Plattform), ein Client-Geheimnis anlegen und ID-Token einschalten.
+2. Die Anwendung soll die ihr zugewiesenen Gruppen als `groups`-Claim
+   ausgeben (nur Objekt-Ids, kein Verzeichnis-Leserecht). Sehr lange
+   Gruppenlisten werden bewusst abgelehnt; dann die Zuweisung verkleinern.
+3. Server starten mit `QUIVER_OEFFENTLICH=https://quiver.example.test`,
+   `QUIVER_ENTRA_TENANT=<Mandanten-GUID>`, `QUIVER_ENTRA_CLIENT_ID=<App-Id>`
+   und dem Geheimnis in `<Daten>/entra-secret` (oder
+   `QUIVER_ENTRA_SECRET_DATEI`). Rechte 0600; der Server warnt, wenn sie
+   offener sind.
+4. In der Verwaltung jede Entra-Gruppen-Id einer lokalen Gruppe zuordnen.
+   Wer keine zugeordnete Gruppe hat, bekommt keine Tools.
+5. Root ernennt Admins; ein Entra-Benutzer muss sich einmal angemeldet haben,
+   bevor `quiver-server admin-setzen --oid <Objekt-Id>` wirkt.
+
+Der Server prüft das Token jedes Benutzers stündlich (mit Streuung) und beim
+Verbinden eines Geräts nach mehr als einer Stunde nach. Ist Entra nicht
+erreichbar, gilt der letzte Stand höchstens 24 Stunden. Wird ein Benutzer
+gesperrt, ihm die Zuweisung entzogen oder das Token widerrufen, verlieren seine
+Geräte bei der nächsten Prüfung ihre Tools.
+
+### Server-Konfiguration
+
+| Variable | Bedeutung |
+| --- | --- |
+| `QUIVER_OEFFENTLICH` | Basis-URL (Pflicht; `https`, `http` nur auf Loopback) |
+| `QUIVER_ADRESSE` | Adresse zum Lauschen (Standard `0.0.0.0:8740`) |
+| `QUIVER_DATEN` | Datenordner (Standard `./daten`) |
+| `QUIVER_ADMIN_DIST` | Gebaute Verwaltung (Standard `./admin/dist`) |
+| `QUIVER_ENTRA_TENANT` | Mandanten-GUID (nie `common`/`organizations`) |
+| `QUIVER_ENTRA_CLIENT_ID` | Anwendungs-Id (Client-Id) |
+| `QUIVER_ENTRA_SECRET_DATEI` | Datei mit dem Client-Geheimnis (Standard `<Daten>/entra-secret`) |
+| `QUIVER_ENTRA_AUTHORITY` | Alternative Authority, nur Loopback (Tests) |
+| `QUIVER_PROXIES` | CIDR-Liste, von der `X-Forwarded-For` geglaubt wird |
+| `QUIVER_ALTGERAETE` | `erlaubt` (Standard) oder `gesperrt` für Geräte ohne Benutzer |
 
 ## Entwicklung
 

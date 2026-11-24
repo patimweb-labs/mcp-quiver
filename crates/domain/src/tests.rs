@@ -56,6 +56,7 @@ fn welt(saetze: Vec<Satz>) -> (Geraet, Vec<Gruppe>, Vec<Satz>, Vec<Eintrag>) {
         id: GruppeId::neu("team"),
         titel: "Team".into(),
         saetze: saetze.iter().map(|s| s.id.clone()).collect(),
+        entra: Vec::new(),
     };
     let geraet = Geraet {
         id: GeraetId::neu("g1"),

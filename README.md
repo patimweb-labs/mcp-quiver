@@ -52,12 +52,58 @@ and looks exactly like the client.
 
 ```bash
 docker build -t mcp-quiver-server .
-docker run -d --name quiver -p 8740:8740 -v quiver-daten:/daten mcp-quiver-server
-docker exec quiver cat /daten/admin-token   # admin token, created on first start
+docker run -d --name quiver -p 8740:8740 \
+  -e QUIVER_OEFFENTLICH=http://localhost:8740 \
+  -v quiver-daten:/daten mcp-quiver-server
+docker exec -it quiver quiver-server root-setzen admin@example.test
 ```
 
-Then open `http://localhost:8740` and sign in with the admin token. Without a Docker Hub
-login, build with `--build-arg BASIS=public.ecr.aws/docker/library`.
+`root-setzen` asks for the password twice (12 to 256 characters). Then open
+`http://localhost:8740` and sign in with that e-mail and password. There is no
+admin token any more; `QUIVER_ADMIN_TOKEN` is ignored and `daten/admin-token`
+is removed as soon as a root user exists. Without a Docker Hub login, build
+with `--build-arg BASIS=public.ecr.aws/docker/library`.
+
+### Sign-in with Entra ID (optional)
+
+Without Entra the server issues one-time device codes from the admin UI. With
+Entra, devices sign in through the browser and groups come from the token.
+
+1. Register an application in your Entra tenant (single tenant). Add
+   `<base URL>/auth/callback` as a redirect URI (web platform), create a client
+   secret, and turn on ID tokens.
+2. Make the app emit the groups assigned to the application (`groups` claim,
+   object ids only, no directory read permission). Very large group lists are
+   rejected on purpose; limit the assignment instead.
+3. Start the server with `QUIVER_OEFFENTLICH=https://quiver.example.test`,
+   `QUIVER_ENTRA_TENANT=<tenant GUID>`, `QUIVER_ENTRA_CLIENT_ID=<app id>` and
+   the client secret in `<data>/entra-secret` (or set
+   `QUIVER_ENTRA_SECRET_DATEI`). Permissions 0600; the server warns if they are
+   more open.
+4. In the admin UI map each Entra group id to a local group. Users without a
+   mapped group get no tools.
+5. Root can appoint admins; an Entra user must sign in once before
+   `quiver-server admin-setzen --oid <object id>` works.
+
+The server refreshes each user's token hourly (with jitter) and when a device
+connects after more than an hour. If Entra is unreachable, the last state stays
+valid for at most 24 hours. If a user is blocked, no longer assigned, or their
+token is revoked, their devices lose their tools on the next check.
+
+### Server configuration
+
+| Variable | Meaning |
+| --- | --- |
+| `QUIVER_OEFFENTLICH` | Base URL (required; `https`, or `http` only on loopback) |
+| `QUIVER_ADRESSE` | Listen address (default `0.0.0.0:8740`) |
+| `QUIVER_DATEN` | Data folder (default `./daten`) |
+| `QUIVER_ADMIN_DIST` | Built admin UI (default `./admin/dist`) |
+| `QUIVER_ENTRA_TENANT` | Tenant GUID (never `common`/`organizations`) |
+| `QUIVER_ENTRA_CLIENT_ID` | Application (client) id |
+| `QUIVER_ENTRA_SECRET_DATEI` | Client secret file (default `<data>/entra-secret`) |
+| `QUIVER_ENTRA_AUTHORITY` | Alternative authority, loopback only (tests) |
+| `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
+| `QUIVER_ALTGERAETE` | `erlaubt` (default) or `gesperrt` for devices without a user |
 
 ## Development
 

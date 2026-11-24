@@ -137,10 +137,148 @@ pub struct Ueberblick {
     pub server_version: String,
 }
 
+/// Warum ein Gerät nicht mehr darf (Aufgabe 20).
+///
+/// Steht maschinenlesbar in [`Fehler::grund`], damit der Client den richtigen
+/// Satz zeigen kann, statt den Text zu raten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AnmeldeGrund {
+    /// Der Benutzer oder das Gerät ist gesperrt.
+    Gesperrt,
+    /// Das Refresh-Token gilt nicht mehr; neu anmelden.
+    NeuAnmelden,
+    /// Dem Benutzer ist keine Gruppe zugeordnet.
+    KeinZugriff,
+}
+
+/// Rolle eines Benutzers. `Root` ist der Notzugang ohne Entra, genau einer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Rolle {
+    Root,
+    Admin,
+    Benutzer,
+}
+
+impl Rolle {
+    pub fn als_str(self) -> &'static str {
+        match self {
+            Rolle::Root => "root",
+            Rolle::Admin => "admin",
+            Rolle::Benutzer => "benutzer",
+        }
+    }
+
+    pub fn aus_str(wert: &str) -> Self {
+        match wert {
+            "root" => Rolle::Root,
+            "admin" => Rolle::Admin,
+            _ => Rolle::Benutzer,
+        }
+    }
+
+    /// Darf diese Rolle die Verwaltung benutzen?
+    pub fn darf_verwalten(self) -> bool {
+        matches!(self, Rolle::Root | Rolle::Admin)
+    }
+}
+
+/// Woher die Sitzung kommt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Anmeldeart {
+    Root,
+    Entra,
+}
+
+/// `GET /auth/ich`: wer ist angemeldet?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ich {
+    pub benutzer: BenutzerSicht,
+    pub art: Anmeldeart,
+}
+
+/// Ein Benutzer, wie ihn die Verwaltung sieht.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenutzerSicht {
+    pub oid: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub rolle: Rolle,
+    pub gesperrt: bool,
+    /// Entra-Objekt-Ids der Gruppen aus dem letzten ID-Token.
+    #[serde(default)]
+    pub entra: Vec<String>,
+    /// RFC 3339.
+    pub zuletzt: Option<String>,
+    /// `gueltig` oder `neu_anmelden`.
+    pub token_stand: String,
+    pub geraete: u32,
+}
+
+/// `PUT /admin/benutzer/{oid}`; fehlende Felder bleiben, wie sie sind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BenutzerAendern {
+    #[serde(default)]
+    pub rolle: Option<Rolle>,
+    #[serde(default)]
+    pub gesperrt: Option<bool>,
+    /// Nötig, wenn ein Admin sich selbst die Rolle entzieht.
+    #[serde(default)]
+    pub selbst_bestaetigt: bool,
+}
+
+/// Root-Anmeldung mit E-Mail und Passwort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootAnmelden {
+    pub email: String,
+    pub passwort: String,
+}
+
+/// Ein Eintrag der Prüfspur (ohne Geheimnisse).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruefspurEintrag {
+    pub zeit: String,
+    pub art: String,
+    pub akteur: String,
+    pub text: String,
+}
+
+/// Eine in Anmeldungen gesehene Entra-Gruppe; der Anzeigename kommt vom Admin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntraGruppe {
+    pub id: String,
+    pub anzeigename: Option<String>,
+    pub zuletzt: String,
+}
+
+/// `POST /auth/geraet/tausch`: Code plus PKCE-Verifier gegen ein Geräte-Token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeraeteTausch {
+    pub code: String,
+    pub verifier: String,
+    /// Dasselbe Gerät weiterführen, wenn es keinem oder demselben Benutzer gehört.
+    #[serde(default)]
+    pub altes_token: Option<String>,
+}
+
+/// `GET /anmeldearten`: welche Wege bietet dieser Server?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anmeldearten {
+    /// Entra ist eingerichtet (Browser-Anmeldung).
+    pub entra: bool,
+    /// Ein Root-Benutzer ist gesetzt (E-Mail und Passwort).
+    pub root: bool,
+}
+
 /// Fehlerantwort.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fehler {
     pub fehler: String,
+    /// Nur bei Geräte-Antworten gesetzt; ältere Clients ignorieren das Feld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grund: Option<AnmeldeGrund>,
 }
 
 #[cfg(test)]

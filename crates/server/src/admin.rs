@@ -247,6 +247,15 @@ pub(crate) async fn gruppe_setzen(
             gruppe.id
         )));
     }
+    let mut gruppe = gruppe;
+    for id in &mut gruppe.entra {
+        if !crate::config::ist_guid(id) {
+            return Err(FehlerAntwort::ungueltig(format!(
+                "Gruppe {id}: entra enthält keine Objekt-Id (GUID)"
+            )));
+        }
+        *id = id.to_ascii_lowercase();
+    }
     let zu_speichern = gruppe.clone();
     db(&zustand, move |conn| {
         speicher::setze(conn, speicher::GRUPPEN, &id, &zu_speichern)
@@ -313,13 +322,21 @@ pub(crate) async fn geraet_setzen(
                 "Gerät {kennung} gibt es nicht"
             ))));
         };
+        let manuell = aenderung.gruppen.clone();
+        let entra = match zeile.oid.as_deref() {
+            Some(oid) => speicher::benutzer_holen(conn, oid)?
+                .map(|benutzer| benutzer.entra)
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let wirksam = speicher::wirksame_gruppen(conn, &manuell, &entra)?;
         let geraet = Geraet {
             id: zeile.geraet.id,
             name: aenderung.name,
-            gruppen: aenderung.gruppen,
+            gruppen: wirksam,
             gesperrt: aenderung.gesperrt,
         };
-        speicher::aendere_geraet(conn, &geraet)?;
+        speicher::setze_manuell(conn, geraet.id.als_str(), &geraet, &manuell)?;
         let bestand = speicher::bestand(conn)?;
         let soll = soll_aus(&bestand, &geraet)?;
         Ok(Ok(GeraetStand {
@@ -361,6 +378,11 @@ pub(crate) async fn code_anlegen(
     State(zustand): State<Arc<Zustand>>,
     Koerper(anfrage): Koerper<CodeAnlegen>,
 ) -> Ergebnis<Json<Code>> {
+    if zustand.oidc.is_some() {
+        return Err(FehlerAntwort::nicht_gefunden(
+            "dieser Server nutzt Entra; Einmal-Codes gibt es hier nicht",
+        ));
+    }
     let gueltig_bis = if anfrage.unbegrenzt {
         None
     } else {

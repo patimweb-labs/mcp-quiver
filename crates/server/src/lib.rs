@@ -1,39 +1,48 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Server von mcp-quiver: Bibliothek, Zuweisung und Verteilung.
+//! Server von mcp-quiver: Bibliothek, Zuweisung, Verteilung, Anmeldung.
 //!
 //! Der Vertrag (Pfade, Rümpfe) steht in `quiver-protocol`, die Regeln (Soll
 //! berechnen, Widersprüche, Prioritäten) in `quiver-domain`. Hier steht nur,
 //! wie beides über HTTP und SQLite zusammenkommt.
 //!
+//! Seit Aufgabe 20 gibt es zwei Wege:
+//! - **Entra** (ADR 0002): der Server ist der einzige OIDC-Client, Geräte
+//!   bekommen nach der Bestätigung im Browser einen Einmal-Code.
+//! - **Einmal-Codes** ohne Entra (MVP): Admin erzeugt Codes in der Verwaltung.
+//!
+//! Die Verwaltung meldet sich mit einer Sitzung an (Root per Passwort oder ein
+//! Entra-Benutzer mit Rolle `admin`). Einen Admin-Schlüssel gibt es nicht mehr.
+//!
 //! ```no_run
 //! # async fn beispiel() -> anyhow::Result<()> {
 //! use quiver_server::{app, Konfig};
-//! use std::path::PathBuf;
 //!
-//! let router = app(Konfig {
-//!     daten: PathBuf::from("./daten"),
-//!     admin_token: "geheim".into(),
-//!     admin_dist: None,
-//! }).await?;
+//! let router = app(Konfig::neu("./daten")).await?;
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! `main.rs` liest die Umgebung (`QUIVER_ADRESSE`, `QUIVER_DATEN`,
-//! `QUIVER_ADMIN_TOKEN`, `QUIVER_ADMIN_DIST`), bindet und fährt bei Strg+C
-//! sauber herunter.
 
 mod admin;
+mod anmeldung;
 mod auth;
+pub mod benutzer;
+mod config;
+mod drossel;
 mod fehler;
 mod geraet;
 mod hilfen;
+mod kopfzeilen;
+mod krypto;
+mod oidc;
+mod refresh;
+mod sitzung;
 mod speicher;
+pub mod unterbefehl;
 mod zustand;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use axum::middleware;
@@ -46,25 +55,38 @@ use tower_http::trace::TraceLayer;
 
 use zustand::Zustand;
 
+pub use config::{EntraKonfig, Konfig, Uhr};
 pub use fehler::{Ergebnis, FehlerAntwort};
-
-/// Woher der Server seine Daten nimmt (aus der Umgebung, siehe `main.rs`).
-#[derive(Debug, Clone)]
-pub struct Konfig {
-    /// Ordner für `quiver.db` und `admin-token`.
-    pub daten: PathBuf,
-    /// Admin-Token (Vergleich in konstanter Zeit).
-    pub admin_token: String,
-    /// Gebaute Admin-Oberfläche; fehlt sie, gibt es nur die API.
-    pub admin_dist: Option<PathBuf>,
-}
+pub use krypto::Schluessel;
 
 /// Alles aufbauen, was der Server braucht; der Aufrufer bindet selbst.
+///
+/// Startet **keine** Hintergrundläufe – das macht [`app_mit_hintergrund`],
+/// damit Tests nicht nebenbei Netzaufrufe auslösen.
 pub async fn app(konfig: Konfig) -> anyhow::Result<Router> {
+    let (router, _) = bauen(konfig).await?;
+    Ok(router)
+}
+
+/// Wie [`app`], plus stündliche Nachprüfung und Beobachtung der Datenbank
+/// (`PRAGMA data_version`, höchstens 2 s Verzug).
+pub async fn app_mit_hintergrund(konfig: Konfig) -> anyhow::Result<Router> {
+    let (router, zustand) = bauen(konfig).await?;
+    tokio::spawn(refresh::hintergrund(zustand.clone()));
+    tokio::spawn(beobachte_datenbank(zustand));
+    Ok(router)
+}
+
+async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
     std::fs::create_dir_all(&konfig.daten)?;
     let conn = speicher::oeffnen(&konfig.daten.join("quiver.db"))?;
-    let zustand = Arc::new(Zustand::neu(conn, konfig.admin_token));
-    let dist = konfig.admin_dist.filter(|pfad| {
+    let schluessel = Schluessel::laden(&konfig.daten)?;
+    let oidc = match konfig.entra.clone() {
+        Some(entra) => Some(Arc::new(oidc::Oidc::neu(entra)?)),
+        None => None,
+    };
+    let ist_https = konfig.ist_https();
+    let dist = konfig.admin_dist.clone().filter(|pfad| {
         let da = pfad.is_dir();
         if !da {
             tracing::warn!(
@@ -74,47 +96,27 @@ pub async fn app(konfig: Konfig) -> anyhow::Result<Router> {
         }
         da
     });
-    Ok(router(zustand, dist))
-}
-
-/// Der Admin-Token: aus der Umgebung, sonst aus `<daten>/admin-token`, sonst neu.
-///
-/// Das zweite Feld sagt, ob gerade einer erzeugt wurde – nur dann darf er
-/// (einmal) ins Log.
-pub fn admin_token_ermitteln(daten: &Path) -> anyhow::Result<(String, bool)> {
-    if let Ok(token) = std::env::var("QUIVER_ADMIN_TOKEN") {
-        let token = token.trim().to_string();
-        if !token.is_empty() {
-            return Ok((token, false));
-        }
-    }
-    std::fs::create_dir_all(daten)?;
-    let pfad = daten.join("admin-token");
-    if let Ok(text) = std::fs::read_to_string(&pfad) {
-        let token = text.trim().to_string();
-        if !token.is_empty() {
-            return Ok((token, false));
-        }
-    }
-    let token = hilfen::token_erzeugen();
-    std::fs::write(&pfad, &token)?;
-    nur_eigentuemer_darf_lesen(&pfad)?;
-    Ok((token, true))
-}
-
-#[cfg(unix)]
-fn nur_eigentuemer_darf_lesen(pfad: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(pfad, std::fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn nur_eigentuemer_darf_lesen(_pfad: &Path) -> anyhow::Result<()> {
-    Ok(())
+    let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc));
+    let router = router(zustand.clone(), dist).layer(middleware::from_fn(move |req, next| {
+        kopfzeilen::sicherheits_kopfzeilen(ist_https, req, next)
+    }));
+    Ok((router, zustand))
 }
 
 fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
+    // Der Browser-Weg der Anmeldung (kein /api: der Browser folgt den
+    // Weiterleitungen von Entra).
+    let browser = Router::new()
+        .route("/auth/geraet/start", get(anmeldung::geraet_start))
+        .route("/auth/admin/start", get(anmeldung::admin_start))
+        .route("/auth/callback", get(anmeldung::callback))
+        .route(
+            "/auth/geraet/bestaetigen",
+            post(anmeldung::geraet_bestaetigen),
+        )
+        .route("/auth/geraet/abbrechen", post(anmeldung::geraet_abbrechen))
+        .method_not_allowed_fallback(methode_falsch);
+
     let geraete = Router::new()
         .route("/soll", get(geraet::soll))
         .route("/ereignisse", get(geraet::ereignisse))
@@ -123,6 +125,15 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         .route_layer(middleware::from_fn_with_state(
             zustand.clone(),
             auth::geraete_wache,
+        ));
+
+    let angemeldet = Router::new()
+        .route("/v1/auth/ich", get(benutzer::ich))
+        .route("/v1/auth/abmelden", post(benutzer::abmelden))
+        .method_not_allowed_fallback(methode_falsch)
+        .route_layer(middleware::from_fn_with_state(
+            zustand.clone(),
+            sitzung::angemeldet_wache,
         ));
 
     let verwaltung = Router::new()
@@ -155,22 +166,41 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         )
         .route("/codes", post(admin::code_anlegen))
         .route("/ueberblick", get(admin::ueberblick))
+        .route("/benutzer", get(benutzer::benutzer_liste))
+        .route(
+            "/benutzer/{oid}",
+            put(benutzer::benutzer_setzen).delete(benutzer::benutzer_loeschen),
+        )
+        .route("/benutzer/{oid}/pruefen", post(benutzer::benutzer_pruefen))
+        .route("/entra-gruppen", get(benutzer::entra_gruppen))
+        .route("/entra-gruppen/{id}", put(benutzer::entra_gruppe_setzen))
+        .route("/pruefspur", get(benutzer::pruefspur))
         .method_not_allowed_fallback(methode_falsch)
         .route_layer(middleware::from_fn_with_state(
             zustand.clone(),
-            auth::admin_wache,
+            sitzung::verwaltung_wache,
         ));
 
-    let api = Router::new()
+    let offen = Router::new()
         .route("/v1/anmelden", post(geraet::anmelden))
+        .route("/v1/auth/root", post(benutzer::root_anmelden))
+        .route("/v1/auth/geraet/tausch", post(anmeldung::geraet_tausch))
+        .route("/v1/anmeldearten", get(benutzer::anmeldearten));
+
+    let api = Router::new()
+        .merge(offen)
+        .merge(angemeldet)
         .nest("/v1/geraet", geraete)
         .nest("/v1/admin", verwaltung)
         .fallback(api_unbekannt)
-        .method_not_allowed_fallback(methode_falsch);
+        .method_not_allowed_fallback(methode_falsch)
+        // Nur die API wird protokolliert: der Browser-Weg trägt Einmal-Codes
+        // und `state` in der Abfrage, die gehören nicht ins Log.
+        .layer(TraceLayer::new_for_http());
 
     let app = Router::new()
+        .merge(browser)
         .nest("/api", api)
-        .layer(TraceLayer::new_for_http())
         .with_state(zustand);
 
     match dist {
@@ -239,4 +269,32 @@ pub(crate) async fn soll_fuer(zustand: &Arc<Zustand>, id: &GeraetId) -> Ergebnis
         soll_aus(&bestand, &zeile.geraet)
     })
     .await
+}
+
+/// Läuft, wenn Unterbefehle die Datenbank geändert haben: `PRAGMA data_version`
+/// ändert sich bei Schreibzugriffen anderer Verbindungen. Abfrage alle 500 ms,
+/// damit die Geräte in höchstens zwei Sekunden angestoßen werden.
+async fn beobachte_datenbank(zustand: Arc<Zustand>) {
+    let pfad = zustand.konfig.daten.join("quiver.db");
+    let conn = match Connection::open(&pfad) {
+        Ok(conn) => conn,
+        Err(fehler) => {
+            tracing::warn!("Datenbank {} nicht beobachtbar: {fehler}", pfad.display());
+            return;
+        }
+    };
+    let mut letzte = speicher::data_version(&conn).unwrap_or(0);
+    let mut takt = tokio::time::interval(std::time::Duration::from_millis(500));
+    takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        takt.tick().await;
+        match speicher::data_version(&conn) {
+            Ok(neu) if neu != letzte => {
+                letzte = neu;
+                zustand.melde_aenderung();
+            }
+            Ok(_) => {}
+            Err(fehler) => tracing::warn!("data_version nicht lesbar: {fehler}"),
+        }
+    }
 }

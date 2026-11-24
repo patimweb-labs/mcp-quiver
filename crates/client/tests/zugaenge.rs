@@ -32,7 +32,9 @@ use quiver_protocol::EintragZustand;
 use quiver_server::{app, Konfig};
 use serde_json::{json, Value};
 
-const ADMIN: &str = "admin-token-fuer-den-zugaenge-test";
+#[path = "gemeinsam.rs"]
+mod gemeinsam;
+
 /// Wie lange auf einen Zustand gewartet wird.
 const FRIST: Duration = Duration::from_secs(10);
 
@@ -42,6 +44,8 @@ struct Pruefung {
     ordner: PathBuf,
     /// `http://127.0.0.1:<port>`
     basis: String,
+    /// Sitzungscookie der Verwaltung.
+    cookie: String,
     kern: Kern,
     http: reqwest::Client,
     /// Wohin der Demo-Server jede Zeile schreibt („gestartet …").
@@ -71,20 +75,19 @@ impl Pruefung {
         let daten = ordner.join("server");
         std::fs::create_dir_all(&daten).expect("Ordner");
 
-        let router = app(Konfig {
-            daten,
-            admin_token: ADMIN.to_string(),
-            admin_dist: None,
-        })
-        .await
-        .expect("App baut");
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("Port frei");
         let adresse = listener.local_addr().expect("Adresse");
+        let basis = format!("http://{adresse}");
+        let http = reqwest::Client::new();
+        let mut konfig = Konfig::neu(&daten);
+        konfig.oeffentlich = basis.clone();
+        let router = app(konfig).await.expect("App baut");
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
+        let cookie = gemeinsam::sitzung(&http, &basis, &daten).await;
 
         let tresor = Arc::new(SpeicherTresor::neu());
         let kern = Kern::starten(KernKonfig {
@@ -100,9 +103,10 @@ impl Pruefung {
             zugaenge_datei: ordner.join("zugaenge.json"),
             ablage: ordner.join("anmeldung.stand"),
             ordner,
-            basis: format!("http://{adresse}"),
+            basis,
+            cookie,
             kern,
-            http: reqwest::Client::new(),
+            http,
             tresor,
         }
     }
@@ -114,7 +118,9 @@ impl Pruefung {
                 methode.parse().expect("Methode"),
                 format!("{}/api/v1{pfad}", self.basis),
             )
-            .bearer_auth(ADMIN)
+            .header("cookie", &self.cookie)
+            .header("origin", &self.basis)
+            .header("x-quiver", "1")
             .header("content-type", "application/json");
         if let Some(rumpf) = rumpf {
             anfrage = anfrage.body(serde_json::to_vec(&rumpf).expect("JSON"));
@@ -196,6 +202,7 @@ impl Pruefung {
                 id: GruppeId::neu("team"),
                 titel: "Team".into(),
                 saetze: vec![SatzId::neu("basis")],
+                entra: Vec::new(),
             },
         )
         .await;

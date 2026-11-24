@@ -316,6 +316,10 @@ pub struct Gruppe {
     pub titel: String,
     #[serde(default)]
     pub saetze: Vec<SatzId>,
+    /// Entra-Objekt-Ids, die auf diese Gruppe abgebildet werden (Aufgabe 20).
+    /// Namen sind änderbar und deshalb keine Grundlage für Rechte.
+    #[serde(default)]
+    pub entra: Vec<String>,
 }
 
 /// Ein eingebundenes Gerät.

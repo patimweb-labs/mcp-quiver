@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, Request, StatusCode};
 use axum::response::Response;
 use axum::Router;
 use http_body_util::BodyExt;
@@ -21,18 +21,27 @@ use quiver_protocol::{
     Anmelden, AnmeldenAntwort, Code, CodeAnlegen, EintragZustand, GeraetAendern, GeraetStand,
     Meldung, Ueberblick,
 };
-use quiver_server::{app, Konfig};
+use quiver_server::{app, benutzer, Konfig};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const ADMIN: &str = "admin-token-fuer-den-test";
+const ROOT_EMAIL: &str = "root@example.test";
+const ROOT_PASSWORT: &str = "ein-sehr-langes-testpasswort";
+const OEFFENTLICH: &str = "http://127.0.0.1:8740";
+/// Ein Token, das zu keinem Gerät gehört.
+const FALSCH: &str = "kein-gueltiges-token";
+
+/// Argon2 läuft höchstens zweimal gleichzeitig; Tests melden sich nacheinander an.
+static ROOT_SPERRE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // ---------------------------------------------------------------- Gerüst
 
 struct Pruefung {
     ordner: PathBuf,
     router: Router,
+    /// Sitzungscookie der Verwaltung (nach der Root-Anmeldung).
+    cookie: String,
 }
 
 impl Pruefung {
@@ -47,14 +56,55 @@ impl Pruefung {
             "quiver-server-test-{}-{nummer}-{stempel}",
             std::process::id()
         ));
-        let router = app(Konfig {
-            daten: ordner.clone(),
-            admin_token: ADMIN.to_string(),
-            admin_dist: None,
-        })
-        .await
-        .expect("App baut");
-        Self { ordner, router }
+        benutzer::root_setzen_auf_platte(&ordner, ROOT_EMAIL, ROOT_PASSWORT).expect("Root setzen");
+        let router = app(Konfig::neu(&ordner)).await.expect("App baut");
+        let mut p = Self {
+            ordner,
+            router,
+            cookie: String::new(),
+        };
+        p.cookie = p.root_anmelden().await;
+        p
+    }
+
+    /// Root-Anmeldung über die API; liefert das Sitzungscookie.
+    async fn root_anmelden(&self) -> String {
+        let _wache = ROOT_SPERRE.lock().await;
+        let anfrage = Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/root")
+            .header("content-type", "application/json")
+            .header("origin", OEFFENTLICH)
+            .header("x-quiver", "1")
+            .body(Body::from(
+                serde_json::to_vec(&json!({
+                    "email": ROOT_EMAIL,
+                    "passwort": ROOT_PASSWORT
+                }))
+                .expect("JSON"),
+            ))
+            .expect("Anfrage");
+        let antwort = self.router.clone().oneshot(anfrage).await.expect("Antwort");
+        if antwort.status() != StatusCode::OK {
+            let status = antwort.status();
+            let text = antwort
+                .into_body()
+                .collect()
+                .await
+                .expect("Rumpf")
+                .to_bytes();
+            panic!(
+                "Root-Anmeldung: {status} {}",
+                String::from_utf8_lossy(&text)
+            );
+        }
+        let set = antwort
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("Sitzungscookie")
+            .to_str()
+            .expect("Cookie ist Text");
+        set.split(';').next().expect("Name=Wert").to_string()
     }
 
     async fn anfrage(
@@ -84,9 +134,29 @@ impl Pruefung {
         auspacken(antwort).await
     }
 
-    /// Admin-Aufruf mit JSON-Rumpf.
+    /// Verwaltungs-Aufruf mit Sitzung, Origin und `X-Quiver: 1`.
     async fn admin(&self, methode: &str, pfad: &str, rumpf: Option<Value>) -> (StatusCode, Value) {
-        self.anfrage(methode, pfad, Some(ADMIN), rumpf).await
+        let koerper = match rumpf {
+            Some(wert) => Body::from(serde_json::to_vec(&wert).expect("JSON")),
+            None => Body::empty(),
+        };
+        let antwort = self
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(methode)
+                    .uri(format!("/api/v1{pfad}"))
+                    .header("content-type", "application/json")
+                    .header("cookie", &self.cookie)
+                    .header("origin", OEFFENTLICH)
+                    .header("x-quiver", "1")
+                    .body(koerper)
+                    .expect("Anfrage"),
+            )
+            .await
+            .expect("Antwort");
+        auspacken(antwort).await
     }
 
     async fn put_eintrag(&self, eintrag: &Eintrag) -> (StatusCode, Value) {
@@ -189,13 +259,9 @@ impl Pruefung {
             "<!doctype html><title>quiver</title>",
         )
         .expect("index.html");
-        p.router = app(Konfig {
-            daten: p.ordner.clone(),
-            admin_token: ADMIN.to_string(),
-            admin_dist: Some(dist),
-        })
-        .await
-        .expect("App baut");
+        p.router = app(Konfig::neu(&p.ordner).mit_admin_dist(Some(dist)))
+            .await
+            .expect("App baut");
         p
     }
 
@@ -290,6 +356,7 @@ fn gruppe(id: &str, saetze: &[&str]) -> Gruppe {
         id: GruppeId::neu(id),
         titel: format!("Gruppe {id}"),
         saetze: saetze.iter().map(|s| SatzId::neu(*s)).collect(),
+        entra: Vec::new(),
     }
 }
 
@@ -315,11 +382,11 @@ async fn ohne_token_kein_zugriff() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // … und der Admin-Token öffnet keinen Geräte-Pfad.
-    let (status, _) = p.anfrage("GET", "/geraet/soll", Some(ADMIN), None).await;
+    // … und ein fremdes Bearer-Token öffnet keinen Geräte-Pfad.
+    let (status, _) = p.anfrage("GET", "/geraet/soll", Some(FALSCH), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // Der Admin-Token selbst kommt durch.
+    // Die Sitzung kommt durch.
     let (status, _) = p.admin("GET", "/admin/ueberblick", None).await;
     assert_eq!(status, StatusCode::OK);
 }
