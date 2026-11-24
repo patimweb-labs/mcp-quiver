@@ -253,6 +253,7 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
             verbunden: true,
         }],
         endpunkt: ENDPUNKT.to_string(),
+        abgelehnt: false,
     }
 }
 

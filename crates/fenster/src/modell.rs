@@ -188,6 +188,10 @@ impl Sicht {
         }
         self.seite =
             logik::seite_nach_wechsel(&self.modell.verbindung, &neu.verbindung, self.seite);
+        // Der Server hat das Gerät abgelehnt: das sagt der Hinweis oben.
+        if neu.abgelehnt && !self.modell.abgelehnt {
+            self.hinweis = Some(crate::texte::t(self.sprache, "verbindung.abgelehnt"));
+        }
         // Was der Server nicht mehr kennt, hat keinen Dialog mehr verdient.
         let verschwunden = match &self.dialog {
             Dialog::Werte { eintrag, .. } => !neu.eintraege.iter().any(|e| &e.id == eintrag),
@@ -309,6 +313,7 @@ mod tests {
             eintraege: Vec::new(),
             agenten: Vec::new(),
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
+            abgelehnt: false,
         }
     }
 
@@ -321,6 +326,21 @@ mod tests {
             let text = crate::texte::t(Sprache::De, seite.text_schluessel());
             assert_ne!(text, seite.text_schluessel(), "{} ohne Text", seite.name());
         }
+    }
+
+    #[test]
+    fn ein_abgelehntes_geraet_bekommt_einen_hinweis() {
+        let mut sicht = Sicht::neu(leeres_modell(), &Einstellungen::default());
+        let mut neu = leeres_modell();
+        neu.abgelehnt = true;
+        sicht.modell_setzen(neu.clone());
+        let hinweis = sicht.hinweis.clone().expect("Hinweis");
+        assert!(hinweis.contains("neuen Code"), "{hinweis}");
+        // Bleibt es abgelehnt, kommt der Hinweis nicht ständig neu.
+        sicht.hinweis = None;
+        neu.endpunkt = "http://127.0.0.1:9/mcp".into();
+        sicht.modell_setzen(neu);
+        assert_eq!(sicht.hinweis, None);
     }
 
     #[test]

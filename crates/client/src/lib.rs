@@ -119,7 +119,7 @@ pub enum Verbindung {
     Verbindet { server: String },
     /// Verbunden; `geraet` ist der Anzeigename des eigenen Geräts.
     Verbunden { server: String, geraet: String },
-    /// Verbindung weg – der letzte Soll-Zustand läuft weiter.
+    /// Verbindung weg – was nach der Anmeldung lief, läuft weiter.
     Getrennt { server: String, fehler: String },
 }
 
@@ -191,6 +191,10 @@ pub struct Modell {
     pub agenten: Vec<AgentSicht>,
     /// `http://127.0.0.1:8741/mcp`
     pub endpunkt: String,
+    /// Der Server hat dieses Gerät abgelehnt (entfernt oder Token ungültig):
+    /// alle Tools sind gestoppt, das Gerät muss neu eingebunden werden.
+    #[serde(default)]
+    pub abgelehnt: bool,
 }
 
 /// Der Stand eines Eintrags, ohne Verbindung (der Teil, der ins Modell geht).
@@ -230,6 +234,8 @@ struct Sitzung {
 
 /// Alles, was der Kern im Speicher hält.
 struct Stand {
+    /// Siehe [`Modell::abgelehnt`].
+    abgelehnt: bool,
     server_url: Option<String>,
     geraet: Option<Geraet>,
     token: Option<String>,
@@ -284,6 +290,7 @@ impl Stand {
                 })
                 .collect(),
             endpunkt: self.endpunkt.clone(),
+            abgelehnt: self.abgelehnt,
         }
     }
 
@@ -530,6 +537,38 @@ impl Innen {
         if geaendert {
             self.modell_schicken();
         }
+    }
+
+    /// Das Gerät ausbinden: alle Tools stoppen, Token löschen, Soll leeren.
+    ///
+    /// `abgelehnt` heißt: der Server hat das Gerät nicht mehr angenommen
+    /// (entfernt oder Token ungültig) – das Fenster sagt dann „neu einbinden“.
+    /// Die Server-Adresse bleibt in dem Fall stehen, damit sie nicht neu
+    /// getippt werden muss.
+    pub(crate) async fn ausbinden(self: &Arc<Self>, abgelehnt: bool) -> anyhow::Result<()> {
+        let ids: Vec<EintragId> = self.stand().laeufer.keys().cloned().collect();
+        for id in ids {
+            stoppe_in(self, &id);
+        }
+        let geloescht = self.konfig.tresor.loeschen("geraet-token");
+        {
+            let mut stand = self.stand();
+            stand.abgelehnt = abgelehnt;
+            if !abgelehnt {
+                stand.server_url = None;
+            }
+            stand.geraet = None;
+            stand.token = None;
+            stand.soll = Soll::neu(Vec::new());
+            stand.anmeldung.clear();
+            stand.einrichtung.clear();
+            stand.einrichtung_laufend.clear();
+            stand.verbindung = Verbindung::NichtEingebunden;
+        }
+        self.speichern();
+        self.modell_schicken();
+        self.liste_geaendert().await;
+        geloescht
     }
 
     pub(crate) fn verbunden_setzen(&self, server: &str) {
@@ -1276,6 +1315,7 @@ impl Kern {
             _ => Verbindung::NichtEingebunden,
         };
         let stand = Stand {
+            abgelehnt: false,
             server_url: gespeichert.server_url.clone(),
             geraet,
             token,
@@ -1317,16 +1357,12 @@ impl Kern {
             generation: AtomicU64::new(0),
         });
 
-        // Geheimnisse und den letzten Soll-Zustand wieder aufnehmen. Ist ein
-        // Server eingebunden, läuft der gespeicherte Stand sofort an – auch
-        // wenn der Server gerade nicht erreichbar ist (offline).
+        // Geheimnisse wieder aufnehmen. Der gespeicherte Soll-Zustand läuft
+        // **nicht** an: kein Tool startet, bevor der Server das Gerät in diesem
+        // Lauf angenommen hat (erster erfolgreicher Abgleich).
         let soll = innen.stand().soll.clone();
         innen.geheim_laden(&soll);
         innen.modell_schicken();
-        let (server, token) = innen.zugang();
-        if server.is_some() && token.is_some() && !soll.eintraege.is_empty() {
-            anwenden(&innen, soll).await;
-        }
 
         let router = endpunkt::router(innen.clone());
         let ende = innen.ende.clone();
@@ -1371,6 +1407,7 @@ impl Kern {
             .schreiben("geraet-token", &antwort.token)?;
         {
             let mut stand = self.innen.stand();
+            stand.abgelehnt = false;
             stand.server_url = Some(server.clone());
             stand.geraet = Some(antwort.geraet);
             stand.token = Some(antwort.token);
@@ -1386,26 +1423,7 @@ impl Kern {
 
     /// Gerät abmelden: Token weg, nichts läuft mehr.
     pub async fn abmelden(&self) -> anyhow::Result<()> {
-        let ids: Vec<EintragId> = self.innen.stand().laeufer.keys().cloned().collect();
-        for id in ids {
-            stoppe_in(&self.innen, &id);
-        }
-        self.innen.konfig.tresor.loeschen("geraet-token")?;
-        {
-            let mut stand = self.innen.stand();
-            stand.server_url = None;
-            stand.geraet = None;
-            stand.token = None;
-            stand.soll = Soll::neu(Vec::new());
-            stand.anmeldung.clear();
-            stand.einrichtung.clear();
-            stand.einrichtung_laufend.clear();
-            stand.verbindung = Verbindung::NichtEingebunden;
-        }
-        self.innen.speichern();
-        self.innen.modell_schicken();
-        self.innen.liste_geaendert().await;
-        Ok(())
+        self.innen.ausbinden(false).await
     }
 
     /// Die Anmeldung eines Eintrags im Fenster auslösen (Aufgabe 10).

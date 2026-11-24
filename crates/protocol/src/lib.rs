@@ -56,14 +56,18 @@ pub struct CodeAnlegen {
     /// Gültigkeit in Minuten (Standard 60).
     #[serde(default)]
     pub minuten: Option<u32>,
+    /// Ohne Ablauf: der Code gilt, bis ein Gerät ihn einlöst (einmalig
+    /// bleibt er trotzdem). `minuten` wird dann nicht beachtet.
+    #[serde(default)]
+    pub unbegrenzt: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Code {
     /// Kurz und abtippbar, z. B. `K7QM-3XPA`.
     pub code: String,
-    /// RFC 3339.
-    pub gueltig_bis: String,
+    /// RFC 3339; `None` heißt: ohne Ablauf.
+    pub gueltig_bis: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

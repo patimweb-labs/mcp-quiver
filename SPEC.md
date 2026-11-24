@@ -9,6 +9,12 @@ Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
 
 - Gruppen liegen lokal auf dem Server (Admin-Oberfläche), nicht in Entra ID.
 - Geräte binden sich mit einem Einmal-Code ein, den der Admin erzeugt (legt die Gruppen fest).
+  Der Code gilt einmal – befristet (Minuten) oder ohne Ablauf, bis ein Gerät ihn einlöst.
+- **Ohne Anmeldung kein Tool:** Der Client startet Tools erst, nachdem der Server das Gerät
+  in diesem Lauf angenommen hat (erster erfolgreicher Abgleich); der gespeicherte Stand
+  läuft beim Start nicht an. Lehnt der Server das Gerät ab (401/403 – entfernt oder
+  gesperrt), stoppt der Client alle Tools, verwirft das Geräte-Token und bittet ums
+  Neu-Einbinden. Der Ereignis-Strom eines entfernten Geräts endet sofort.
 - Admin meldet sich mit einem Admin-Token an.
 - Laufzeiten im MVP: `stdio` (eigene Binaries, `npx`, `uvx`, `docker`) und `remote`. WASM folgt.
 - **Abnahmekriterium:** Ein zugewiesenes MCP ist höchstens 5 s später beim Agenten nutzbar
@@ -42,8 +48,8 @@ Agenten (pi, Hermes, später weitere) auf macOS, Windows und Linux.
 
 **Festlegung:** Der Server ist **nur** Bibliothek und Steuerung. Er führt
 keine Tools aus.
-*Begründung:* einfach, keine Zugangsdaten der User auf dem Server, offline
-nutzbar. *Preis:* Systeme, die das Gerät nicht erreicht, sind nicht anbindbar.
+*Begründung:* einfach, keine Zugangsdaten der User auf dem Server; fällt der
+Server **nach** der Anmeldung aus, laufen die Tools weiter. *Preis:* Systeme, die das Gerät nicht erreicht, sind nicht anbindbar.
 Das Datenmodell lässt Platz für `ausfuehrung = zentral` (später, eigenes ADR).
 
 ## 3. Ablauf

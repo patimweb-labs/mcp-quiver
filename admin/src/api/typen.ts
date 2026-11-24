@@ -209,13 +209,15 @@ export interface GeraetAendern {
 export interface CodeAnlegen {
   gruppen: GruppeId[];
   minuten: number | null;
+  /** Ohne Ablauf: gilt, bis ein Gerät ihn einlöst (einmalig bleibt er). */
+  unbegrenzt?: boolean;
 }
 
 /** Antwort auf `POST /admin/codes`. */
 export interface Code {
   code: string;
-  /** RFC 3339. */
-  gueltig_bis: string;
+  /** RFC 3339; `null` heißt: ohne Ablauf. */
+  gueltig_bis: string | null;
 }
 
 /** Fehlerantwort des Servers. */

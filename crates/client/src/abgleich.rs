@@ -60,6 +60,13 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
                 match strom(&innen, &server, &token).await {
                     StromEnde::Abgebrochen => return,
                     StromEnde::NeuVerbinden => continue,
+                    StromEnde::Fehler(fehler) if ist_abgelehnt(&fehler) => {
+                        tracing::warn!("{fehler:#} – alle Tools gestoppt, Gerät neu einbinden");
+                        if let Err(fehler) = innen.ausbinden(true).await {
+                            tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                        }
+                        continue;
+                    }
                     StromEnde::Fehler(fehler) => {
                         let text = format!("{fehler:#}");
                         tracing::warn!("Ereignis-Strom weg: {text}");
@@ -69,6 +76,13 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
                         });
                     }
                 }
+            }
+            Err(fehler) if ist_abgelehnt(&fehler) => {
+                tracing::warn!("{fehler:#} – alle Tools gestoppt, Gerät neu einbinden");
+                if let Err(fehler) = innen.ausbinden(true).await {
+                    tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                }
+                continue;
             }
             Err(fehler) => {
                 let text = format!("{fehler:#}");
@@ -192,6 +206,20 @@ pub(crate) async fn meldung_senden(
     Ok(())
 }
 
+/// Der Server nimmt das Gerät nicht (mehr) an: 401 oder 403 auf eine
+/// Geräte-Anfrage. Dann läuft kein Tool mehr, bis das Gerät neu eingebunden ist.
+#[derive(Debug, thiserror::Error)]
+#[error("Der Server nimmt dieses Gerät nicht mehr an ({status}): {meldung}")]
+pub(crate) struct GeraetAbgelehnt {
+    status: reqwest::StatusCode,
+    meldung: String,
+}
+
+/// Ist dieser Fehler eine Ablehnung des Geräts?
+pub(crate) fn ist_abgelehnt(fehler: &anyhow::Error) -> bool {
+    fehler.chain().any(|teil| teil.is::<GeraetAbgelehnt>())
+}
+
 /// Erfolg durchlassen, sonst den Fehlertext des Servers weitergeben.
 async fn pruefen(antwort: reqwest::Response) -> anyhow::Result<reqwest::Response> {
     let status = antwort.status();
@@ -202,5 +230,11 @@ async fn pruefen(antwort: reqwest::Response) -> anyhow::Result<reqwest::Response
     let meldung = serde_json::from_str::<Fehler>(&text)
         .map(|fehler| fehler.fehler)
         .unwrap_or(text);
+    if matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return Err(GeraetAbgelehnt { status, meldung }.into());
+    }
     anyhow::bail!("Server antwortet mit {status}: {meldung}")
 }

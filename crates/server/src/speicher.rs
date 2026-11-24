@@ -25,6 +25,9 @@ pub const SAETZE: &str = "saetze";
 pub const GRUPPEN: &str = "gruppen";
 pub const GERAETE: &str = "geraete";
 
+/// `gueltig_bis` eines Codes ohne Ablauf.
+pub const UNBEGRENZT: &str = "unbegrenzt";
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS saetze    (id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -256,7 +259,8 @@ pub enum CodeStand {
 
 /// Code einlösen: prüfen, verbrauchen, Gruppen zurückgeben.
 ///
-/// Ein Code ist einmal benutzbar; abgelaufene werden dabei entfernt.
+/// Ein Code ist einmal benutzbar; abgelaufene werden dabei entfernt. Ein Code
+/// ohne Ablauf ([`UNBEGRENZT`]) gilt, bis er eingelöst wird.
 pub fn code_einloesen(
     conn: &Connection,
     code: &str,
@@ -273,6 +277,9 @@ pub fn code_einloesen(
         return Ok(CodeStand::Unbekannt);
     };
     conn.execute("DELETE FROM codes WHERE code = ?1", params![code])?;
+    if gueltig_bis == UNBEGRENZT {
+        return Ok(CodeStand::Gueltig(serde_json::from_str(&gruppen_json)?));
+    }
     match hilfen::zeit_lesen(&gueltig_bis) {
         Some(bis) if jetzt >= bis => Ok(CodeStand::Abgelaufen),
         Some(_) => Ok(CodeStand::Gueltig(serde_json::from_str(&gruppen_json)?)),

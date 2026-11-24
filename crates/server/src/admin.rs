@@ -361,11 +361,18 @@ pub(crate) async fn code_anlegen(
     State(zustand): State<Arc<Zustand>>,
     Koerper(anfrage): Koerper<CodeAnlegen>,
 ) -> Ergebnis<Json<Code>> {
-    let minuten = anfrage.minuten.unwrap_or(60);
-    let gueltig_bis =
-        hilfen::als_text(hilfen::jetzt() + time::Duration::minutes(i64::from(minuten)));
+    let gueltig_bis = if anfrage.unbegrenzt {
+        None
+    } else {
+        let minuten = anfrage.minuten.unwrap_or(60);
+        Some(hilfen::als_text(
+            hilfen::jetzt() + time::Duration::minutes(i64::from(minuten)),
+        ))
+    };
     let gruppen = anfrage.gruppen;
-    let bis = gueltig_bis.clone();
+    let bis = gueltig_bis
+        .clone()
+        .unwrap_or_else(|| speicher::UNBEGRENZT.to_string());
     let code = db(&zustand, move |conn| {
         for _ in 0..8 {
             let anzeige = hilfen::code_erzeugen();

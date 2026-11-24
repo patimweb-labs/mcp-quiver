@@ -117,9 +117,19 @@ impl Pruefung {
     }
 
     async fn code_anlegen(&self, gruppen: &[&str], minuten: Option<u32>) -> Code {
+        self.code_anlegen_mit(gruppen, minuten, false).await
+    }
+
+    async fn code_anlegen_mit(
+        &self,
+        gruppen: &[&str],
+        minuten: Option<u32>,
+        unbegrenzt: bool,
+    ) -> Code {
         let anfrage = CodeAnlegen {
             gruppen: gruppen.iter().map(|g| GruppeId::neu(*g)).collect(),
             minuten,
+            unbegrenzt,
         };
         let (status, rumpf) = self
             .admin("POST", "/admin/codes", Some(json!(anfrage)))
@@ -404,11 +414,8 @@ async fn codes_sind_einmalig_und_laufen_ab() {
     let code = p.code_anlegen(&["team"], Some(60)).await;
     assert_eq!(code.code.len(), 9, "XXXX-XXXX");
     assert_eq!(code.code.as_bytes()[4], b'-');
-    assert!(
-        code.gueltig_bis.contains('T'),
-        "RFC 3339: {}",
-        code.gueltig_bis
-    );
+    let bis = code.gueltig_bis.clone().expect("mit Ablauf");
+    assert!(bis.contains('T'), "RFC 3339: {bis}");
 
     // Anzeigeform, ohne Bindestrich und klein geschrieben sind alle gültig.
     let ohne_strich = code.code.replace('-', "");
@@ -444,6 +451,32 @@ async fn codes_sind_einmalig_und_laufen_ab() {
         )
         .await;
     assert_eq!(status, StatusCode::GONE, "abgelaufen: {rumpf}");
+}
+
+#[tokio::test]
+async fn ein_code_ohne_ablauf_gilt_bis_er_eingeloest_ist() {
+    let p = Pruefung::neu().await;
+    assert_eq!(p.put_gruppe(&gruppe("team", &[])).await.0, StatusCode::OK);
+
+    // `minuten` wird bei `unbegrenzt` nicht beachtet – auch 0 läuft nicht ab.
+    let code = p.code_anlegen_mit(&["team"], Some(0), true).await;
+    assert_eq!(code.gueltig_bis, None, "ohne Ablauf");
+    let antwort = p.anmelden(&code.code, "Rechner A").await;
+    assert_eq!(antwort.geraet.gruppen, vec![GruppeId::neu("team")]);
+
+    // Einmalig bleibt er trotzdem.
+    let (status, _) = p
+        .anfrage(
+            "POST",
+            "/anmelden",
+            None,
+            Some(json!(Anmelden {
+                code: code.code.clone(),
+                name: "Rechner B".into()
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "verbraucht");
 }
 
 #[tokio::test]

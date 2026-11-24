@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // Gerät einbinden: Gruppen wählen, Code erzeugen, Code groß zeigen. Der Code
-// gilt nur eine Weile; die Ablaufzeit steht daneben (nicht nur im Kopf).
+// gilt nur eine Weile (oder ohne Ablauf, bis er eingelöst ist); die Ablaufzeit
+// steht daneben (nicht nur im Kopf).
 import { computed, ref, watch } from "vue";
 import { RefreshCw } from "lucide-vue-next";
 import {
   WpButton,
+  WpCheckbox,
   WpDialog,
   WpInput,
   WpMultiselect,
@@ -27,6 +29,7 @@ const emit = defineEmits<{ "update:offen": [boolean] }>();
 
 const gewaehlt = ref<GruppeId[]>([]);
 const minuten = ref("60");
+const unbegrenzt = ref(false);
 const code = ref<Code | null>(null);
 const fehler = ref("");
 const laedt = ref(false);
@@ -37,6 +40,7 @@ watch(
     if (!offen) return;
     gewaehlt.value = [];
     minuten.value = "60";
+    unbegrenzt.value = false;
     code.value = null;
     fehler.value = "";
   },
@@ -65,6 +69,7 @@ async function erzeugen(): Promise<void> {
     code.value = await props.client.codeAnlegen({
       gruppen: [...gewaehlt.value],
       minuten: Number.isNaN(zahl) || zahl <= 0 ? null : zahl,
+      unbegrenzt: unbegrenzt.value,
     });
   } catch (fehlerWert) {
     fehler.value = fehlertext(fehlerWert);
@@ -91,9 +96,11 @@ function neu(): void {
       <Kopierbar :wert="code.code" kopieren="Code kopieren" />
       <p class="code__zeit">
         <Status
+          v-if="code.gueltig_bis"
           ton="warnung"
           :text="`${restzeit(code.gueltig_bis)} · bis ${datum(code.gueltig_bis)}`"
         />
+        <Status v-else ton="warnung" text="Ohne Ablauf · gilt, bis ein Gerät ihn einlöst" />
       </p>
       <p v-if="gruppenNamen" class="blass">Gruppen: {{ gruppenNamen }}</p>
       <p v-else class="blass">Ohne Gruppen: das Gerät bekommt zunächst nichts.</p>
@@ -116,11 +123,17 @@ function neu(): void {
           <WpInput
             :id="id"
             type="number"
+            :disabled="unbegrenzt"
             :model-value="minuten"
             @update:model-value="(wert) => (minuten = wert)"
           />
         </template>
       </Feld>
+      <WpCheckbox
+        :model-value="unbegrenzt"
+        label="Ohne Ablauf (gilt, bis ein Gerät ihn einlöst)"
+        @update:model-value="(wert) => (unbegrenzt = wert)"
+      />
 
       <p v-if="fehler" class="fehler" role="alert">{{ fehler }}</p>
     </div>

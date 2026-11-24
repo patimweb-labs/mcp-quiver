@@ -94,6 +94,21 @@ pub(crate) async fn meldung(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Gibt es das Gerät noch, und ist es nicht gesperrt?
+async fn geraet_zugelassen(zustand: &Arc<Zustand>, id: &GeraetId) -> bool {
+    let kennung = id.clone();
+    match db(zustand, move |conn| {
+        speicher::hole_geraet(conn, kennung.als_str())
+    })
+    .await
+    {
+        Ok(Some(zeile)) => !zeile.geraet.gesperrt,
+        Ok(None) => false,
+        // Die Datenbank hakt: lieber offen lassen als grundlos trennen.
+        Err(_) => true,
+    }
+}
+
 /// Ereignis-Strom: sofort die aktuelle Revision, danach nur bei Änderung.
 pub(crate) async fn ereignisse(
     State(zustand): State<Arc<Zustand>>,
@@ -115,6 +130,12 @@ pub(crate) async fn ereignisse(
             loop {
                 // Jede Änderung (auch ein Rückstand) ist ein Anlass, neu zu rechnen.
                 empfaenger.next().await.as_ref()?;
+                // Entfernt oder gesperrt: der Strom endet. Der Client verbindet
+                // neu, bekommt 401/403 und stoppt alle Tools.
+                if !geraet_zugelassen(&zustand, &id).await {
+                    tracing::info!("Gerät {id} entfernt oder gesperrt – Ereignis-Strom endet");
+                    return None;
+                }
                 match soll_fuer(&zustand, &id).await {
                     Ok(soll) if soll.revision != letzte => {
                         let ereignis = Event::default()

@@ -4,11 +4,15 @@
 //! Doppelstart eines Eintrags (Aufgabe 12,
 //! `docs/aufgaben/12-doppelstart-und-log.md`, Teil A).
 //!
-//! Der beobachtete Fehler: `Kern::starten` startet den **gespeicherten**
-//! Soll-Zustand, kurz darauf kommt der (neue) Soll vom Server. Zwei
-//! Start-Aufgaben für denselben Eintrag liefen überlappend; die ältere schrieb
-//! nach dem Aufbau in den Läufer der jüngeren und leerte am Ende dessen
-//! Werkzeugliste. Der Eintrag lief, aber die Agenten sahen kein Werkzeug.
+//! Der beobachtete Fehler: zwei Start-Aufgaben für denselben Eintrag liefen
+//! überlappend (damals: gespeicherter Soll beim Start, kurz darauf der Soll
+//! vom Server); die ältere schrieb nach dem Aufbau in den Läufer der jüngeren
+//! und leerte am Ende dessen Werkzeugliste. Der Eintrag lief, aber die
+//! Agenten sahen kein Werkzeug.
+//!
+//! Heute startet nichts mehr aus dem gespeicherten Stand (erst nach der
+//! Anmeldung am Server). Das Überlappen gibt es trotzdem: der erste Start
+//! kommt hier vom Server, der zweite von neuen lokalen Werten.
 //!
 //! Der Test macht das Überlappen fest: der erste Start hängt in der
 //! Startphase (`QUIVER_DEMO_WARTE_AUF`), der zweite läuft daneben fertig, erst
@@ -23,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use quiver_client::{EintragSicht, Kern, KernKonfig, SpeicherTresor, Tresor};
+use quiver_client::{EintragSicht, Kern, KernKonfig, SpeicherTresor};
 use quiver_domain::{Eintrag, EintragId, Herkunft, Laufzeit, Soll, SollEintrag, Werte};
 use quiver_protocol::EintragZustand;
 
@@ -112,35 +116,85 @@ impl Geruest {
         }
     }
 
-    /// Den gespeicherten Stand schreiben, den `Kern::starten` wieder aufnimmt.
-    fn profil_schreiben(&self) {
-        std::fs::create_dir_all(&self.profil).expect("Profilordner");
-        let stand = serde_json::json!({
-            // Ein Port, an dem nichts lauscht: der Abgleich scheitert sofort,
-            // der gespeicherte Soll läuft trotzdem (offline).
-            "server_url": "http://127.0.0.1:9",
-            "geraet": { "id": "geraet-1", "name": "Testrechner" },
-            "soll": self.soll,
-        });
-        std::fs::write(
-            self.profil.join("zustand.json"),
-            serde_json::to_vec(&stand).expect("JSON"),
-        )
-        .expect("Profil schreibbar");
-    }
-
+    /// Ein Server mit diesem Eintrag in Gruppe `team`, dazu ein Kern, der
+    /// sich dort einbindet – der erste Start kommt also vom Server.
     async fn kern(&self) -> Kern {
-        let tresor = Arc::new(SpeicherTresor::neu());
-        tresor
-            .schreiben("geraet-token", "token-fuer-den-doppelstart-test")
-            .expect("Tresor schreibbar");
-        Kern::starten(KernKonfig {
-            profil: self.profil.clone(),
-            mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
-            tresor,
+        const ADMIN: &str = "admin-token-fuer-den-doppelstart-test";
+        let router = quiver_server::app(quiver_server::Konfig {
+            daten: self.ordner.join("server"),
+            admin_token: ADMIN.to_string(),
+            admin_dist: None,
         })
         .await
-        .expect("Kern startet")
+        .expect("App baut");
+        let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .expect("Port frei");
+        let basis = format!("http://{}", listener.local_addr().expect("Adresse"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+
+        let http = reqwest::Client::new();
+        let admin = |methode: &str, pfad: &str, rumpf: serde_json::Value| {
+            http.request(
+                methode.parse().expect("Methode"),
+                format!("{basis}/api/v1{pfad}"),
+            )
+            .bearer_auth(ADMIN)
+            .json(&rumpf)
+            .send()
+        };
+        let eintrag = &self.soll.eintraege[0].eintrag;
+        for (methode, pfad, rumpf) in [
+            (
+                "PUT",
+                "/admin/eintraege/outline",
+                serde_json::to_value(eintrag).expect("JSON"),
+            ),
+            (
+                "PUT",
+                "/admin/saetze/basis",
+                serde_json::json!({"id": "basis", "titel": "Basis", "prioritaet": 0,
+                    "eintraege": [{"eintrag": "outline", "werte": {}}]}),
+            ),
+            (
+                "PUT",
+                "/admin/gruppen/team",
+                serde_json::json!({"id": "team", "titel": "Team", "saetze": ["basis"]}),
+            ),
+        ] {
+            let antwort = admin(methode, pfad, rumpf)
+                .await
+                .expect("Server erreichbar");
+            assert!(
+                antwort.status().is_success(),
+                "{pfad}: {}",
+                antwort.status()
+            );
+        }
+        let code: serde_json::Value = admin(
+            "POST",
+            "/admin/codes",
+            serde_json::json!({"gruppen": ["team"], "minuten": 60}),
+        )
+        .await
+        .expect("Code")
+        .json()
+        .await
+        .expect("Code-JSON");
+
+        let kern = Kern::starten(KernKonfig {
+            profil: self.profil.clone(),
+            mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
+            tresor: Arc::new(SpeicherTresor::neu()),
+        })
+        .await
+        .expect("Kern startet");
+        kern.einbinden(&basis, code["code"].as_str().expect("Code"), "Testrechner")
+            .await
+            .expect("Einbinden klappt");
+        kern
     }
 
     fn protokoll(&self) -> String {
@@ -201,8 +255,7 @@ async fn doppelstart_behaelt_die_werkzeugliste() {
     let id = EintragId::neu("outline");
     for durchlauf in 1..=DURCHLAEUFE {
         let p = Geruest::neu();
-        p.profil_schreiben();
-        // Der erste Start (aus dem gespeicherten Soll) bleibt stehen.
+        // Der erste Start (vom Server) bleibt stehen.
         std::fs::write(&p.arm, "arm").expect("Arm schreibbar");
 
         let kern = p.kern().await;

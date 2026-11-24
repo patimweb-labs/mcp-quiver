@@ -740,6 +740,7 @@ mod tests {
                 verbunden: true,
             }],
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
+            abgelehnt: false,
         }
     }
 

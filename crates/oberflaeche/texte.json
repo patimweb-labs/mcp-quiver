@@ -168,8 +168,12 @@
     "en": "Disconnected from {}"
   },
   "verbindung.getrennt_hinweis": {
-    "de": "Die Tools laufen mit dem zuletzt gespeicherten Stand weiter.",
-    "en": "The tools keep running with the last saved state."
+    "de": "Die Tools laufen weiter, bis die Verbindung wieder steht.",
+    "en": "The tools keep running until the connection is back."
+  },
+  "verbindung.abgelehnt": {
+    "de": "Der Server kennt dieses Gerät nicht mehr (entfernt?). Alle Tools sind gestoppt – bitte mit einem neuen Code einbinden.",
+    "en": "The server no longer knows this device (removed?). All tools are stopped – please connect again with a new code."
   },
   "verbindung.trennen_hinweis": {
     "de": "Danach laufen auf diesem Gerät keine Tools mehr.",

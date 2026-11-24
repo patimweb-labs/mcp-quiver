@@ -49,6 +49,8 @@ struct Pruefung {
     basis: String,
     kern: Kern,
     http: reqwest::Client,
+    /// Derselbe Tresor für einen zweiten Start mit diesem Profil.
+    tresor: std::sync::Arc<SpeicherTresor>,
 }
 
 impl Pruefung {
@@ -82,10 +84,11 @@ impl Pruefung {
             let _ = axum::serve(listener, router).await;
         });
 
+        let tresor = std::sync::Arc::new(SpeicherTresor::neu());
         let kern = Kern::starten(KernKonfig {
             profil: ordner.join("profil"),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
-            tresor: std::sync::Arc::new(SpeicherTresor::neu()),
+            tresor: tresor.clone(),
         })
         .await
         .expect("Kern startet");
@@ -95,6 +98,7 @@ impl Pruefung {
             basis: format!("http://{adresse}"),
             kern,
             http: reqwest::Client::new(),
+            tresor,
         }
     }
 
@@ -720,4 +724,149 @@ async fn warte_auf_zustand(
             return false;
         }
     }
+}
+
+/// Ein Satz mit `echo`, der Gruppe `team` zugeordnet; das Gerät ist
+/// eingebunden und das Werkzeug läuft beim Agenten.
+async fn eingebunden_mit_echo(p: &Pruefung) -> rmcp::service::RunningService<RoleClient, Zeuge> {
+    p.put(
+        "/admin/eintraege/echo",
+        &eintrag("echo", Werte::new(), Vec::new()),
+    )
+    .await;
+    p.put(
+        "/admin/saetze/basis",
+        &Satz {
+            id: SatzId::neu("basis"),
+            titel: "Basis".into(),
+            prioritaet: 0,
+            eintraege: vec![SatzEintrag {
+                eintrag: EintragId::neu("echo"),
+                werte: Werte::new(),
+            }],
+        },
+    )
+    .await;
+    p.put(
+        "/admin/gruppen/team",
+        &Gruppe {
+            id: GruppeId::neu("team"),
+            titel: "Team".into(),
+            saetze: vec![SatzId::neu("basis")],
+        },
+    )
+    .await;
+    let code = p
+        .admin(
+            "POST",
+            "/admin/codes",
+            Some(json!({ "gruppen": ["team"], "minuten": 60 })),
+        )
+        .await;
+    p.kern
+        .einbinden(
+            &p.basis,
+            code["code"].as_str().expect("Code"),
+            "Testrechner",
+        )
+        .await
+        .expect("Einbinden klappt");
+    let agent_token = p.kern.agent_koppeln("test").await.expect("Agent gekoppelt");
+    let (sender, _meldungen) = tokio::sync::mpsc::unbounded_channel();
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(p.endpunkt()).auth_header(&agent_token),
+    );
+    let agent = Zeuge { meldungen: sender }
+        .serve(transport)
+        .await
+        .expect("Agent verbindet sich");
+    assert!(
+        warte_auf_werkzeug(agent.peer(), "echo__echo", Instant::now())
+            .await
+            .is_some(),
+        "echo__echo läuft"
+    );
+    agent
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_entferntes_geraet_stoppt_alle_tools() {
+    let p = Pruefung::neu().await;
+    let agent = eingebunden_mit_echo(&p).await;
+
+    // Der Admin entfernt das Gerät.
+    let geraete = p.admin("GET", "/admin/geraete", None).await;
+    let id = geraete[0]["geraet"]["id"]
+        .as_str()
+        .expect("Geräte-Id")
+        .to_string();
+    p.admin("DELETE", &format!("/admin/geraete/{id}"), None)
+        .await;
+
+    // Innerhalb der Frist: abgelehnt, nicht mehr eingebunden, kein Eintrag.
+    let frist = Instant::now() + FRIST;
+    let mut modell = p.kern.modell();
+    loop {
+        {
+            let stand = modell.borrow_and_update();
+            if stand.abgelehnt {
+                assert_eq!(
+                    stand.verbindung,
+                    quiver_client::Verbindung::NichtEingebunden
+                );
+                assert!(stand.eintraege.is_empty(), "kein Eintrag mehr");
+                break;
+            }
+        }
+        let rest = frist.saturating_duration_since(Instant::now());
+        assert!(!rest.is_zero(), "das Gerät gilt nicht als abgelehnt");
+        let _ = tokio::time::timeout(rest, modell.changed()).await;
+    }
+    let liste = agent
+        .peer()
+        .list_tools(Some(PaginatedRequestParams::default()))
+        .await
+        .expect("tools/list");
+    assert!(
+        liste
+            .tools
+            .iter()
+            .all(|tool| !tool.name.starts_with("echo__")),
+        "keine Tools mehr beim Agenten"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ohne_anmeldung_am_server_startet_kein_tool() {
+    let p = Pruefung::neu().await;
+    let agent = eingebunden_mit_echo(&p).await;
+    drop(agent);
+    p.kern.beenden().await;
+
+    // Neustart mit demselben Profil und Tresor – aber der Server ist weg.
+    let zustand = p.ordner.join("profil").join("zustand.json");
+    let text = std::fs::read_to_string(&zustand).expect("zustand.json");
+    assert!(text.contains("echo"), "der Soll-Zustand ist gespeichert");
+    let text = text.replace(&p.basis, "http://127.0.0.1:9");
+    std::fs::write(&zustand, text).expect("zustand.json");
+
+    let zweiter = Kern::starten(KernKonfig {
+        profil: p.ordner.join("profil"),
+        mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
+        tresor: p.tresor.clone(),
+    })
+    .await
+    .expect("Kern startet");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let modell = zweiter.modell().borrow().clone();
+    assert!(
+        modell
+            .eintraege
+            .iter()
+            .all(|eintrag| !matches!(eintrag.zustand, EintragZustand::Laeuft { .. })),
+        "ohne Anmeldung am Server läuft nichts: {:?}",
+        modell.eintraege
+    );
+    assert!(!modell.abgelehnt, "nicht erreichbar ist nicht abgelehnt");
+    zweiter.beenden().await;
 }
