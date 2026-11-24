@@ -102,6 +102,7 @@ impl Pruefung {
             profil: profil.clone(),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");
@@ -126,6 +127,7 @@ impl Pruefung {
             profil: self.profil.clone(),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: self.tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet neu");

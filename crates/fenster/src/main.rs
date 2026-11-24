@@ -20,11 +20,12 @@ use std::sync::mpsc;
 use eframe::egui;
 use quiver_client::{Kern, KernKonfig};
 use quiver_fenster::app::{Fenster, KernZugang};
+use quiver_fenster::ende::{EndeFahne, EndeGrund};
 use quiver_fenster::kern::EchterKern;
 use quiver_fenster::modell::Sicht;
 use quiver_fenster::profil::Einstellungen;
 use quiver_fenster::tray::{self, Tray, TrayZustand};
-use quiver_fenster::{autostart, instanz, logik};
+use quiver_fenster::{autostart, ende, instanz, logik};
 
 fn main() -> anyhow::Result<()> {
     einrichten_log();
@@ -37,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     // dieser Start endet. Der Kern bliebe sonst am belegten Port hängen.
     let fensteradresse = instanz::adresse(konfig.mcp_adresse);
     if instanz::zeigen_anfordern(fensteradresse).is_ok() {
-        tracing::info!("quiver läuft schon — Fenster der laufenden Instanz geöffnet.");
+        EndeGrund::ZweiteInstanz.protokollieren();
         return Ok(());
     }
     fenster(konfig, argumente.hintergrund)
@@ -83,10 +84,9 @@ fn kopflos(konfig: KernKonfig) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let kern = laufzeit.block_on(Kern::starten(konfig))?;
-    tracing::info!("quiver läuft ohne Fenster — Strg+C beendet.");
-    laufzeit.block_on(async {
-        let _ = tokio::signal::ctrl_c().await;
-    });
+    tracing::info!("quiver läuft ohne Fenster — Strg+C oder SIGTERM beendet.");
+    let grund = laufzeit.block_on(ende::warte_auf_signal());
+    grund.protokollieren();
     laufzeit.block_on(kern.beenden());
     Ok(())
 }
@@ -121,6 +121,7 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
     let kern = EchterKern::starten(konfig)?;
     let mut sicht = Sicht::neu(kern.modell(), &einstellungen);
     sicht.autostart = autostart::aktiv();
+    let ende_fahne = EndeFahne::neu();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("mcp-quiver")
@@ -167,9 +168,13 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
                 tracing::warn!("kein Tray — das Fenster ist der einzige Weg zu quiver.");
                 tray::zeigen(&cc.egui_ctx);
             }
+            // Signale (Strg+C, SIGTERM) beenden geordnet und stehen mit
+            // Ursache im Protokoll.
+            ende::signal_faden(cc.egui_ctx.clone(), ende_fahne.clone());
             let fenster = Fenster::neu(kern, sicht, Some(profil))
                 .mit_autostart(Box::new(autostart::setzen))
-                .mit_tray(tray, befehl_empfaenger);
+                .mit_tray(tray, befehl_empfaenger)
+                .mit_ende(ende_fahne.clone());
             Ok(Box::new(fenster))
         }),
     )

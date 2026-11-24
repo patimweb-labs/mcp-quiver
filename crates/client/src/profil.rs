@@ -32,6 +32,10 @@ pub struct Profil {
     /// Das eigene Gerät (kommt aus der Anmeldung).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geraet: Option<Geraet>,
+    /// Anzeigename des angemeldeten Benutzers („Angemeldet als …“). Kein
+    /// Geheimnis; dient nur der Anzeige und überlebt einen Neustart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benutzer: Option<String>,
     /// Werte von Feldern mit `Quelle::Client`, je Eintrag.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub lokale_werte: BTreeMap<String, Werte>,
@@ -121,6 +125,7 @@ mod tests {
         let mut profil = Profil::laden(&ordner).expect("leer lesbar");
         assert_eq!(profil.server_url, None);
         profil.server_url = Some("http://127.0.0.1:8080".into());
+        profil.benutzer = Some("test@example.test".into());
         profil.lokale_werte.insert(
             "echo".into(),
             Werte::from([("PFAD".to_string(), "/tmp".to_string())]),
@@ -143,6 +148,7 @@ mod tests {
 
         let zurueck = Profil::laden(&ordner).expect("lesbar");
         assert_eq!(zurueck.server_url, profil.server_url);
+        assert_eq!(zurueck.benutzer, profil.benutzer);
         assert_eq!(zurueck.lokale_werte, profil.lokale_werte);
         assert_eq!(zurueck.zugaenge, profil.zugaenge);
         assert_eq!(zurueck.agenten, profil.agenten);

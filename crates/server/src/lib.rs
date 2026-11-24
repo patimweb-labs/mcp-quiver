@@ -137,6 +137,7 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         .route("/soll", get(geraet::soll))
         .route("/ereignisse", get(geraet::ereignisse))
         .route("/meldung", post(geraet::meldung))
+        .route("/abmelden", post(geraet::abmelden))
         .method_not_allowed_fallback(methode_falsch)
         .route_layer(middleware::from_fn_with_state(
             zustand.clone(),

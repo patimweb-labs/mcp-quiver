@@ -697,9 +697,13 @@ fn die_sicherung_nimmt_die_abschaltung_mit() {
     let id = EintragId::neu("echo");
     let stand = Stand {
         abgelehnt: false,
+        anmelde_grund: None,
         server_url: None,
         geraet: None,
         token: None,
+        benutzer: None,
+        anmeldewege: None,
+        anmeldung_abbruch: None,
         lokale_werte: BTreeMap::new(),
         geheim: BTreeMap::new(),
         zugaenge: BTreeMap::new(),
@@ -726,4 +730,46 @@ fn die_sicherung_nimmt_die_abschaltung_mit() {
     assert!(einstellungen::aus_mischen(true, false));
     assert!(einstellungen::aus_mischen(false, true));
     assert!(!einstellungen::aus_mischen(false, false));
+}
+
+/// `https` überall, `http` nur auf Loopback (ADR 0002). Ein Pfad, eine
+/// Abfrage und ein Benutzer in der Adresse sind Fehler.
+#[test]
+fn server_adresse_nur_https_oder_loopback() {
+    assert_eq!(
+        server_adresse(" https://quiver.example/ ").expect("https"),
+        "https://quiver.example"
+    );
+    assert_eq!(
+        server_adresse("http://127.0.0.1:8080").expect("Loopback"),
+        "http://127.0.0.1:8080"
+    );
+    assert_eq!(
+        server_adresse("http://localhost:8080").expect("localhost"),
+        "http://localhost:8080"
+    );
+    assert!(server_adresse("http://[::1]:8080").is_ok(), "IPv6-Loopback");
+    for falsch in [
+        "",
+        "http://quiver.example",
+        "ftp://quiver.example",
+        "https://user:geheim@quiver.example",
+        "https://quiver.example/pfad",
+        "https://quiver.example?frage=1",
+        "https://quiver.example#fragment",
+    ] {
+        assert!(
+            server_adresse(falsch).is_err(),
+            "„{falsch}“ muss abgelehnt werden"
+        );
+    }
+}
+
+/// Ein unbekannter Grund wird wie `neu-anmelden` behandelt: vorsichtig.
+#[test]
+fn grund_text_ist_verstaendlich() {
+    assert!(grund_text(Some(AnmeldeGrund::Gesperrt), "technisch").contains("gesperrt"));
+    assert!(grund_text(Some(AnmeldeGrund::KeinZugriff), "technisch").contains("Gruppe"));
+    assert!(grund_text(Some(AnmeldeGrund::NeuAnmelden), "technisch").contains("erneut"));
+    assert_eq!(grund_text(None, "technisch"), "technisch");
 }

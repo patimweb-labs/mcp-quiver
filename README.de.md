@@ -192,9 +192,45 @@ cargo run -p quiver-fenster -- --headless    # nur der Kern, bis Strg+C
 ```
 
 Das Fenster zu schließen beendet quiver nicht: Kern, MCP-Endpunkt und Abgleich
-laufen weiter, das Tray-Symbol bleibt. **Beenden** steht im Tray-Menü. Ein
-zweiter Start (Doppelklick, während quiver im Tray sitzt) zeigt das Fenster der
-laufenden Instanz und endet selbst — eine Instanz je Gerät.
+laufen weiter, das Tray-Symbol bleibt. **Beenden** steht im Tray-Menü. Cmd+Q ist
+ebenfalls kein Beenden — es legt das Fenster wie das Schließen in den Tray.
+Strg+C und SIGTERM halten den Kern geordnet an. Jedes Ende und jedes
+„in den Tray gelegt“ steht **mit Ursache** im Protokoll (Tray, Fenster, Cmd+Q,
+Strg+C, SIGTERM, zweite Instanz, Abmelden des Systems); beenden lässt sich quiver
+nur über das Tray. Ein zweiter Start (Doppelklick, während quiver im Tray sitzt)
+zeigt das Fenster der laufenden Instanz und endet selbst — eine Instanz je Gerät.
+
+#### Das Gerät anmelden
+
+Die Seite *Verbindung* fragt zuerst **nur** nach der Server-Adresse (`https`
+überall, `http` nur auf `127.0.0.1`, `::1` oder `localhost`). Die zuletzt
+benutzte Adresse ist vorbelegt, auch nach dem Abmelden. **Weiter** fragt den
+Server, welche Wege er anbietet (`GET /api/v1/anmeldearten`), und zeigt danach
+**entweder** *Mit Microsoft anmelden* **oder** das Feld für den Einmal-Code —
+nie beides. Ein Server, der beides nicht anbietet, sagt das deutlich.
+
+Mit Entra öffnet sich der Browser; der Client selbst spricht nie mit Microsoft.
+Der Server schickt genau einen Einmal-Code an einen Lauscher auf `127.0.0.1`
+(Pfad `/quiver`, freier Port, fünf Minuten, eine Antwort, `zustand` in konstanter
+Zeit verglichen), und der Client tauscht ihn mit seinem eigenen PKCE-Verifier.
+Währenddessen steht dort *Im Browser fortfahren …* mit *Browser erneut öffnen*
+und *Abbrechen*. Danach *Angemeldet als …* und das Gerät. Ein altes
+Geräte-Token wird mitgeschickt, damit ein erneutes Anmelden **dasselbe** Gerät
+weiterführt.
+
+Lehnt der Server das Gerät ab, entscheidet der Grund: `gesperrt` und
+`kein-zugriff` stoppen alle Tools, löschen das Token und sagen, was zu tun ist;
+`neu-anmelden` (und jeder unbekannte Grund) stoppt alle Tools, **behält aber
+Geräte-Token und alle Angaben** und bietet *Erneut anmelden*, mit Hinweis im
+Tray. Ein 401 (Gerät entfernt oder Token ungültig) verlangt wie bisher eine neue
+Anmeldung. *Abmelden* fragt nach, sagt, was passiert (Agenten verlieren alle
+Tools, Angaben bleiben), löscht das Gerät **am Server** und behält die
+Server-Adresse. Ist der Server nicht erreichbar, sagt der Client das. Ein Agent
+kann nichts davon auslösen.
+
+![Am Server anmelden](docs/bilder/fenster-dark-verbindung-800.png)
+![Mit Microsoft anmelden](docs/bilder/fenster-light-verbindung-entra-560.png)
+![Erneut anmelden](docs/bilder/fenster-dark-neu-anmelden-800.png)
 
 Das Tray-Menü zeigt den Zustand (`Verbunden · 4 Tools · 1 Agent`), öffnet das
 Fenster, schaltet **Beim Anmelden starten** und beendet. Derselbe Schalter steht

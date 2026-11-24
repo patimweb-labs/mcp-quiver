@@ -16,8 +16,8 @@ use egui_kittest::kittest::{By, NodeT, Queryable};
 use egui_kittest::Harness;
 use quiver_client::protokoll::{Aufruf, Filter, LogFilter, Status, Zeile};
 use quiver_client::{
-    AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, Vorschau,
-    VorschauArt, VorschauEintrag, Zusammenfassung,
+    AgentSicht, AnmeldeZustand, Anmeldewege, EinrichtZustand, EintragSicht, Modell, Verbindung,
+    Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung,
 };
 use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, FeldOption, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
@@ -411,6 +411,10 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         }],
         endpunkt: ENDPUNKT.to_string(),
         abgelehnt: false,
+        anmelde_grund: None,
+        benutzer: None,
+        server_url: None,
+        anmeldewege: None,
         protokoll_fuer_agenten: false,
     }
 }
@@ -457,6 +461,145 @@ fn zur_ruhe(h: &mut Harness<'static, Stand>) {
     }
 }
 
+/// Auch die neuen Knöpfe der Verbindungsseite tragen den Hand-Cursor
+/// (AGENTS.md §2.12): „Weiter“, „Mit Microsoft anmelden“ und „Gerät abmelden“.
+#[test]
+fn hand_cursor_auf_der_verbindungsseite() {
+    let mut h = verbindungsfenster(Verbindung::NichtEingebunden);
+    h.run();
+    h.state_mut().0.sicht.eingaben.server = "https://quiver.example".into();
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Weiter");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Weiter“"
+    );
+
+    let mut h = verbindungsfenster(Verbindung::NichtEingebunden);
+    wege_setzen(&mut h, "https://quiver.example", true, false);
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Mit Microsoft anmelden");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Mit Microsoft anmelden“"
+    );
+
+    let mut h = verbindungsfenster(Verbindung::Verbunden {
+        server: "https://quiver.example".into(),
+        geraet: "Testrechner".into(),
+    });
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Gerät abmelden");
+    knopf.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Gerät abmelden“"
+    );
+}
+
+/// Die vier Anmeldezustände in allen drei Themes und beiden Sprachen bei der
+/// kleinsten Breite (Aufgabe 22; AGENTS.md §5: dark, light, mono / de, en).
+#[test]
+fn anmeldezustaende_in_allen_themes_und_sprachen() {
+    use quiver_fenster::texte::Sprache;
+    for thema in Thema::ALLE {
+        for (sprache, weiter, browser, erneut) in [
+            (
+                Sprache::De,
+                "Weiter",
+                "Im Browser fortfahren …",
+                "Erneut anmelden",
+            ),
+            (
+                Sprache::En,
+                "Continue",
+                "Continue in the browser …",
+                "Sign in again",
+            ),
+        ] {
+            for (name, verbindung, label) in [
+                ("leer", Verbindung::NichtEingebunden, weiter),
+                (
+                    "browser",
+                    Verbindung::WartetAufBrowser {
+                        server: "https://quiver.example".into(),
+                        adresse: "https://quiver.example/auth/geraet/start".into(),
+                    },
+                    browser,
+                ),
+                (
+                    "neu",
+                    Verbindung::NeuAnmelden {
+                        server: "https://quiver.example".into(),
+                        text: "neu".into(),
+                    },
+                    erneut,
+                ),
+                (
+                    "fehler",
+                    Verbindung::AnmeldeFehler {
+                        server: "https://quiver.example".into(),
+                        text: "gesperrt".into(),
+                    },
+                    weiter,
+                ),
+            ] {
+                let mut h = fenster(
+                    modell(verbindung, Vec::new()),
+                    Some(Seite::Verbindung),
+                    thema,
+                    (560.0, 460.0),
+                );
+                h.state_mut().0.sicht.sprache = sprache;
+                h.run_steps(3);
+                nichts_ragt_heraus(&h, 560.0, name);
+                assert!(
+                    h.query_all_by_label(label).count() >= 1,
+                    "{name}/{}/{}: „{label}“ fehlt",
+                    thema.name(),
+                    sprache.code()
+                );
+            }
+        }
+    }
+}
+
+fn verbindungsfenster(verbindung: Verbindung) -> Harness<'static, Stand> {
+    fenster(
+        modell(verbindung, Vec::new()),
+        Some(Seite::Verbindung),
+        Thema::Dunkel,
+        gross(),
+    )
+}
+
+/// Die Anmeldewege in **beide** Modelle schreiben: in die Sicht und in die
+/// Attrappe. Sonst überschreibt der nächste Zug das Modell der Sicht.
+fn wege_setzen(h: &mut Harness<'static, Stand>, server: &str, entra: bool, code: bool) {
+    let wege = Anmeldewege {
+        server: server.to_string(),
+        entra,
+        code,
+    };
+    let (fenster, attrappe) = h.state_mut();
+    {
+        let mut modell = attrappe.modell.borrow_mut();
+        modell.anmeldewege = Some(wege.clone());
+        modell.server_url = Some(server.to_string());
+    }
+    fenster.sicht.modell.anmeldewege = Some(wege);
+    fenster.sicht.modell.server_url = Some(server.to_string());
+    fenster.sicht.eingaben.server = server.to_string();
+}
+
 #[test]
 fn startseite_ohne_server_ist_die_verbindung() {
     let mut h = fenster(
@@ -467,15 +610,21 @@ fn startseite_ohne_server_ist_die_verbindung() {
     );
     h.run();
     assert_eq!(h.state().0.sicht.seite, Seite::Verbindung);
-    // Das Formular steht da: Adresse und Code (zwei Eingabefelder).
+    // Erst **nur** die Adresse — kein Codefeld, bevor der Server gefragt ist.
     assert_eq!(
         h.query_all(By::new().role(Role::TextInput)).count(),
-        2,
-        "Server-Adresse und Einmal-Code"
+        1,
+        "nur die Server-Adresse"
     );
-    assert!(h
-        .query_by_role_and_label(Role::Button, "Gerät einbinden")
-        .is_some());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Weiter").is_some(),
+        "„Weiter“ fehlt"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Gerät einbinden")
+            .is_none(),
+        "der Code kommt erst nach „Weiter“"
+    );
     // Die Navigation bietet alle drei Seiten an.
     for seite in ["Verbindung", "Tools", "Agenten"] {
         assert!(
@@ -486,25 +635,212 @@ fn startseite_ohne_server_ist_die_verbindung() {
 }
 
 #[test]
-fn einbinden_schickt_server_und_code() {
+fn weiter_fragt_die_anmeldewege() {
+    let mut h = verbindungsfenster(Verbindung::NichtEingebunden);
+    h.run();
+    h.state_mut().0.sicht.eingaben.server = "http://quiver.example:8080".into();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Weiter").click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::Anmeldewege {
+                server: "http://quiver.example:8080".into(),
+            }),
+        "Weiter fragt den Server: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+}
+
+#[test]
+fn mit_entra_gibt_es_nur_microsoft_und_kein_codefeld() {
+    let mut h = verbindungsfenster(Verbindung::NichtEingebunden);
+    wege_setzen(&mut h, "https://quiver.example", true, false);
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().role(Role::TextInput)).count(),
+        1,
+        "nur die Adresse, kein Codefeld"
+    );
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Mit Microsoft anmelden")
+        .is_some());
+    h.get_by_role_and_label(Role::Button, "Mit Microsoft anmelden")
+        .click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::AnmeldenMicrosoft {
+            server: "https://quiver.example".into(),
+        }));
+}
+
+#[test]
+fn ohne_entra_kommt_das_codefeld_und_das_einbinden() {
+    let mut h = verbindungsfenster(Verbindung::NichtEingebunden);
+    wege_setzen(&mut h, "http://127.0.0.1:8080", false, true);
+    h.state_mut().0.sicht.eingaben.code = "K7QM-3XPA".into();
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().role(Role::TextInput)).count(),
+        2,
+        "Adresse und Code"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Mit Microsoft anmelden")
+            .is_none(),
+        "nie beides"
+    );
+    h.get_by_role_and_label(Role::Button, "Gerät einbinden")
+        .click();
+    h.run();
+    assert!(h.state().1.aktionen.borrow().contains(&Aktion::Einbinden {
+        server: "http://127.0.0.1:8080".into(),
+        code: "K7QM-3XPA".into(),
+    }));
+}
+
+#[test]
+fn ohne_beide_wege_sagt_die_seite_was_zu_tun_ist() {
+    let mut h = verbindungsfenster(Verbindung::NichtEingebunden);
+    wege_setzen(&mut h, "https://quiver.example", false, false);
+    h.run();
+    assert!(
+        h.query_by_label("Dieser Server bietet weder Microsoft noch einen Einmal-Code an. Bitte an die Verwaltung wenden.")
+            .is_some(),
+        "klare Meldung fehlt"
+    );
+}
+
+#[test]
+fn im_browser_gibt_es_erneut_oeffnen_und_abbrechen() {
+    let mut h = verbindungsfenster(Verbindung::WartetAufBrowser {
+        server: "https://quiver.example".into(),
+        adresse: "https://quiver.example/auth/geraet/start?zustand=abc".into(),
+    });
+    h.run_steps(2);
+    assert!(h.query_by_label("Im Browser fortfahren …").is_some());
+    h.get_by_role_and_label(Role::Button, "Browser erneut öffnen")
+        .click();
+    h.step();
+    let geoeffnet = h.output().platform_output.commands.iter().any(|befehl| {
+        matches!(befehl, OutputCommand::OpenUrl(url)
+            if url.url == "https://quiver.example/auth/geraet/start?zustand=abc")
+    });
+    assert!(
+        geoeffnet,
+        "die Anmeldeseite muss erneut geöffnet werden: {:?}",
+        h.output().platform_output.commands
+    );
+    h.get_by_role_and_label(Role::Button, "Abbrechen").click();
+    h.run_steps(2);
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::AnmeldungAbbrechen));
+}
+
+#[test]
+fn angemeldet_als_und_abmelden_mit_rueckfrage() {
+    let mut modell = modell(
+        Verbindung::Verbunden {
+            server: "https://quiver.example".into(),
+            geraet: "Testrechner".into(),
+        },
+        Vec::new(),
+    );
+    modell.benutzer = Some("test@example.test".into());
+    let mut h = fenster(modell, Some(Seite::Verbindung), Thema::Dunkel, gross());
+    h.run();
+    assert!(
+        h.query_by_label("Angemeldet als").is_some(),
+        "die Anzeige fehlt"
+    );
+    assert!(h.query_by_label("test@example.test").is_some());
+    h.get_by_role_and_label(Role::Button, "Gerät abmelden")
+        .click();
+    h.run();
+    assert!(
+        h.query_by_label("Gerät abmelden?").is_some(),
+        "die Rückfrage fehlt"
+    );
+    assert!(
+        h.query_by_label("Alle Agenten verlieren sofort alle Tools. Deine Angaben und die Server-Adresse bleiben; das Gerät wird auch am Server gelöscht.").is_some(),
+        "die Folgen fehlen"
+    );
+    h.get_by_role_and_label(Role::Button, "Abmelden").click();
+    h.run();
+    assert!(h.state().1.aktionen.borrow().contains(&Aktion::Abmelden));
+}
+
+#[test]
+fn neu_anmelden_bietet_erneut_anmelden_und_steht_im_tray() {
+    let mut modell = modell(
+        Verbindung::NeuAnmelden {
+            server: "https://quiver.example".into(),
+            text: "Die Anmeldung gilt nicht mehr. Geräte-Token und Angaben bleiben.".into(),
+        },
+        Vec::new(),
+    );
+    modell.anmeldewege = Some(Anmeldewege {
+        server: "https://quiver.example".into(),
+        entra: true,
+        code: false,
+    });
     let mut h = fenster(
-        modell(Verbindung::NichtEingebunden, Vec::new()),
+        modell.clone(),
         Some(Seite::Verbindung),
         Thema::Dunkel,
         gross(),
     );
     h.run();
-    let sicht = &mut h.state_mut().0.sicht;
-    sicht.eingaben.server = "http://quiver.example:8080".into();
-    sicht.eingaben.code = "K7QM-3XPA".into();
-    h.run();
-    h.get_by_role_and_label(Role::Button, "Gerät einbinden")
+    assert!(
+        h.query_by_label("Die Anmeldung gilt nicht mehr. Geräte-Token und Angaben bleiben.")
+            .is_some(),
+        "der Hinweis fehlt"
+    );
+    h.get_by_role_and_label(Role::Button, "Erneut anmelden")
         .click();
     h.run();
-    assert!(h.state().1.aktionen.borrow().contains(&Aktion::Einbinden {
-        server: "http://quiver.example:8080".into(),
-        code: "K7QM-3XPA".into(),
-    }));
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .contains(&Aktion::AnmeldenMicrosoft {
+            server: "https://quiver.example".into()
+        }));
+    assert_eq!(
+        quiver_fenster::logik::tray_zeile(&modell, quiver_fenster::texte::Sprache::De),
+        "Neu anmelden nötig"
+    );
+}
+
+#[test]
+fn ein_anmeldefehler_erklaert_und_laesst_die_adresse_stehen() {
+    let mut h = verbindungsfenster(Verbindung::AnmeldeFehler {
+        server: "https://quiver.example".into(),
+        text: "Dieses Konto oder Gerät ist gesperrt. Bitte an die Verwaltung wenden.".into(),
+    });
+    h.run();
+    assert!(h
+        .query_by_label("Dieses Konto oder Gerät ist gesperrt. Bitte an die Verwaltung wenden.")
+        .is_some());
+    assert!(
+        h.state().0.sicht.eingaben.server.is_empty()
+            || h.state().0.sicht.eingaben.server == "https://quiver.example",
+        "die Adresse bleibt vorbelegt"
+    );
+    // Und der Weg zurück steht offen: „Weiter“ ist da.
+    assert!(h.query_by_role_and_label(Role::Button, "Weiter").is_some());
 }
 
 #[test]
@@ -1547,7 +1883,7 @@ struct Groesse {
     masse: (f32, f32),
 }
 
-const GROESSEN: [Groesse; 3] = [
+const GROESSEN: [Groesse; 4] = [
     Groesse {
         px: 560,
         masse: (560.0, 460.0),
@@ -1559,6 +1895,10 @@ const GROESSEN: [Groesse; 3] = [
     Groesse {
         px: 1200,
         masse: (1200.0, 820.0),
+    },
+    Groesse {
+        px: 1600,
+        masse: (1600.0, 1000.0),
     },
 ];
 
@@ -1650,6 +1990,67 @@ fn alle_seiten_in_allen_themes() {
                     foto(&mut h, ziel, name, thema, groesse.px);
                 }
             }
+        }
+    }
+}
+
+/// Die Verbindungsseite mit Microsoft-Weg und der Zustand „neu anmelden“
+/// (`fenster-<thema>-verbindung-entra-<breite>.png`, …). Beide entstehen aus
+/// dem Modell, nicht aus einer Sonderzeichnung.
+#[test]
+fn bildschirmfoto_der_server_anmeldung() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in BILDER_THEMEN {
+        for groesse in [
+            Groesse {
+                px: 560,
+                masse: (560.0, 460.0),
+            },
+            Groesse {
+                px: 800,
+                masse: (800.0, 600.0),
+            },
+            Groesse {
+                px: 1200,
+                masse: (1200.0, 820.0),
+            },
+            Groesse {
+                px: 1600,
+                masse: (1600.0, 1000.0),
+            },
+        ] {
+            // Schritt 2: der Server bietet Entra an.
+            let mut daten = modell(Verbindung::NichtEingebunden, Vec::new());
+            daten.server_url = Some("https://quiver.firma.de".into());
+            daten.anmeldewege = Some(Anmeldewege {
+                server: "https://quiver.firma.de".into(),
+                entra: true,
+                code: false,
+            });
+            let mut h = fenster(daten, Some(Seite::Verbindung), thema, groesse.masse);
+            zur_ruhe(&mut h);
+            foto(&mut h, &ziel, "verbindung-entra", thema, groesse.px);
+
+            // „Neu anmelden“: alle Tools aus, Token und Angaben bleiben.
+            let mut daten = modell(
+                Verbindung::NeuAnmelden {
+                    server: "https://quiver.firma.de".into(),
+                    text: "Die Anmeldung gilt nicht mehr. Geräte-Token und Angaben bleiben.".into(),
+                },
+                Vec::new(),
+            );
+            daten.server_url = Some("https://quiver.firma.de".into());
+            daten.anmeldewege = Some(Anmeldewege {
+                server: "https://quiver.firma.de".into(),
+                entra: true,
+                code: false,
+            });
+            let mut h = fenster(daten, Some(Seite::Verbindung), thema, groesse.masse);
+            zur_ruhe(&mut h);
+            foto(&mut h, &ziel, "neu-anmelden", thema, groesse.px);
         }
     }
 }
@@ -2092,8 +2493,13 @@ fn getrennt_zeigt_den_fehlertext() {
     );
     h.run();
     assert!(h.query_by_label("Der Server antwortet nicht").is_some());
-    // Abmelden ist trotzdem möglich.
+    // Abmelden ist trotzdem möglich — mit Rückfrage.
     h.get_by_role_and_label(Role::Button, "Gerät abmelden")
+        .click();
+    h.run();
+    h.get_all_by_role_and_label(Role::Button, "Abmelden")
+        .last()
+        .expect("Knopf im Dialog")
         .click();
     h.run();
     assert!(h.state().1.aktionen.borrow().contains(&Aktion::Abmelden));

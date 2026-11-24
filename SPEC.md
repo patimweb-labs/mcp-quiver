@@ -153,6 +153,14 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
    Objekt-Ids aus dem ID-Token und werden auf lokale Gruppen abgebildet.
 3. **Client → Server, ohne Entra:** Einmal-Code aus der Verwaltung. Beide Wege
    enden in derselben Gerätebindung; Geräte lassen sich sperren.
+   **Client-Anmeldung (Aufgabe 22):** Die Verbindungsseite fragt zuerst nur die
+   Adresse (`https`; `http` nur Loopback), merkt sie sich über das Abmelden
+   hinaus und fragt hinter „Weiter“ `GET /api/v1/anmeldearten`. Danach zeigt sie
+   **entweder** „Mit Microsoft anmelden“ **oder** das Code-Feld, nie beides.
+   Der Browser-Lauscher liegt nur auf `127.0.0.1`, Pfad `/quiver`, freier Port,
+   fünf Minuten, genau eine Antwort; `zustand` wird in konstanter Zeit
+   verglichen, der Code mit dem eigenen PKCE-Verifier getauscht. Ein vorhandenes
+   Geräte-Token geht als `altes_token` mit (dasselbe Gerät bleibt).
 4. **Verwaltung:** Root (genau einer, E-Mail und Passwort, Argon2id) wird bei
    der **Ersteinrichtung im Browser** angelegt (`POST /auth/einrichten`), sonst
    über die Kommandozeile; Entra-Benutzer mit Rolle `admin`. Sitzung als
@@ -200,10 +208,26 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
 
 **Festlegung:** Zugangsdaten werden nie als Umgebungsvariable oder Datei
 abgelegt, die ein Agent lesen könnte. Fehler an ein Gerät tragen einen
-maschinenlesbaren `grund` (`gesperrt`, `neu_anmelden`, `kein_zugriff`);
-unbekannte Gründe gelten als `neu_anmelden`.
+maschinenlesbaren `grund` (`gesperrt`, `neu-anmelden`, `kein-zugriff`);
+unbekannte Gründe gelten als `neu-anmelden`. Daraus folgt im Client:
+`gesperrt`/`kein-zugriff` → alle Tools aus, Token weg, klare Meldung;
+`neu-anmelden`/unbekannt → alle Tools aus, **Geräte-Token und alle Angaben
+bleiben**, Knopf „Erneut anmelden“ und Hinweis im Tray; 401 (Token ungültig
+oder Gerät entfernt) → wie bisher neu einbinden, lokale Angaben bleiben.
+„Abmelden“ löscht das Gerät **am Server** (`POST /api/v1/geraet/abmelden`) und
+behält Adresse und Angaben; ist der Server nicht erreichbar, sagt der Client
+das, meldet lokal aber trotzdem ab. Jedes Ende des Clients steht mit Ursache im
+Log (Tray, Fenster, Cmd+Q, Strg+C, SIGTERM, zweite Instanz, Systemabmelden);
+Cmd+Q und das Schließen legen nur in den Tray, beendet wird über das Tray.
+Agenten können keine Anmeldung, kein Abmelden und kein Beenden auslösen.
 
-*Preis:* Der Server ist nun auch Identity-Provider-Abhängigkeit: ohne Entra
+*Preis:* Die Anmeldung ist ein zusätzlicher Zustand im Client (Adresse,
+Anmeldewege, Browser warten, neu anmelden, Fehler), und ein laufender
+Browser-Vorgang hält einen Port auf `127.0.0.1` fünf Minuten offen. Der Client
+muss den Server nach `neu-anmelden` fragen, bevor er das Token wegwirft — das
+kostet einen Weg, verhindert aber, dass eine Gruppe oder ein Zertifikat
+versehentlich alle lokalen Angaben mitnimmt. Der Server ist nun auch
+Identity-Provider-Abhängigkeit: ohne Entra
 gilt der letzte Stand höchstens 24 h. Ein Gruppen-Überlauf im Token wird
 abgelehnt statt als „keine Gruppen“ gelesen. Die Seiten des Servers sind
 schmucklos (kein Inline-Skript, keine Inline-Stile), damit die CSP ohne

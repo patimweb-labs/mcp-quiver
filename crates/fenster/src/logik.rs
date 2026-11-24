@@ -25,7 +25,10 @@ use quiver_client::protokoll::Filter as ProtokollFilter;
 /// die Verbindung; danach steht die Arbeit (Tools) vorn.
 pub fn startseite(modell: &Modell) -> Seite {
     match modell.verbindung {
-        Verbindung::NichtEingebunden => Seite::Verbindung,
+        Verbindung::NichtEingebunden
+        | Verbindung::WartetAufBrowser { .. }
+        | Verbindung::NeuAnmelden { .. }
+        | Verbindung::AnmeldeFehler { .. } => Seite::Verbindung,
         _ => Seite::Tools,
     }
 }
@@ -35,8 +38,25 @@ pub fn startseite(modell: &Modell) -> Seite {
 /// noch etwas anbietet; gelingt das Einbinden, geht es zu den Tools.
 pub fn seite_nach_wechsel(vorher: &Verbindung, nachher: &Verbindung, aktuell: Seite) -> Seite {
     match nachher {
-        Verbindung::NichtEingebunden => Seite::Verbindung,
-        _ if matches!(vorher, Verbindung::NichtEingebunden) => Seite::Tools,
+        Verbindung::NichtEingebunden
+        | Verbindung::WartetAufBrowser { .. }
+        | Verbindung::NeuAnmelden { .. }
+        | Verbindung::AnmeldeFehler { .. } => Seite::Verbindung,
+        Verbindung::Verbindet { .. } | Verbindung::Verbunden { .. }
+            if matches!(
+                vorher,
+                Verbindung::NichtEingebunden
+                    | Verbindung::WartetAufBrowser { .. }
+                    | Verbindung::NeuAnmelden { .. }
+                    | Verbindung::AnmeldeFehler { .. }
+            ) =>
+        {
+            if matches!(nachher, Verbindung::Verbunden { .. }) {
+                Seite::Tools
+            } else {
+                Seite::Verbindung
+            }
+        }
         _ => aktuell,
     }
 }
@@ -206,6 +226,9 @@ pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
     match &modell.verbindung {
         Verbindung::NichtEingebunden => t(sprache, "tray.nicht_verbunden"),
         Verbindung::Verbindet { .. } => t(sprache, "tray.verbindet"),
+        Verbindung::WartetAufBrowser { .. } => t(sprache, "tray.im_browser"),
+        Verbindung::NeuAnmelden { .. } => t(sprache, "tray.neu_anmelden"),
+        Verbindung::AnmeldeFehler { .. } => t(sprache, "tray.anmeldefehler"),
         Verbindung::Getrennt { .. } => t(sprache, "tray.getrennt"),
         Verbindung::Verbunden { .. } => {
             let tools: usize = modell
@@ -277,6 +300,10 @@ pub fn verbindung_status(sprache: Sprache, verbindung: &Verbindung) -> (Ton, Str
         Verbindung::Verbindet { server } => {
             (Ton::Warnung, tf(sprache, "verbindung.verbindet", &[server]))
         }
+        Verbindung::WartetAufBrowser { server, .. } => (
+            Ton::Warnung,
+            tf(sprache, "verbindung.im_browser", &[server]),
+        ),
         Verbindung::Verbunden { server, .. } => {
             (Ton::Gut, tf(sprache, "verbindung.verbunden", &[server]))
         }
@@ -284,6 +311,23 @@ pub fn verbindung_status(sprache: Sprache, verbindung: &Verbindung) -> (Ton, Str
             Ton::Fehler,
             tf(sprache, "verbindung.getrennt_von", &[server]),
         ),
+        // Kurz halten: die Kopfzeile ist schmal und würde sonst abschneiden.
+        Verbindung::NeuAnmelden { .. } => {
+            (Ton::Warnung, t(sprache, "verbindung.neu_anmelden_kurz"))
+        }
+        Verbindung::AnmeldeFehler { .. } => {
+            (Ton::Fehler, t(sprache, "verbindung.anmeldefehler_titel"))
+        }
+    }
+}
+
+/// Der Satz zu einem maschinenlesbaren Ablehnungsgrund (Aufgabe 20/22).
+/// Unbekannt heißt: wie `neu-anmelden` — lieber zu vorsichtig als zu spät.
+pub fn grund_text(sprache: Sprache, grund: quiver_protocol::AnmeldeGrund) -> String {
+    match grund {
+        quiver_protocol::AnmeldeGrund::Gesperrt => t(sprache, "verbindung.grund.gesperrt"),
+        quiver_protocol::AnmeldeGrund::KeinZugriff => t(sprache, "verbindung.grund.kein_zugriff"),
+        quiver_protocol::AnmeldeGrund::NeuAnmelden => t(sprache, "verbindung.grund.neu_anmelden"),
     }
 }
 
@@ -1187,6 +1231,10 @@ mod tests {
             }],
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
             abgelehnt: false,
+            anmelde_grund: None,
+            benutzer: None,
+            server_url: None,
+            anmeldewege: None,
             protokoll_fuer_agenten: false,
         }
     }
@@ -1269,6 +1317,29 @@ mod tests {
         );
         // Sonst bleibt die gewählte Seite.
         assert_eq!(seite_nach_wechsel(&zu, &zu, Seite::Agenten), Seite::Agenten);
+        // Während der Browser-Anmeldung und bei „neu anmelden“ bleibt die
+        // Verbindungsseite vorn, auch wenn man woanders war (Aufgabe 22).
+        let browser = Verbindung::WartetAufBrowser {
+            server: "https://quiver.example".into(),
+            adresse: "https://quiver.example/auth/geraet/start".into(),
+        };
+        assert_eq!(
+            seite_nach_wechsel(&zu, &browser, Seite::Tools),
+            Seite::Verbindung
+        );
+        let neu = Verbindung::NeuAnmelden {
+            server: "https://quiver.example".into(),
+            text: "neu".into(),
+        };
+        assert_eq!(
+            seite_nach_wechsel(&browser, &neu, Seite::Verbindung),
+            Seite::Verbindung
+        );
+        // Danach wieder zu den Tools.
+        assert_eq!(
+            seite_nach_wechsel(&neu, &zu, Seite::Verbindung),
+            Seite::Tools
+        );
     }
 
     #[test]
@@ -1433,6 +1504,28 @@ mod tests {
             },
         );
         assert_eq!(ton, Ton::Fehler);
+        // Neue Zustände der Server-Anmeldung (Aufgabe 22) sind kurz genug
+        // für die Kopfzeile.
+        let neu = Verbindung::NeuAnmelden {
+            server: "https://quiver.example".into(),
+            text: "neu".into(),
+        };
+        assert_eq!(
+            verbindung_status(Sprache::De, &neu).1,
+            "Neu anmelden",
+            "kurz, sonst schneidet die Kopfzeile ab"
+        );
+        assert_eq!(tray_zeile(&modell(neu), Sprache::De), "Neu anmelden nötig");
+        assert_eq!(
+            tray_zeile(
+                &modell(Verbindung::WartetAufBrowser {
+                    server: "https://quiver.example".into(),
+                    adresse: "https://quiver.example/auth/geraet/start".into(),
+                }),
+                Sprache::En
+            ),
+            "Signing in via browser …"
+        );
     }
 
     #[test]

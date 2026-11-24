@@ -188,8 +188,43 @@ cargo run -p quiver-fenster -- --headless    # only the core, until Ctrl+C
 
 Closing the window does not stop quiver: the core, the MCP endpoint and the
 sync keep running, and the tray icon stays. **Quit** lives in the tray menu.
-A second start (double click while quiver sits in the tray) shows the window of
-the running instance and ends itself — one instance per device.
+Cmd+Q is not a quit either — it puts the window into the tray like closing.
+Strg+C and SIGTERM stop the core in order. Every end and every "left in the
+tray" is written to the log **with its cause** (tray, window, Cmd+Q, Ctrl+C,
+SIGTERM, second instance, system logout); only the tray really quits. A second
+start (double click while quiver sits in the tray) shows the window of the
+running instance and ends itself — one instance per device.
+
+#### Signing the device in
+
+The *Connection* page first asks **only** for the server address (`https`
+everywhere, `http` only on `127.0.0.1`, `::1` or `localhost`). The last address
+is pre-filled, also after signing out. **Continue** asks the server which ways
+it offers (`GET /api/v1/anmeldearten`) and then shows **either** *Sign in with
+Microsoft* **or** the one-time code field — never both. A server that offers
+neither says so in plain words.
+
+With Entra the browser opens; the client itself never talks to Microsoft. The
+server returns exactly one one-time code to a listener on `127.0.0.1` (path
+`/quiver`, free port, five minutes, one answer, `zustand` compared in constant
+time) and the client exchanges it with its own PKCE verifier. While waiting, the
+page says *Continue in the browser …* and offers *Open browser again* and
+*Cancel*. Afterwards it shows *Signed in as …* and the device. An old device
+token is sent along, so a repeated sign-in keeps the **same** device.
+
+If the server rejects the device, the reason decides what happens:
+`gesperrt` and `kein-zugriff` stop every tool, remove the token and say what to
+do; `neu-anmelden` (and any unknown reason) stops every tool but **keeps the
+device token and all settings** and offers *Sign in again*, with a hint in the
+tray. A 401 (device removed or token invalid) asks for a new sign-in as before.
+*Sign out* asks first, says what happens (agents lose all tools, settings
+remain), deletes the device **on the server** and keeps the server address. If
+the server cannot be reached, the client says so. An agent cannot trigger any
+of this.
+
+![Sign in to the server](docs/bilder/fenster-dark-verbindung-800.png)
+![Sign in with Microsoft](docs/bilder/fenster-light-verbindung-entra-560.png)
+![Sign in again](docs/bilder/fenster-dark-neu-anmelden-800.png)
 
 The tray menu shows the state (`Verbunden · 4 Tools · 1 Agent`), opens the
 window, toggles **Start at login** and quits. The same switch sits on the

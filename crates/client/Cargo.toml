@@ -20,6 +20,8 @@ name = "quiver-anmelde-attrappe"
 path = "src/bin/quiver-anmelde-attrappe.rs"
 
 [dependencies]
+# Systembrowser ohne Shell (Anmeldung am Server).
+open = "5"
 quiver-domain.workspace = true
 quiver-protocol.workspace = true
 anyhow.workspace = true
@@ -55,3 +57,9 @@ rmcp = { version = "3.11", features = [
 [dev-dependencies]
 tempfile = "3"
 quiver-server = { path = "../server" }
+# Entra-Nachbau im Ende-zu-Ende-Test (wie crates/server/tests/entra.rs):
+# eigener RSA-Schlüssel auf Loopback, kein echter Mandant.
+jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto", "use_pem"] }
+rsa = "0.9"
+rand08 = { package = "rand", version = "0.8" }
+url = "2"

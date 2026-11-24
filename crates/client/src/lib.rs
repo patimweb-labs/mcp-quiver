@@ -38,6 +38,7 @@ mod hilfen;
 mod laufzeit;
 mod profil;
 pub mod protokoll;
+mod server_anmeldung;
 mod sse;
 mod tresor;
 
@@ -52,7 +53,7 @@ use quiver_domain::{
     EintragId, FehlendesFeld, Feld, Geraet, Mehrfach, Quelle, Soll, SollEintrag, Werte, Zugang,
     MEHRFACH_UMGEBUNG,
 };
-use quiver_protocol::EintragZustand;
+use quiver_protocol::{AnmeldeGrund, Anmeldearten, EintragZustand, PRAEFIX};
 use rmcp::model::Tool;
 use rmcp::{Peer, RoleClient, RoleServer};
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,7 @@ pub use einrichtung::EinrichtZustand;
 pub use einstellungen::{Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung};
 use hilfen::Abbruch;
 pub use protokoll::{Aufruf, LogFilter, Zeile};
+pub use server_anmeldung::{Browser, SystemBrowser};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
@@ -82,6 +84,9 @@ pub struct KernKonfig {
     pub mcp_adresse: SocketAddr,
     /// Wo Geheimnisse liegen (Standard: Tresor-Datei `<profil>/tresor`, in Tests: im Speicher).
     pub tresor: Arc<dyn Tresor>,
+    /// Wer die Anmeldeseite des Servers öffnet (Aufgabe 22). Standard: das
+    /// System; der Ende-zu-Ende-Test setzt eine Attrappe ein.
+    pub browser: Arc<dyn Browser>,
 }
 
 impl KernKonfig {
@@ -94,6 +99,7 @@ impl KernKonfig {
             tresor: Arc::new(DateiTresor::fuer_profil(&profil)),
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
+            browser: Arc::new(SystemBrowser),
         }
     }
 }
@@ -119,12 +125,38 @@ impl std::fmt::Debug for KernKonfig {
 pub enum Verbindung {
     /// Noch kein Server eingebunden.
     NichtEingebunden,
-    /// Anmeldung läuft.
+    /// Anmeldung läuft (Server fragen, Code tauschen).
     Verbindet { server: String },
+    /// Der Browser ist offen; der Lauscher wartet auf genau eine Antwort.
+    /// `adresse` ist die Anmeldeseite des Servers (für „Browser erneut öffnen“).
+    WartetAufBrowser { server: String, adresse: String },
     /// Verbunden; `geraet` ist der Anzeigename des eigenen Geräts.
     Verbunden { server: String, geraet: String },
     /// Verbindung weg – was nach der Anmeldung lief, läuft weiter.
     Getrennt { server: String, fehler: String },
+    /// Der Server verlangt eine neue Anmeldung (`neu-anmelden` oder ein
+    /// unbekannter Grund): alle Tools sind aus, **Geräte-Token und alle
+    /// Angaben bleiben**, der Knopf „Erneut anmelden“ führt zurück.
+    NeuAnmelden { server: String, text: String },
+    /// Die Anmeldung ist gescheitert (gesperrt, kein Zugriff, abgebrochen,
+    /// Zeit abgelaufen, Server nicht erreichbar). Kein Geräte-Token, die
+    /// Server-Adresse bleibt vorbelegt.
+    AnmeldeFehler { server: String, text: String },
+}
+
+impl Verbindung {
+    /// Die Server-Adresse, falls es eine gibt (auch nach dem Abmelden).
+    pub fn server(&self) -> Option<&str> {
+        match self {
+            Verbindung::NichtEingebunden => None,
+            Verbindung::Verbindet { server }
+            | Verbindung::WartetAufBrowser { server, .. }
+            | Verbindung::Verbunden { server, .. }
+            | Verbindung::Getrennt { server, .. }
+            | Verbindung::NeuAnmelden { server, .. }
+            | Verbindung::AnmeldeFehler { server, .. } => Some(server),
+        }
+    }
 }
 
 /// Ein Eintrag, wie ihn das Fenster zeigt.
@@ -192,6 +224,20 @@ pub struct AgentSicht {
     pub verbunden: bool,
 }
 
+/// Welche Wege der Server für die Anmeldung dieses Geräts anbietet.
+///
+/// Kommt aus `GET /api/v1/anmeldearten` und gilt nur für die Adresse, für die
+/// gefragt wurde. Ändert der User die Adresse, ist der Eintrag nicht mehr
+/// gültig — die Ansicht zeigt dann wieder „Weiter“.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anmeldewege {
+    pub server: String,
+    /// Entra: Knopf „Mit Microsoft anmelden“.
+    pub entra: bool,
+    /// Einmal-Code: ohne Entra der Weg dieses Servers.
+    pub code: bool,
+}
+
 /// Alles, was das Fenster zeigt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Modell {
@@ -204,6 +250,21 @@ pub struct Modell {
     /// alle Tools sind gestoppt, das Gerät muss neu eingebunden werden.
     #[serde(default)]
     pub abgelehnt: bool,
+    /// Warum das Gerät abgelehnt wurde (Aufgabe 20/22): `gesperrt`,
+    /// `kein-zugriff` oder `neu-anmelden`. `None` heißt: kein Grund bekannt.
+    #[serde(default)]
+    pub anmelde_grund: Option<AnmeldeGrund>,
+    /// Anzeigename des angemeldeten Benutzers („Angemeldet als …“). Kein
+    /// Geheimnis; kommt aus der Anmeldeantwort.
+    #[serde(default)]
+    pub benutzer: Option<String>,
+    /// Die zuletzt benutzte Server-Adresse — auch nach dem Abmelden, damit
+    /// sie nicht neu getippt werden muss.
+    #[serde(default)]
+    pub server_url: Option<String>,
+    /// Welche Anmeldewege der Server für `server_url` genannt hat.
+    #[serde(default)]
+    pub anmeldewege: Option<Anmeldewege>,
     /// Dürfen Agenten Inhalte des Protokolls sehen (Aufgabe 17)? Standard:
     /// aus – dann gibt es nur Metadaten.
     #[serde(default)]
@@ -249,9 +310,17 @@ struct Sitzung {
 struct Stand {
     /// Siehe [`Modell::abgelehnt`].
     abgelehnt: bool,
+    /// Siehe [`Modell::anmelde_grund`].
+    anmelde_grund: Option<AnmeldeGrund>,
     server_url: Option<String>,
     geraet: Option<Geraet>,
     token: Option<String>,
+    /// Siehe [`Modell::benutzer`].
+    benutzer: Option<String>,
+    /// Siehe [`Modell::anmeldewege`].
+    anmeldewege: Option<Anmeldewege>,
+    /// Bricht eine laufende Browser-Anmeldung ab (Aufgabe 22).
+    anmeldung_abbruch: Option<Abbruch>,
     lokale_werte: BTreeMap<EintragId, Werte>,
     /// Geheimwerte im Speicher (Quelle bleibt der Tresor).
     geheim: BTreeMap<EintragId, Werte>,
@@ -313,6 +382,10 @@ impl Stand {
                 .collect(),
             endpunkt: self.endpunkt.clone(),
             abgelehnt: self.abgelehnt,
+            anmelde_grund: self.anmelde_grund,
+            benutzer: self.benutzer.clone(),
+            server_url: self.server_url.clone(),
+            anmeldewege: self.anmeldewege.clone(),
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
         }
     }
@@ -321,6 +394,7 @@ impl Stand {
         profil::Profil {
             server_url: self.server_url.clone(),
             geraet: self.geraet.clone(),
+            benutzer: self.benutzer.clone(),
             lokale_werte: self
                 .lokale_werte
                 .iter()
@@ -742,11 +816,11 @@ impl Innen {
         {
             let mut stand = self.stand();
             stand.abgelehnt = abgelehnt;
-            if !abgelehnt {
-                stand.server_url = None;
-            }
+            // Die Adresse bleibt **immer** stehen (Aufgabe 22): Abmelden
+            // verwirft Token und Gerät, nicht die Adresse.
             stand.geraet = None;
             stand.token = None;
+            stand.benutzer = None;
             stand.soll = Soll::neu(Vec::new());
             stand.anmeldung.clear();
             stand.einrichtung.clear();
@@ -760,6 +834,64 @@ impl Innen {
         self.modell_schicken();
         self.liste_geaendert().await;
         geloescht
+    }
+
+    /// Der Server verlangt eine neue Anmeldung: alle Tools aus, aber
+    /// **Geräte-Token, Soll und alle lokalen Angaben bleiben** (Aufgabe 22).
+    /// Erst ein neuer Anmeldevorgang ersetzt das Token.
+    pub(crate) async fn neu_anmelden_setzen(self: &Arc<Self>, server: &str) {
+        let ids: Vec<EintragId> = self.stand().laeufer.keys().cloned().collect();
+        for id in ids {
+            stoppe_in(self, &id);
+        }
+        {
+            let mut stand = self.stand();
+            stand.angenommen = false;
+            stand.abgelehnt = false;
+            stand.anmelde_grund = Some(AnmeldeGrund::NeuAnmelden);
+            stand.verbindung = Verbindung::NeuAnmelden {
+                server: server.to_string(),
+                text: "Die Anmeldung gilt nicht mehr. Geräte-Token und Angaben bleiben."
+                    .to_string(),
+            };
+        }
+        self.speichern();
+        self.modell_schicken();
+        self.liste_geaendert().await;
+    }
+
+    /// Eine Ablehnung des Geräts einordnen (Aufgabe 22):
+    /// - `gesperrt`/`kein-zugriff`: alle Tools aus, Token weg, klare Meldung.
+    /// - `neu-anmelden` **und jeder unbekannte Grund**: alle Tools aus, Token
+    ///   und Angaben bleiben; der User meldet sich erneut an.
+    /// - 401 ohne Grund (Token ungültig/entfernt): wie bisher neu einbinden.
+    pub(crate) async fn ablehnung_behandeln(
+        self: &Arc<Self>,
+        server: &str,
+        fehler: &anyhow::Error,
+    ) {
+        // 401 heißt: das Token gilt nicht mehr (Gerät entfernt). Dann wie
+        // bisher neu einbinden — auch ohne `grund`.
+        if abgleich::status_von(fehler) == Some(reqwest::StatusCode::UNAUTHORIZED) {
+            if let Err(fehler) = self.ausbinden(true).await {
+                tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+            }
+            return;
+        }
+        match abgleich::grund_von(fehler) {
+            Some(grund @ (AnmeldeGrund::Gesperrt | AnmeldeGrund::KeinZugriff)) => {
+                if let Err(fehler) = self.ausbinden(true).await {
+                    tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                }
+                {
+                    let mut stand = self.stand();
+                    stand.anmelde_grund = Some(grund);
+                }
+                self.speichern();
+                self.modell_schicken();
+            }
+            _ => self.neu_anmelden_setzen(server).await,
+        }
     }
 
     pub(crate) fn verbunden_setzen(&self, server: &str) {
@@ -1553,6 +1685,62 @@ async fn starte_aus_soll(innen: &Arc<Innen>, soll: &Soll, id: &EintragId) {
     }
 }
 
+/// Eine Server-Adresse prüfen und normalisieren: `https` überall, `http`
+/// **nur** auf Loopback (ADR 0002). Kein Benutzer, keine Abfrage, kein Pfad.
+pub fn server_adresse(wert: &str) -> anyhow::Result<String> {
+    let wert = wert.trim().trim_end_matches('/');
+    if wert.is_empty() {
+        anyhow::bail!("Server-Adresse fehlt");
+    }
+    let adresse = reqwest::Url::parse(wert)
+        .map_err(|fehler| anyhow::anyhow!("„{wert}“ ist keine gültige Adresse: {fehler}"))?;
+    match adresse.scheme() {
+        "https" => {}
+        "http" => {
+            let host = adresse.host_str().unwrap_or_default();
+            let host = host
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+                .unwrap_or(host);
+            if !matches!(host, "127.0.0.1" | "::1" | "localhost") {
+                anyhow::bail!(
+                    "Unverschlüsseltes http ist nur auf diesem Rechner erlaubt (127.0.0.1, ::1, localhost)"
+                );
+            }
+        }
+        anderes => anyhow::bail!("Die Adresse muss mit https beginnen (nicht {anderes})"),
+    }
+    if !adresse.username().is_empty() || adresse.password().is_some() {
+        anyhow::bail!("Die Adresse darf keinen Benutzer und kein Passwort enthalten");
+    }
+    if adresse.query().is_some() || adresse.fragment().is_some() {
+        anyhow::bail!("Die Adresse darf keine Abfrage und kein Fragment enthalten");
+    }
+    if !matches!(adresse.path(), "" | "/") {
+        anyhow::bail!("Die Adresse darf keinen Pfad enthalten");
+    }
+    Ok(adresse.as_str().trim_end_matches('/').to_string())
+}
+
+/// Ein verständlicher Satz zu einem maschinenlesbaren Grund; ohne Grund steht
+/// der technische Text da.
+fn grund_text(grund: Option<AnmeldeGrund>, technisch: &str) -> String {
+    match grund {
+        Some(AnmeldeGrund::Gesperrt) => {
+            "Dieses Konto oder Gerät ist gesperrt. Bitte an die Verwaltung wenden."
+                .to_string()
+        }
+        Some(AnmeldeGrund::KeinZugriff) => {
+            "Diesem Konto ist keine Gruppe zugeordnet – es gibt noch keine Tools. Bitte an die Verwaltung wenden."
+                .to_string()
+        }
+        Some(AnmeldeGrund::NeuAnmelden) => {
+            "Die Anmeldung gilt nicht mehr. Bitte erneut anmelden.".to_string()
+        }
+        None => technisch.to_string(),
+    }
+}
+
 /// Die Fassade für das Fenster. Billig zu klonen (ein Zeiger).
 #[derive(Clone)]
 pub struct Kern {
@@ -1585,9 +1773,13 @@ impl Kern {
         };
         let stand = Stand {
             abgelehnt: false,
+            anmelde_grund: None,
             server_url: gespeichert.server_url.clone(),
             geraet,
             token,
+            benutzer: gespeichert.benutzer.clone(),
+            anmeldewege: None,
+            anmeldung_abbruch: None,
             lokale_werte: gespeichert
                 .lokale_werte
                 .iter()
@@ -1726,13 +1918,154 @@ impl Kern {
         self.innen.modell_schicken();
     }
 
-    /// Gerät beim Server einbinden (Einmal-Code aus der Admin-Oberfläche).
-    pub async fn einbinden(&self, server: &str, code: &str, name: &str) -> anyhow::Result<()> {
-        let server = server.trim().trim_end_matches('/').to_string();
-        if server.is_empty() {
-            anyhow::bail!("Server-Adresse fehlt");
+    /// Fragen, welche Anmeldewege dieser Server anbietet (Aufgabe 22).
+    ///
+    /// Das ist der Schritt hinter „Weiter“: die Adresse wird geprüft (https,
+    /// `http` nur Loopback), gespeichert und die Antwort in `anmeldewege`
+    /// abgelegt. Erst danach zeigt die Seite **entweder** „Mit Microsoft
+    /// anmelden“ **oder** das Code-Feld, nie beides.
+    pub async fn anmeldewege(&self, server: &str) -> anyhow::Result<()> {
+        let server = server_adresse(server)?;
+        let antwort = self
+            .innen
+            .http
+            .get(format!("{server}{PRAEFIX}/anmeldearten"))
+            .send()
+            .await
+            .map_err(|fehler| anyhow::anyhow!("Server nicht erreichbar: {fehler}"))?;
+        let antwort = abgleich::pruefen(antwort).await?;
+        let arten: Anmeldearten = antwort
+            .json()
+            .await
+            .map_err(|fehler| anyhow::anyhow!("Antwort der Anmeldung: {fehler}"))?;
+        {
+            let mut stand = self.innen.stand();
+            stand.server_url = Some(server.clone());
+            stand.abgelehnt = false;
+            stand.anmelde_grund = None;
+            // Ohne Entra gibt es die Einmal-Codes; mit Entra ausdrücklich nicht.
+            stand.anmeldewege = Some(Anmeldewege {
+                server: server.clone(),
+                entra: arten.entra,
+                code: !arten.entra,
+            });
+            if !matches!(stand.verbindung, Verbindung::Verbunden { .. }) {
+                stand.verbindung = Verbindung::NichtEingebunden;
+            }
         }
-        let antwort = abgleich::anmelden(&self.innen.http, &server, code, name).await?;
+        self.innen.speichern();
+        self.innen.modell_schicken();
+        Ok(())
+    }
+
+    /// Mit Entra über den Server anmelden (Aufgabe 22). Der Client spricht
+    /// **nie** mit Entra: er öffnet die Seite des Servers, wartet auf genau
+    /// eine Antwort auf `127.0.0.1` und tauscht den Code mit seinem
+    /// PKCE-Verifier. Ein altes Token wird mitgeschickt, damit das Gerät
+    /// dasselbe bleibt.
+    pub async fn anmelden_server(&self, server: &str, name: &str) -> anyhow::Result<()> {
+        let server = server_adresse(server)?;
+        if !self
+            .innen
+            .stand()
+            .anmeldewege
+            .as_ref()
+            .is_some_and(|wege| wege.server == server && wege.entra)
+        {
+            anyhow::bail!("Dieser Server meldet keinen Entra-Weg; bitte „Weiter“ erneut wählen");
+        }
+        let altes_token = self.innen.stand().token.clone();
+        // Eine schon laufende Anmeldung (etwa ein alter Lauscher) abbrechen.
+        if let Some(alt) = self.innen.stand().anmeldung_abbruch.take() {
+            alt.abbrechen();
+        }
+        let abbruch = Abbruch::neu();
+        self.innen.stand().anmeldung_abbruch = Some(abbruch.clone());
+        self.innen.verbindung_setzen(Verbindung::Verbindet {
+            server: server.clone(),
+        });
+
+        let innen = self.innen.clone();
+        let server_fuer_adresse = server.clone();
+        let ergebnis = server_anmeldung::anmelden(
+            &self.innen.http,
+            &*self.innen.konfig.browser,
+            &server,
+            name,
+            altes_token.as_deref(),
+            &abbruch,
+            move |adresse| {
+                innen.verbindung_setzen(Verbindung::WartetAufBrowser {
+                    server: server_fuer_adresse.clone(),
+                    adresse,
+                });
+            },
+        )
+        .await;
+        self.innen.stand().anmeldung_abbruch = None;
+
+        match ergebnis {
+            Ok(antwort) => self.anmelden_uebernehmen(&server, antwort),
+            Err(fehler) => {
+                self.anmeldefehler_setzen(&server, &fehler).await;
+                Err(fehler)
+            }
+        }
+    }
+
+    /// Eine laufende Browser-Anmeldung abbrechen (Knopf „Abbrechen“).
+    pub fn anmeldung_abbrechen(&self) {
+        if let Some(abbruch) = self.innen.stand().anmeldung_abbruch.take() {
+            abbruch.abbrechen();
+        }
+    }
+
+    /// Ein gescheitertes Anmelden in den Zustand schreiben: verständlicher
+    /// Text, richtiger Umgang mit Token und Angaben.
+    async fn anmeldefehler_setzen(self: &Kern, server: &str, fehler: &anyhow::Error) {
+        let text = grund_text(abgleich::grund_von(fehler), &format!("{fehler:#}"));
+        match abgleich::grund_von(fehler) {
+            Some(AnmeldeGrund::Gesperrt | AnmeldeGrund::KeinZugriff) => {
+                if let Err(fehler) = self.innen.ausbinden(true).await {
+                    tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                }
+                {
+                    let mut stand = self.innen.stand();
+                    stand.anmelde_grund = abgleich::grund_von(fehler);
+                    stand.verbindung = Verbindung::AnmeldeFehler {
+                        server: server.to_string(),
+                        text: text.clone(),
+                    };
+                }
+            }
+            Some(AnmeldeGrund::NeuAnmelden) | None if self.innen.stand().token.is_some() => {
+                self.innen.neu_anmelden_setzen(server).await;
+                let mut stand = self.innen.stand();
+                if let Verbindung::NeuAnmelden { text: alt, .. } = &mut stand.verbindung {
+                    *alt = text.clone();
+                }
+            }
+            _ => {
+                let mut stand = self.innen.stand();
+                stand.abgelehnt = false;
+                stand.anmelde_grund = abgleich::grund_von(fehler);
+                stand.verbindung = Verbindung::AnmeldeFehler {
+                    server: server.to_string(),
+                    text,
+                };
+            }
+        }
+        self.innen.speichern();
+        self.innen.modell_schicken();
+    }
+
+    /// Das Ergebnis einer Anmeldung übernehmen: Token in den Tresor, Gerät
+    /// und Benutzer ins Modell, den Abgleich wecken.
+    fn anmelden_uebernehmen(
+        &self,
+        server: &str,
+        antwort: quiver_protocol::AnmeldenAntwort,
+    ) -> anyhow::Result<()> {
         self.innen
             .konfig
             .tresor
@@ -1740,11 +2073,13 @@ impl Kern {
         {
             let mut stand = self.innen.stand();
             stand.abgelehnt = false;
-            stand.server_url = Some(server.clone());
+            stand.anmelde_grund = None;
+            stand.server_url = Some(server.to_string());
             stand.geraet = Some(antwort.geraet);
             stand.token = Some(antwort.token);
+            stand.benutzer = antwort.benutzer;
             stand.verbindung = Verbindung::Verbindet {
-                server: server.clone(),
+                server: server.to_string(),
             };
         }
         self.innen.speichern();
@@ -1753,9 +2088,45 @@ impl Kern {
         Ok(())
     }
 
-    /// Gerät abmelden: Token weg, nichts läuft mehr.
+    /// Gerät beim Server einbinden (Einmal-Code aus der Admin-Oberfläche).
+    pub async fn einbinden(&self, server: &str, code: &str, name: &str) -> anyhow::Result<()> {
+        let server = server.trim().trim_end_matches('/').to_string();
+        if server.is_empty() {
+            anyhow::bail!("Server-Adresse fehlt");
+        }
+        let antwort = abgleich::anmelden(&self.innen.http, &server, code, name).await?;
+        self.anmelden_uebernehmen(&server, antwort)
+    }
+
+    /// Gerät abmelden: das Gerät wird **auch am Server** gelöscht, dann sind
+    /// Token und Gerät weg; die Server-Adresse und alle Angaben bleiben.
+    /// Ist der Server nicht erreichbar, sagt der Client das — lokal ist das
+    /// Gerät trotzdem abgemeldet.
     pub async fn abmelden(&self) -> anyhow::Result<()> {
-        self.innen.ausbinden(false).await
+        tracing::info!("Abmelden im Fenster");
+        let (server, token) = self.innen.zugang();
+        let mut server_fehler = None;
+        if let (Some(server), Some(token)) = (server, token) {
+            if let Err(fehler) = abgleich::geraet_abmelden(&self.innen.http, &server, &token).await
+            {
+                tracing::warn!("Gerät am Server nicht gelöscht: {fehler:#}");
+                server_fehler = Some(fehler);
+            }
+        }
+        self.innen.ausbinden(false).await?;
+        {
+            let mut stand = self.innen.stand();
+            stand.anmelde_grund = None;
+            stand.anmeldewege = None;
+        }
+        self.innen.speichern();
+        self.innen.modell_schicken();
+        match server_fehler {
+            Some(fehler) => anyhow::bail!(
+                "Lokal abgemeldet, aber das Gerät ließ sich am Server nicht löschen: {fehler:#}"
+            ),
+            None => Ok(()),
+        }
     }
 
     /// Die Anmeldung eines Eintrags im Fenster auslösen (Aufgabe 10).

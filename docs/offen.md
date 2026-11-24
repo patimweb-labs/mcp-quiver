@@ -3,8 +3,9 @@
 Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 
 ## Server
-- [ ] Der Client nutzt noch den Einmal-Code-Weg; `/api/v1/anmeldearten` und
-      `/api/v1/auth/geraet/tausch` liegen bereit, Aufgabe 22 baut den Browser-Weg.
+- [ ] Die Abschlussseite des Browser-Lauschers ist schlicht und nur deutsch;
+      die Fenstertexte sind de/en. Die Seite verrät keinen Code, aber sie folgt
+      auch nicht der Sprache des Browsers.
 - [ ] Die JWKS wird nur bei unbekannter `kid` neu geholt (höchstens 1×/min); die
       Discovery nach 24 Stunden. Ein Endpunktwechsel bei Entra mitten im Betrieb
       erreicht den Server damit erst beim nächsten Auffrischen.
@@ -51,14 +52,27 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       aufgeräumt, nicht in einem eigenen Lauf.
 
 ## Client
-- [ ] Im Fenster-Modus reagiert der Client nicht auf SIGINT (Strg+C); nur SIGTERM beendet ihn.
+- [ ] SIGTERM und Strg+C enden geordnet; das „Abmelden des Systems“ ist auf
+      macOS/Windows nicht als eigener Grund erkennbar (dort bleibt es beim
+      Fenster-Ende bzw. SIGTERM). Der Signal-Faden ist nicht als
+      Integrationstest gegen ein echtes Signal geprüft; die Fahne und die
+      Texte sind getestet.
+- [ ] Cmd+Q wird im Fenster abgefangen und in den Tray gelegt. Auf Plattformen
+      ohne Tray ist das Fenster der einzige Weg; dann bleibt Cmd+Q ein
+      Weglege-Befehl ohne sichtbares Symbol.
 - [ ] Schnipsel für OpenCode, GitHub Copilot und die Header-Form von Hermes sind nicht gegen die CLI geprüft (nur Doku bzw. Quelltext).
 - [ ] Ein-Instanz-Port liest die Zeile ohne Längengrenze (nur lokal erreichbar).
 - [ ] Ungetestet: Prozess stirbt → `Fehler` + Neustart mit Backoff; `Remote`-Einträge; Start ohne Server nach Neustart.
 - [ ] `tools/list_changed` wird auch ohne echte Änderung der Tool-Liste geschickt.
 - [ ] Die Einrichtung (Aufgabe 11) hat bewusst keine Frist; ein hängendes Tool
       blockiert seinen Eintrag, bis der Prozess endet oder der Client beendet wird.
-- [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf.
+- [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf — das
+      ist seit Aufgabe 22 gewollt: Abmelden verwirft Token und Gerät, nicht die
+      Angaben und nicht die Server-Adresse. Wer die Angaben löschen will, löscht
+      das Profil.
+- [ ] Der Server hat für „Abmelden“ einen Geräteweg (`POST
+      /api/v1/geraet/abmelden`) bekommen. Das war für Aufgabe 22 nötig; die
+      parallele Arbeit an `crates/server` muss diesen Weg kennen.
 - [ ] Tools pro Agent filtern (SPEC §7) – die Agent-Kennung liegt in der Sitzung schon vor.
 - [ ] stderr der MCP-Prozesse geht ungefiltert ins Log (`laufzeit::stderr_ins_log`); `anmeldung::maskieren` dort ebenfalls anwenden.
 - [ ] Mehrere Zugänge (Aufgabe 14): die Liste ist nach Namen sortiert (BTreeMap), der User kann sie nicht umsortieren.
