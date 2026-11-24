@@ -128,6 +128,10 @@ pub struct GeraetStand {
     /// RFC 3339.
     pub zuletzt_gesehen: Option<String>,
     pub verbunden: bool,
+    /// Wem das Gerät gehört (E-Mail, sonst Name, sonst Objekt-Id). `None` bei
+    /// Geräten aus der Zeit der Einmal-Codes.
+    #[serde(default)]
+    pub besitzer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

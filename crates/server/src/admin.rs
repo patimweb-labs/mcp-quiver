@@ -285,6 +285,20 @@ pub(crate) async fn gruppe_loeschen(
 
 // ----------------------------------------------------------------- Geräte
 
+/// Der Besitzer zum Anzeigen; die Objekt-Id bleibt der Schlüssel.
+fn besitzer_von(conn: &rusqlite::Connection, oid: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(oid) = oid else {
+        return Ok(None);
+    };
+    Ok(Some(match speicher::benutzer_holen(conn, oid)? {
+        Some(benutzer) => benutzer
+            .email
+            .or(benutzer.name)
+            .unwrap_or_else(|| oid.to_string()),
+        None => oid.to_string(),
+    }))
+}
+
 pub(crate) async fn geraete_liste(
     State(zustand): State<Arc<Zustand>>,
 ) -> Ergebnis<Json<Vec<GeraetStand>>> {
@@ -292,7 +306,9 @@ pub(crate) async fn geraete_liste(
         let bestand = speicher::bestand(conn)?;
         let mut aus = Vec::new();
         for zeile in speicher::alle_geraete(conn)? {
+            let besitzer = besitzer_von(conn, zeile.oid.as_deref())?;
             aus.push(GeraetStand {
+                besitzer,
                 soll_revision: soll_aus(&bestand, &zeile.geraet)?.revision,
                 geraet: zeile.geraet,
                 meldung: zeile.meldung,
@@ -339,7 +355,9 @@ pub(crate) async fn geraet_setzen(
         speicher::setze_manuell(conn, geraet.id.als_str(), &geraet, &manuell)?;
         let bestand = speicher::bestand(conn)?;
         let soll = soll_aus(&bestand, &geraet)?;
+        let besitzer = besitzer_von(conn, zeile.oid.as_deref())?;
         Ok(Ok(GeraetStand {
+            besitzer,
             soll_revision: soll.revision,
             geraet,
             meldung: zeile.meldung,

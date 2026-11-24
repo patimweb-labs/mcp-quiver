@@ -11,10 +11,14 @@ import type {
   AuthStand,
   BenutzerSicht,
   Ich,
-  Rolle,
   Seite,
 } from "../api/typen";
 import { STANDARD_SEITE, ist_seite, seite_aus_hash } from "./navigation";
+import { darf_verwalten } from "./rollen";
+
+// Die Rollentabelle steht in `rollen.ts` (Aufgabe 24); hier bleibt der alte
+// Name als Weg für die Ansichten, die ihn schon benutzen.
+export { ROLLE_TEXT, darf_verwalten, rollen_text } from "./rollen";
 
 /** Kürzeste Länge des Passworts; dasselbe Maß wie `PASSWORT_MIN` im Server. */
 export const PASSWORT_MIN = 12;
@@ -77,9 +81,7 @@ export function lage_nach_401(entra: boolean): Lage {
 }
 
 /** Darf diese Rolle die Verwaltung benutzen? (Rust: `Rolle::darf_verwalten`.) */
-export function darf_verwalten(rolle: Rolle): boolean {
-  return rolle === "root" || rolle === "admin";
-}
+// `darf_verwalten` kommt aus `rollen.ts`.
 
 /** Nach der Anmeldung: darf es weitergehen, oder fehlt die Rolle? */
 export function lage_aus_ich(ich: Ich): Lage {
@@ -198,16 +200,6 @@ export function anmeldung_fehler(
 }
 
 // ------------------------------------------------------------------- Anzeige
-
-export const ROLLE_TEXT: Record<Rolle, string> = {
-  root: "Root",
-  admin: "Admin",
-  benutzer: "Mitarbeiter",
-};
-
-export function rollen_text(rolle: Rolle): string {
-  return ROLLE_TEXT[rolle] ?? "Mitarbeiter";
-}
 
 /**
  * Der Name im Kopf: Name, sonst E-Mail, sonst die Objekt-Id. Nie leer – ein

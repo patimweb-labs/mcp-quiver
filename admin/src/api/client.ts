@@ -15,16 +15,20 @@
 import type {
   Anmeldearten,
   AuthStand,
+  BenutzerAendern,
+  BenutzerSicht,
   Code,
   CodeAnlegen,
   Eintrag,
   EintragId,
   Einrichten,
+  EntraGruppe,
   GeraetAendern,
   GeraetStand,
   Gruppe,
   GruppeId,
   Ich,
+  PruefspurEintrag,
   Satz,
   SatzId,
   Ueberblick,
@@ -320,5 +324,59 @@ export class Client {
       methode: "POST",
       rumpf: daten,
     });
+  }
+
+  // -------------------------------------------------------------- Benutzer
+
+  benutzer(): Promise<BenutzerSicht[]> {
+    return anfrage<BenutzerSicht[]>(`${API_BASIS}/admin/benutzer`);
+  }
+
+  /** Rolle ändern, sperren oder entsperren; nur die gesetzten Felder wirken. */
+  benutzerSetzen(
+    oid: string,
+    aenderung: BenutzerAendern,
+  ): Promise<BenutzerSicht> {
+    return anfrage<BenutzerSicht>(`${API_BASIS}/admin/benutzer/${pfad(oid)}`, {
+      methode: "PUT",
+      rumpf: aenderung,
+    });
+  }
+
+  benutzerLoeschen(oid: string): Promise<void> {
+    return anfrage<void>(`${API_BASIS}/admin/benutzer/${pfad(oid)}`, {
+      methode: "DELETE",
+    });
+  }
+
+  /** Refresh-Token sofort einlösen und die Gruppen neu bestimmen. */
+  benutzerPruefen(oid: string): Promise<BenutzerSicht> {
+    return anfrage<BenutzerSicht>(
+      `${API_BASIS}/admin/benutzer/${pfad(oid)}/pruefen`,
+      { methode: "POST" },
+    );
+  }
+
+  // --------------------------------------------------------- Entra-Gruppen
+
+  entraGruppen(): Promise<EntraGruppe[]> {
+    return anfrage<EntraGruppe[]>(`${API_BASIS}/admin/entra-gruppen`);
+  }
+
+  /** Anzeigename einer gesehenen Entra-Gruppe (die Id bleibt der Schlüssel). */
+  entraGruppeSetzen(id: string, anzeigename: string | null): Promise<EntraGruppe> {
+    return anfrage<EntraGruppe>(
+      `${API_BASIS}/admin/entra-gruppen/${pfad(id)}`,
+      { methode: "PUT", rumpf: { anzeigename } },
+    );
+  }
+
+  // -------------------------------------------------------------- Prüfspur
+
+  /** Die letzten `limit` Einträge, neueste zuerst. */
+  pruefspur(limit: number): Promise<PruefspurEintrag[]> {
+    return anfrage<PruefspurEintrag[]>(
+      `${API_BASIS}/admin/pruefspur?limit=${encodeURIComponent(String(limit))}`,
+    );
   }
 }

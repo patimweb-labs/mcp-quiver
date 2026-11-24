@@ -11,13 +11,15 @@ import {
 } from "./navigation";
 
 describe("Seiten", () => {
-  it("kennt fünf Seiten mit Ziel", () => {
+  it("kennt sieben Seiten mit Ziel", () => {
     expect(SEITEN.map((seite) => seite.id)).toEqual([
       "ueberblick",
       "bibliothek",
       "saetze",
       "gruppen",
+      "benutzer",
       "geraete",
+      "pruefspur",
     ]);
     for (const seite of SEITEN) {
       expect(seite.titel.length).toBeGreaterThan(0);
