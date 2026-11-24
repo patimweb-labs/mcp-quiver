@@ -254,8 +254,9 @@ pub(crate) async fn ereignisse(
                 match ereignis {
                     None | Some(None) => return None,
                     // Ein Rückstand ist kein Ende: neu rechnen genügt.
-                    Some(Some(Err(_))) => continue,
-                    Some(Some(Ok(()))) => {}
+                    // Auch ein Rückstand ist ein Anlass, neu zu rechnen: dabei
+                    // gingen Meldungen verloren.
+                    Some(Some(Err(_) | Ok(()))) => {}
                 }
                 // Entfernt oder gesperrt: der Strom endet. Der Client verbindet
                 // neu, bekommt 401/403 und stoppt alle Tools.

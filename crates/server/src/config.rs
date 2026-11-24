@@ -263,9 +263,7 @@ impl Konfig {
     /// Proxy). Ausnahme ist nur die ausdrückliche Angabe
     /// `QUIVER_EINRICHTUNG=ohne-code` **und** eine Loopback-Basis-URL.
     pub fn einrichtung_mit_code(&self) -> bool {
-        let ausnahme = self.einrichtung_ohne_code
-            && self.lauscht_nur_loopback()
-            && ist_loopback_url(&self.oeffentlich);
+        let ausnahme = self.einrichtung_ohne_code && ist_loopback_url(&self.oeffentlich);
         if ausnahme {
             return false;
         }
@@ -650,9 +648,8 @@ pub fn einrichtung_aus(
             }
             tracing::warn!(
                 "QUIVER_EINRICHTUNG=ohne-code: die Ersteinrichtung braucht keinen Code. \
-                 Das ist nur zulässig, weil der Server auf Loopback lauscht ({adresse}) und \
-                 die Basis-URL {oeffentlich} lokal ist. Wer den Port von außen erreicht, \
-                 kann den Root anlegen – bitte nur auf 127.0.0.1 veröffentlichen."
+                 Der Server lauscht auf {adresse}; wer ihn erreicht, kann in den ersten \
+                 Minuten den Root anlegen – bitte nur auf 127.0.0.1 veröffentlichen."
             );
             Ok(true)
         }
@@ -862,8 +859,13 @@ mod tests {
         assert!(!konfig.einrichtung_mit_code(), "ohne-code auf Loopback");
         konfig.adresse = offen;
         assert!(
+            !konfig.einrichtung_mit_code(),
+            "ausdrücklich abgeschaltet gilt auch im Container"
+        );
+        konfig.oeffentlich = String::from("https://quiver.example.test");
+        assert!(
             konfig.einrichtung_mit_code(),
-            "ohne-code gilt nicht, sobald der Server im Netz lauscht"
+            "mit öffentlicher Basis-URL ist der Code immer Pflicht"
         );
     }
 

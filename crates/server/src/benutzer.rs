@@ -167,7 +167,11 @@ pub(crate) async fn root_anmelden(
     // Unbekannte E-Mail und falsches Passwort: gleiche Antwort, gleiche Dauer.
     let passt = passt && vorhanden;
     if !passt {
-        zustand.drossel.fehlschlag(&ip_schluessel, jetzt);
+        // Ohne unterscheidbare Adresse teilen sich alle einen Schlüssel; dann
+        // darf auch die Adress-Drossel niemanden lange aussperren.
+        zustand
+            .drossel
+            .fehlschlag_bis(&ip_schluessel, jetzt, konto_hoechstens);
         if !ip_bekannt {
             zustand
                 .drossel
