@@ -10,7 +10,8 @@
     "test": "vitest run",
     "bilder": "node scripts/bilder.mjs",
     "pruefung": "node scripts/pruefung.mjs",
-    "pruefung:anmeldung": "node scripts/anmeldung-browser.mjs"
+    "pruefung:anmeldung": "node scripts/anmeldung-browser.mjs",
+    "bilder:benutzer": "node scripts/bilder-benutzer.mjs"
   },
   "dependencies": {
     "lucide-vue-next": "^1.0.0",

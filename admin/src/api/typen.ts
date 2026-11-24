@@ -184,6 +184,13 @@ export interface Gruppe {
   saetze: SatzId[];
 }
 
+/** Der Besitzer eines Geräts, wie ihn der Server nennt (Aufgabe 21). */
+export interface GeraetBesitzer {
+  oid: string;
+  email?: string | null;
+  name?: string | null;
+}
+
 /** Ein eingebundenes Gerät. */
 export interface Geraet {
   id: GeraetId;
@@ -216,6 +223,12 @@ export interface GeraetStand {
   meldung: Meldung | null;
   zuletzt_gesehen: string | null;
   verbunden: boolean;
+  /**
+   * Wem das Gerät gehört, sofern der Server es nennt: als Objekt oder als
+   * Anzeigename. Ältere Server lassen das Feld weg (Altgeräte mit Einmal-Code
+   * haben keinen Besitzer).
+   */
+  besitzer?: GeraetBesitzer | string | null;
 }
 
 /** Zähler für die Überblicksseite. */
@@ -296,6 +309,33 @@ export interface Anmeldearten {
   root: boolean;
 }
 
+/** `PUT /api/v1/admin/benutzer/{oid}`; fehlende Felder bleiben, wie sie sind. */
+export interface BenutzerAendern {
+  rolle?: Rolle;
+  gesperrt?: boolean;
+  /** Nötig, wenn sich ein Admin selbst die Rolle entzieht oder sich sperrt. */
+  selbst_bestaetigt?: boolean;
+}
+
+/** Ein Eintrag der Prüfspur (`PruefspurEintrag`); ohne Geheimnisse. */
+export interface PruefspurEintrag {
+  /** RFC 3339. */
+  zeit: string;
+  /** `anmeldung`, `fehlschlag`, `rolle`, `aenderung`, `geraet`, … */
+  art: string;
+  akteur: string;
+  text: string;
+}
+
+/** Eine in Anmeldungen gesehene Entra-Gruppe; der Anzeigename kommt vom Admin. */
+export interface EntraGruppe {
+  /** Objekt-Id (GUID). */
+  id: string;
+  anzeigename: string | null;
+  /** RFC 3339, zuletzt in einem ID-Token gesehen. */
+  zuletzt: string;
+}
+
 /** `POST /api/v1/auth/root`: Root-Anmeldung mit E-Mail und Passwort. */
 export interface RootAnmelden {
   email: string;
@@ -330,7 +370,9 @@ export type Seite =
   | "bibliothek"
   | "saetze"
   | "gruppen"
-  | "geraete";
+  | "benutzer"
+  | "geraete"
+  | "pruefspur";
 
 /** Die drei Themes, sonst nichts (AGENTS.md §2.7). */
 export type Thema = "dark" | "light" | "mono";

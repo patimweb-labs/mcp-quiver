@@ -21,8 +21,16 @@ function b64url(wert) {
 /**
  * Den Nachbau starten. `objektId` ist die Identität, die jede Anmeldung
  * behauptet; `onAnmelden` wird je authorize-Aufruf gerufen (zum Protokollieren).
+ * Mit `setzeIdentitaet` lässt sich zwischen Anmeldungen die Person wechseln –
+ * für Bilder mit mehreren Benutzern.
  */
-export async function entraNachbau({ objektId = randomUUID(), onAnmelden } = {}) {
+export async function entraNachbau({
+  objektId = randomUUID(),
+  onAnmelden,
+  email = "test@example.test",
+  name = "Test Person",
+} = {}) {
+  let person = { objektId, email, name };
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const jwk = publicKey.export({ format: "jwk" });
   const kid = "nachbau-1";
@@ -43,14 +51,14 @@ export async function entraNachbau({ objektId = randomUUID(), onAnmelden } = {})
       iss: basis,
       aud: CLIENT,
       tid: TENANT,
-      oid: objektId,
-      sub: objektId,
+      oid: person.objektId,
+      sub: person.objektId,
       nonce,
       exp: Math.floor(Date.now() / 1000) + 3600,
       nbf: Math.floor(Date.now() / 1000) - 10,
       iat: Math.floor(Date.now() / 1000) - 10,
-      preferred_username: "test@example.test",
-      name: "Test Person",
+      preferred_username: person.email,
+      name: person.name,
       ...(mitGruppen ? { groups: [GRUPPE] } : {}),
     });
 
@@ -144,7 +152,13 @@ export async function entraNachbau({ objektId = randomUUID(), onAnmelden } = {})
     clientId: CLIENT,
     gruppe: GRUPPE,
     geheimnis: GEHEIMNIS,
-    objektId,
+    get objektId() {
+      return person.objektId;
+    },
+    /** Die nächste Anmeldung behauptet diese Person. */
+    setzeIdentitaet(neu = {}) {
+      person = { ...person, ...neu };
+    },
     stoppen: () =>
       new Promise((fertig) => {
         server.close(() => fertig());

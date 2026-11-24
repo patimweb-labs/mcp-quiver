@@ -128,6 +128,27 @@ export function geraet_name(stand: GeraetStand): string {
     : stand.geraet.id;
 }
 
+/**
+ * Der Besitzer eines Geräts, sofern der Server ihn nennt. Ohne Besitzer (etwa
+ * ein Altgerät mit Einmal-Code) steht ein Strich – keine Vermutung.
+ */
+export function besitzer_text(stand: GeraetStand): string {
+  const besitzer = stand.besitzer;
+  if (!besitzer) return "ohne Benutzer (Code)";
+  if (typeof besitzer === "string") return besitzer.trim() || "unbekannt";
+  const name = besitzer.name?.trim();
+  if (name) return name;
+  const email = besitzer.email?.trim();
+  if (email) return email;
+  return besitzer.oid || "unbekannt";
+}
+
+/** Ein Satz für den Hinweis am Besitzer; `null` heißt: Besitzer ist bekannt. */
+export function besitzer_hinweis(stand: GeraetStand): string | null {
+  if (stand.besitzer) return null;
+  return "Der Server nennt zu diesem Gerät keinen Besitzer (etwa ein Altgerät mit Einmal-Code).";
+}
+
 /** Kurze Revision für die Anzeige (die volle steht im Hinweis). */
 export function revision_kurz(revision: string): string {
   return revision.length <= 12 ? revision : `${revision.slice(0, 12)}…`;

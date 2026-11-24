@@ -1,9 +1,9 @@
 # Admin-Oberfläche (Vue)
 
-Die Verwaltung von mcp-quiver: Bibliothek, Sätze, Gruppen, Geräte. Sie wird vom
-Server unter `/` ausgeliefert (`admin/dist`) und muss **1:1 aussehen wie das
-Client-Fenster** (AGENTS.md §2.11): gleiche Tokens, gleiche Schrift, gleiche
-Abstände, gleiche Bausteine.
+Die Verwaltung von mcp-quiver: Bibliothek, Sätze, Gruppen, Benutzer, Geräte und
+Prüfspur. Sie wird vom Server unter `/` ausgeliefert (`admin/dist`) und muss
+**1:1 aussehen wie das Client-Fenster** (AGENTS.md §2.11): gleiche Tokens,
+gleiche Schrift, gleiche Abstände, gleiche Bausteine.
 
 ## Einmal einrichten
 
@@ -24,6 +24,7 @@ npm run build      # nach admin/dist (der Server liefert sie unter / aus)
 npm run typecheck  # vue-tsc
 npm test           # vitest, reine Logik
 npm run bilder     # Bildschirmfotos: Muster immer, Verwaltung mit Server
+npm run bilder:benutzer     # Benutzer, Prüfspur, Geräte mit Entra (eigener Server)
 npm run pruefung            # Browser-Prüfung gegen den echten Server
 npm run pruefung:anmeldung  # Browser-Prüfung der Geräteanmeldung (+ Entra-Nachbau)
 ```
@@ -54,7 +55,8 @@ src/
                       Seitenleiste, Segmentauswahl, Karte, Status, Feld, …
   ansichten/Muster.vue Musterseite für den Vergleich (nur im Dev-Bau)
   ansichten/          Anmeldebereich (Anmelden, Ersteinrichtung, geschlossen),
-                      Überblick, Bibliothek, Sätze, Gruppen, Geräte
+                      Überblick, Bibliothek, Sätze, Gruppen, Benutzer, Geräte,
+                      Prüfspur
   styles/tokens.css   erzeugt aus tokens/ – nicht von Hand ändern
   styles/schriften.css IBM Plex Sans/Mono aus crates/oberflaeche/schriften
 ```

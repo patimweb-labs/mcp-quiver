@@ -6,7 +6,7 @@
 // Warum nicht `WpNavList`: dessen Zeilenmaße stehen in Pixeln im Bauteil der
 // Bibliothek. Hier liest jede Zeile die Tokens (AGENTS.md §2.11).
 import { computed } from "vue";
-import { Gauge, Layers, Monitor, Package, Users } from "lucide-vue-next";
+import { Gauge, Layers, Monitor, Package, ScrollText, UserRound, Users } from "lucide-vue-next";
 
 import type { Seite } from "../api/typen";
 import { SEITEN } from "../logik/navigation";
@@ -24,7 +24,9 @@ const zeichen = {
   bibliothek: Package,
   saetze: Layers,
   gruppen: Users,
+  benutzer: UserRound,
   geraete: Monitor,
+  pruefspur: ScrollText,
 };
 
 const eintraege = computed(() =>

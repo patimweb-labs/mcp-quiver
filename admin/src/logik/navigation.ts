@@ -17,7 +17,9 @@ export const SEITEN: Seiteneintrag[] = [
   { id: "bibliothek", titel: "Bibliothek", unter: "Einträge und Vorlagen" },
   { id: "saetze", titel: "Sätze", unter: "Sammlungen mit Werten" },
   { id: "gruppen", titel: "Gruppen", unter: "Sätze für Gerätegruppen" },
+  { id: "benutzer", titel: "Benutzer", unter: "Rollen, Zugang, Prüfung" },
   { id: "geraete", titel: "Geräte", unter: "Stand, Gruppen, Zugang" },
+  { id: "pruefspur", titel: "Prüfspur", unter: "Wer wann was getan hat" },
 ];
 
 export function ist_seite(wert: string): wert is Seite {

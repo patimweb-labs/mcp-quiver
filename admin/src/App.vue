@@ -34,9 +34,11 @@ import { hash_aus_seite, seite_aus_hash, seite_titel } from "./logik/navigation"
 import { thema_aus_wert, THEMA_SPEICHER } from "./logik/thema";
 
 import Anmeldebereich from "./ansichten/Anmeldebereich.vue";
+import Benutzer from "./ansichten/Benutzer.vue";
 import Bibliothek from "./ansichten/Bibliothek.vue";
 import Geraete from "./ansichten/Geraete.vue";
 import Gruppen from "./ansichten/Gruppen.vue";
+import Pruefspur from "./ansichten/Pruefspur.vue";
 import Saetze from "./ansichten/Saetze.vue";
 import Ueberblick from "./ansichten/Ueberblick.vue";
 import Kopf from "./bausteine/Kopf.vue";
@@ -58,7 +60,9 @@ const ANSICHTEN = {
   bibliothek: Bibliothek,
   saetze: Saetze,
   gruppen: Gruppen,
+  benutzer: Benutzer,
   geraete: Geraete,
+  pruefspur: Pruefspur,
 } as const;
 
 const ansicht = computed(() => ANSICHTEN[seite.value]);

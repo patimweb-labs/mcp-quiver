@@ -2,6 +2,12 @@
 // einrichten, abmelden, anmelden, falsches Passwort, Übersicht laden, einen
 // Satz ändern – mit gebautem `admin/dist` und der echten CSP des Servers.
 //
+// Aufgabe 21 prüft zusätzlich die neuen Seiten: Benutzer (Rolle, Sperre,
+// jetzt prüfen, Suche, Filter, Root nicht änderbar), Prüfspur (Filter,
+// Nachladen, nur lesend) und die Geräte ohne Einmal-Codes, sobald Entra
+// eingerichtet ist. Dafür läuft ein Entra-Nachbau auf Loopback; der Benutzer
+// entsteht über den echten Geräte-Weg (start → bestätigen → Tausch).
+//
 // Chrome headless, eigenes temporäres Profil, Loopback, temporärer
 // Datenordner. Kein echter Tresor, kein echtes Profil, keine Firmendaten.
 //
@@ -9,14 +15,23 @@
 //
 //   npm run build && cargo build -p quiver-server && npm run pruefung
 
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
-import { anfrage, serverStarten } from "./server.mjs";
+import { entraNachbau, GEHEIMNIS } from "./mock-entra.mjs";
+import {
+  anfrage,
+  entraUmgebung,
+  freierPort,
+  serverStarten,
+  wartenAuf,
+} from "./server.mjs";
 
 /** Zeitlimit für den ganzen Lauf: Hängen ist ein Fehlschlag. */
 const GESAMT_MS = 180000;
@@ -27,6 +42,39 @@ const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 const EMAIL = "root@example.test";
 const PASSWORT = "ein-sehr-langes-testpasswort";
 const FALSCH = "dieses-passwort-ist-falsch";
+/** Die erfundene Identität des Entra-Nachbaus (keine Firmendaten). */
+const BENUTZER_OID = "99999999-8888-7777-6666-555555555555";
+
+function b64url(bytes) {
+  return Buffer.from(bytes).toString("base64url");
+}
+
+function pkce() {
+  const verifier = b64url(randomBytes(32));
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  return { verifier, challenge };
+}
+
+/** Ein Lauscher auf 127.0.0.1, der den Rücksprung mit Code aufnimmt. */
+async function lauscher() {
+  const port = await freierPort();
+  const gesehen = [];
+  const server = createServer((anfrage, antwort) => {
+    gesehen.push(anfrage.url ?? "");
+    antwort.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    antwort.end("mcp-quiver: Code angekommen");
+  });
+  await new Promise((fertig) => server.listen(port, "127.0.0.1", fertig));
+  return {
+    port,
+    gesehen,
+    stoppen: () =>
+      new Promise((fertig) => {
+        server.close(() => fertig());
+        server.closeAllConnections?.();
+      }),
+  };
+}
 
 async function browserStarten() {
   const versuche = [
@@ -76,7 +124,14 @@ async function main() {
   }
 
   const ordner = await mkdtemp(join(tmpdir(), "quiver-pruefung-"));
-  const server = await serverStarten({ dist: DIST });
+  const geheimnisDatei = join(ordner, "entra-secret");
+  await writeFile(geheimnisDatei, GEHEIMNIS, { mode: 0o600 });
+  const nachbau = await entraNachbau({ objektId: BENUTZER_OID });
+  const server = await serverStarten({
+    dist: DIST,
+    umgebung: entraUmgebung(nachbau, geheimnisDatei),
+  });
+  const ziel = await lauscher();
   let browser;
   try {
     browser = await browserStarten();
@@ -202,7 +257,227 @@ async function main() {
       throw new Error(`der Satz steht nicht so in der Datenbank: ${gespeichert.text}`);
     }
 
-    // 8. Nichts darf still kaputt sein: 0 Verstöße, 0 Konsolenfehler.
+    // 8. Eine Entra-Gruppe anlegen: Der Benutzer bekommt darüber seine Tools.
+    const sitzungswert = `${nachLogin.name}=${nachLogin.value}`;
+    const gruppe = await anfrage(server.basis, "/api/v1/admin/gruppen/team", {
+      methode: "PUT",
+      cookie: sitzungswert,
+      kopf: { Origin: server.basis },
+      rumpf: { id: "team", titel: "Team", saetze: [], entra: [nachbau.gruppe] },
+    });
+    if (gruppe.status !== 200) {
+      throw new Error(`Gruppe: ${gruppe.status} ${gruppe.text}`);
+    }
+
+    // 9. Ein Benutzer meldet sich am Gerät an – der echte Weg (start →
+    //    bestätigen → Rücksprung → Tausch). Danach gibt es ihn und ein Gerät.
+    const { verifier, challenge } = pkce();
+    const start = `${server.basis}/auth/geraet/start?challenge=${challenge}` +
+      `&port=${ziel.port}&zustand=pruefung-benutzer&name=Pr%C3%BCfrechner`;
+    await seite.goto(start, { waitUntil: "domcontentloaded" });
+    await seite
+      .getByRole("heading", { level: 1, name: "Gerät anmelden" })
+      .waitFor();
+    await seite.getByRole("button", { name: "Gerät anmelden" }).click();
+    await wartenAuf(() => ziel.gesehen.length > 0, {
+      was: "Rücksprung auf den Lauscher",
+      ms: SCHRITT_MS,
+    });
+    const ruecksprung = new URL(
+      ziel.gesehen[0],
+      `http://127.0.0.1:${ziel.port}`,
+    );
+    const geraetCode = ruecksprung.searchParams.get("code");
+    if (!geraetCode) throw new Error(`kein Code im Rücksprung: ${ziel.gesehen[0]}`);
+    const tausch = await anfrage(server.basis, "/api/v1/auth/geraet/tausch", {
+      methode: "POST",
+      rumpf: { code: geraetCode, verifier },
+    });
+    if (tausch.status !== 200 || !tausch.json?.token) {
+      throw new Error(`Geräte-Tausch: ${tausch.status} ${tausch.text}`);
+    }
+    console.log(`ok: Benutzer und Gerät angelegt (${tausch.json.geraet.id})`);
+
+    // 10. Der Entra-Gruppe einen Anzeigenamen geben (Schlüssel bleibt die Id).
+    const gruppenname = await anfrage(
+      server.basis,
+      `/api/v1/admin/entra-gruppen/${nachbau.gruppe}`,
+      {
+        methode: "PUT",
+        cookie: sitzungswert,
+        kopf: { Origin: server.basis },
+        rumpf: { anzeigename: "Team" },
+      },
+    );
+    if (gruppenname.status !== 200) {
+      throw new Error(`Anzeigename: ${gruppenname.status} ${gruppenname.text}`);
+    }
+
+    // 11. Seite Benutzer: Zeile, Suche, Filter, Root nicht änderbar.
+    await seite.goto(`${server.basis}/#/benutzer`, {
+      waitUntil: "domcontentloaded",
+    });
+    await seite.getByRole("heading", { level: 1, name: "Benutzer" }).waitFor();
+    const zeile = seite.getByRole("row", { name: /Test Person/ });
+    await zeile.waitFor();
+    const zeilentext = (await zeile.textContent()) ?? "";
+    for (const teil of [
+      "test@example.test",
+      "Mitarbeiter",
+      "Team",
+      "1 Gerät",
+      "geprüft",
+    ]) {
+      if (!zeilentext.includes(teil)) {
+        throw new Error(`in der Benutzerzeile fehlt „${teil}“: ${zeilentext}`);
+      }
+    }
+    const rootZeile = seite.getByRole("row", { name: /root@example\.test/ });
+    await rootZeile.getByText("nicht änderbar").waitFor();
+    if ((await rootZeile.getByRole("button").count()) > 0) {
+      throw new Error("der Root hat Aktionen, darf aber nicht änderbar sein");
+    }
+    console.log("ok: Benutzerzeile mit Gruppe, Gerät und Prüfstand");
+
+    await seite.getByLabel("Benutzer durchsuchen").fill("gibtsnicht");
+    await seite.getByText("Keine Treffer", { exact: true }).waitFor();
+    await seite.getByRole("button", { name: "Filter leeren" }).click();
+    await seite.getByRole("row", { name: /Test Person/ }).waitFor();
+    await seite.getByLabel("Benutzer durchsuchen").fill("anna");
+    await seite.getByText("Keine Treffer", { exact: true }).waitFor();
+    await seite.getByLabel("Benutzer durchsuchen").fill("");
+    console.log("ok: Suche und leerer Trefferzustand");
+
+    // 12. Rolle ändern, sperren, entsperren, jetzt prüfen – jede mit Rückfrage.
+    const rueckfrage = seite.getByRole("dialog");
+    await zeile.getByRole("button", { name: "Zum Admin" }).click();
+    await rueckfrage.waitFor();
+    if (!((await rueckfrage.textContent()) ?? "").includes("wird Admin")) {
+      throw new Error("die Rückfrage erklärt das Ernennen nicht");
+    }
+    await rueckfrage.getByRole("button", { name: "Zum Admin" }).click();
+    await zeile.getByText("Admin", { exact: true }).first().waitFor();
+    await zeile.getByRole("button", { name: "Zum Mitarbeiter" }).click();
+    await rueckfrage.waitFor();
+    await rueckfrage.getByRole("button", { name: "Zum Mitarbeiter" }).click();
+    await zeile.getByText("Mitarbeiter", { exact: true }).first().waitFor();
+    console.log("ok: Admin ernannt und wieder entzogen");
+
+    await zeile.getByRole("button", { name: "Sperren" }).click();
+    await rueckfrage.waitFor();
+    await rueckfrage.getByRole("button", { name: "Sperren" }).click();
+    await zeile.getByText("gesperrt", { exact: true }).waitFor();
+    await zeile.getByRole("button", { name: "Entsperren" }).click();
+    await rueckfrage.waitFor();
+    await rueckfrage.getByRole("button", { name: "Entsperren" }).click();
+    await wartenAuf(async () => (await zeile.getByText("gesperrt", { exact: true }).count()) === 0, {
+      was: "Benutzer entsperrt",
+      ms: SCHRITT_MS,
+    });
+    console.log("ok: gesperrt und entsperrt");
+
+    await zeile.getByRole("button", { name: "Jetzt prüfen" }).click();
+    await rueckfrage.waitFor();
+    if (!((await rueckfrage.textContent()) ?? "").includes("nachgeprüft")) {
+      throw new Error("die Rückfrage erklärt das Nachprüfen nicht");
+    }
+    await rueckfrage.getByRole("button", { name: "Jetzt prüfen" }).click();
+    await seite.getByText("sind nachgeprüft", { exact: false }).waitFor();
+    console.log("ok: jetzt geprüft");
+
+    // 13. Genug Einträge für „Nachladen“: 21 weitere Prüfungen, dann 20 + 1.
+    for (let i = 0; i < 21; i += 1) {
+      const geprueft = await anfrage(
+        server.basis,
+        `/api/v1/admin/benutzer/${BENUTZER_OID}/pruefen`,
+        { methode: "POST", cookie: sitzungswert, kopf: { Origin: server.basis } },
+      );
+      if (geprueft.status !== 200) {
+        throw new Error(`Prüfung ${i}: ${geprueft.status} ${geprueft.text}`);
+      }
+    }
+
+    // 14. Seite Prüfspur: nur lesend, Filter und Nachladen.
+    await seite.goto(`${server.basis}/#/pruefspur`, {
+      waitUntil: "domcontentloaded",
+    });
+    await seite.getByRole("heading", { level: 1, name: "Prüfspur" }).waitFor();
+    await seite.getByRole("button", { name: "Nachladen" }).waitFor();
+    const zeilen = seite.locator("table.tabelle tbody tr");
+    const vorher = await zeilen.count();
+    if (vorher === 0 || vorher > 20) {
+      throw new Error(`unerwartet viele Zeilen vor dem Nachladen: ${vorher}`);
+    }
+    if ((await seite.getByRole("button", { name: "Löschen" }).count()) > 0) {
+      throw new Error("die Prüfspur bietet eine Löschaktion");
+    }
+    await seite.getByRole("button", { name: "Nachladen" }).click();
+    await wartenAuf(async () => (await zeilen.count()) > vorher, {
+      was: "Nachladen bringt weitere Einträge",
+      ms: SCHRITT_MS,
+    });
+    console.log(`ok: Prüfspur geladen und nachgeladen (${vorher} → mehr)`);
+
+    await seite.getByRole("combobox", { name: "Art" }).click();
+    await seite.getByRole("option", { name: "Rolle" }).click();
+    await wartenAuf(
+      async () => {
+        const arten = await seite
+          .locator("table.tabelle tbody tr td:nth-child(2)")
+          .allTextContents();
+        return arten.length > 0 && arten.every((art) => art.trim() === "Rolle");
+      },
+      { was: "Filter nach Art Rolle", ms: SCHRITT_MS },
+    );
+    await seite.getByRole("combobox", { name: "Art" }).click();
+    await seite.getByRole("option", { name: "Alle Arten" }).click();
+    await seite.getByLabel("Prüfspur durchsuchen").fill("gibtsnicht");
+    await seite.getByText("Keine Treffer", { exact: true }).waitFor();
+    await seite.getByRole("button", { name: "Filter leeren" }).click();
+    console.log("ok: Prüfspur filtert nach Art und Suche");
+
+    // 15. Geräte: mit Entra keine Einmal-Codes, dafür die Erklärung; Besitzer.
+    await seite.goto(`${server.basis}/#/geraete`, {
+      waitUntil: "domcontentloaded",
+    });
+    await seite.getByRole("heading", { level: 1, name: "Geräte" }).waitFor();
+    await seite
+      .getByRole("heading", {
+        level: 2,
+        name: "So meldet sich der Benutzer am Gerät an",
+      })
+      .waitFor();
+    if ((await seite.getByRole("button", { name: "Gerät einbinden" }).count()) > 0) {
+      throw new Error("mit Entra gibt es weiter Einmal-Codes");
+    }
+    await seite.getByRole("columnheader", { name: "Besitzer" }).waitFor();
+    await seite.getByText("Prüfrechner", { exact: false }).first().waitFor();
+    console.log("ok: Geräte erklären die Anmeldung statt Codes");
+
+    // 16. Löschen – die letzte Handlung, danach ist der Benutzer weg.
+    await seite.goto(`${server.basis}/#/benutzer`, {
+      waitUntil: "domcontentloaded",
+    });
+    await seite.getByRole("heading", { level: 1, name: "Benutzer" }).waitFor();
+    await seite.getByRole("row", { name: /Test Person/ }).waitFor();
+    await seite
+      .getByRole("row", { name: /Test Person/ })
+      .getByRole("button", { name: "Löschen" })
+      .click();
+    await rueckfrage.waitFor();
+    if (!((await rueckfrage.textContent()) ?? "").includes("wird gelöscht")) {
+      throw new Error("die Rückfrage erklärt das Löschen nicht");
+    }
+    await rueckfrage.getByRole("button", { name: "Löschen" }).click();
+    await wartenAuf(
+      async () =>
+        (await seite.getByRole("row", { name: /Test Person/ }).count()) === 0,
+      { was: "Benutzer gelöscht", ms: SCHRITT_MS },
+    );
+    await seite.getByRole("row", { name: /root@example\.test/ }).waitFor();
+    console.log("ok: Benutzer gelöscht, Root bleibt");
+
+    // 17. Nichts darf still kaputt sein: 0 Verstöße, 0 Konsolenfehler.
     verstoesse.push(...((await seite.evaluate(() => window.__csp ?? [])) || []));
     await context.close();
     if (verstoesse.length > 0) {
@@ -217,6 +492,8 @@ async function main() {
     console.log("ok: 0 CSP-Verstöße, 0 Konsolenfehler, 0 Fehlerantworten");
   } finally {
     if (browser) await browser.close().catch(() => {});
+    await ziel.stoppen().catch(() => {});
+    await nachbau.stoppen().catch(() => {});
     await server.stoppen().catch(() => {});
     await rm(ordner, { recursive: true, force: true });
   }
