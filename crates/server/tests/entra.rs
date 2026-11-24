@@ -33,6 +33,7 @@ use quiver_protocol::{
     GeraeteTausch as Tausch, Rolle,
 };
 use quiver_server::entra_schluessel::{erzeugen, SchluesselHalter, SCHLUESSEL_DATEI};
+use quiver_server::GRAPH_BASIS;
 use quiver_server::{app, benutzer, Ausweis, EntraKonfig, Konfig, Uhr};
 use rsa::pkcs8::EncodePublicKey;
 use rsa_alt::pkcs1::EncodeRsaPrivateKey;
@@ -90,12 +91,48 @@ struct MockZustand {
     jtis: HashSet<String>,
     assertionen: usize,
     assertion_fehler: Option<String>,
+    /// Die `scope`-Werte der Anmelde-URLs (Aufgabe 30).
+    scopes: Vec<String>,
+    /// Die `scope`-Werte der Refresh-Formulare.
+    refresh_scopes: Vec<String>,
+    /// Welche Ids bei Graph abgefragt wurden.
+    graph_hits: Vec<String>,
+    /// Welche Zugriffstoken bei Graph ankamen.
+    graph_tokens: Vec<String>,
+    /// Wie Graph antwortet.
+    graph: GraphVerhalten,
 }
 
 struct CodeInfo {
     challenge: String,
     nonce: String,
     claims: Value,
+}
+
+/// Was der Graph-Nachbau bei `GET /v1.0/groups/{id}` tut (Aufgabe 30).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GraphVerhalten {
+    /// Antwortet mit genau diesem Anzeigenamen.
+    Name(String),
+    /// Antwortet mit diesem HTTP-Status.
+    Status(u16),
+    /// Leitet weiter, statt zu antworten.
+    Weiterleitung,
+    /// Antwortet, aber mit einer anderen Id.
+    FremdeId,
+    /// Antwortet mit einer riesigen Antwort.
+    Riesig,
+    /// Antwortet mit Steuer- und Richtungszeichen im Namen.
+    BoeserName,
+    /// Antwortet erst nach dem Zeitlimit.
+    Langsam,
+}
+
+/// Das Zugriffstoken, das der Entra-Nachbau ausgibt (nur Testdaten).
+const GRAPH_TOKEN: &str = "zugriffstoken-nur-fuer-den-test";
+
+fn graph_verhalten_default() -> GraphVerhalten {
+    GraphVerhalten::Name(String::from("Team Alpha"))
 }
 
 fn sign(key: &RsaPrivateKey, kid: &str, claims: &Value) -> String {
@@ -169,6 +206,11 @@ impl Mock {
                 jtis: HashSet::new(),
                 assertionen: 0,
                 assertion_fehler: None,
+                scopes: Vec::new(),
+                refresh_scopes: Vec::new(),
+                graph_hits: Vec::new(),
+                graph_tokens: Vec::new(),
+                graph: graph_verhalten_default(),
             })),
         };
         let router = Router::new()
@@ -176,6 +218,7 @@ impl Mock {
             .route("/authorize", get(authorize))
             .route("/token", post(token))
             .route("/keys", get(keys))
+            .route("/v1.0/groups/{id}", get(graph_gruppe))
             .with_state(mock.clone());
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -209,6 +252,30 @@ impl Mock {
 
     fn verzoegern(&self, ms: u64) {
         self.zustand.lock().unwrap().verzoegerung_ms = ms;
+    }
+
+    fn setze_graph(&self, verhalten: GraphVerhalten) {
+        self.zustand.lock().unwrap().graph = verhalten;
+    }
+
+    /// Die bei Graph abgefragten Ids.
+    fn graph_ids(&self) -> Vec<String> {
+        self.zustand.lock().unwrap().graph_hits.clone()
+    }
+
+    /// Die bei Graph angekommenen Zugriffstoken.
+    fn graph_tokens(&self) -> Vec<String> {
+        self.zustand.lock().unwrap().graph_tokens.clone()
+    }
+
+    /// Die `scope`-Werte der Browser-Anmeldungen.
+    fn scopes(&self) -> Vec<String> {
+        self.zustand.lock().unwrap().scopes.clone()
+    }
+
+    /// Die `scope`-Werte der Refresh-Aufrufe.
+    fn refresh_scopes(&self) -> Vec<String> {
+        self.zustand.lock().unwrap().refresh_scopes.clone()
     }
 
     fn zaehler(&self) -> (usize, usize, usize) {
@@ -370,6 +437,8 @@ async fn authorize(
     Query(abfrage): Query<HashMap<String, String>>,
 ) -> Response {
     let mut z = m.zustand.lock().unwrap();
+    z.scopes
+        .push(abfrage.get("scope").cloned().unwrap_or_default());
     z.naechster_code += 1;
     let code = format!("code-{}", z.naechster_code);
     let mut claims = z.claims.clone();
@@ -457,6 +526,7 @@ async fn token(AxState(m): AxState<Mock>, rumpf: Bytes) -> Response {
         return Json(json!({
             "id_token": id,
             "refresh_token": "refresh-1",
+            "access_token": GRAPH_TOKEN,
             "token_type": "Bearer",
             "expires_in": 3600
         }))
@@ -464,6 +534,11 @@ async fn token(AxState(m): AxState<Mock>, rumpf: Bytes) -> Response {
     }
 
     if form.get("grant_type").map(String::as_str) == Some("refresh_token") {
+        m.zustand
+            .lock()
+            .unwrap()
+            .refresh_scopes
+            .push(form.get("scope").cloned().unwrap_or_default());
         let token_wert = form.get("refresh_token").cloned().unwrap_or_default();
         let (fehler, mut claims, verzoegerung, doppelt) = {
             let mut z = m.zustand.lock().unwrap();
@@ -504,6 +579,7 @@ async fn token(AxState(m): AxState<Mock>, rumpf: Bytes) -> Response {
         return Json(json!({
             "id_token": id,
             "refresh_token": "refresh-2",
+            "access_token": GRAPH_TOKEN,
             "token_type": "Bearer",
             "expires_in": 3600
         }))
@@ -515,6 +591,60 @@ async fn token(AxState(m): AxState<Mock>, rumpf: Bytes) -> Response {
         Json(json!({"error": "unsupported_grant_type"})),
     )
         .into_response()
+}
+
+/// `GET /v1.0/groups/{id}` – der Graph-Nachbau (Aufgabe 30).
+async fn graph_gruppe(
+    AxState(m): AxState<Mock>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let verhalten = {
+        let mut z = m.zustand.lock().unwrap();
+        z.graph_hits.push(id.clone());
+        if let Some(wert) = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|w| w.to_str().ok())
+        {
+            z.graph_tokens
+                .push(String::from(wert.trim_start_matches("Bearer ")));
+        }
+        z.graph.clone()
+    };
+    match verhalten {
+        GraphVerhalten::Status(code) => (
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(json!({ "error": "test" })),
+        )
+            .into_response(),
+        GraphVerhalten::Weiterleitung => Response::builder()
+            .status(StatusCode::FOUND)
+            .header(header::LOCATION, "https://example.test/woanders")
+            .body(axum::body::Body::empty())
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        GraphVerhalten::FremdeId => Json(json!({
+            "id": GRUPPE_NEU,
+            "displayName": "Fremde Gruppe"
+        }))
+        .into_response(),
+        GraphVerhalten::Riesig => Json(json!({
+            "id": id,
+            "displayName": "x".repeat(70 * 1024)
+        }))
+        .into_response(),
+        GraphVerhalten::BoeserName => Json(json!({
+            "id": id,
+            "displayName": "  Team\u{202E}\u{0000} Alpha\u{200F}  "
+        }))
+        .into_response(),
+        GraphVerhalten::Langsam => {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            Json(json!({ "id": id, "displayName": "Zu spät" })).into_response()
+        }
+        GraphVerhalten::Name(name) => {
+            Json(json!({ "id": id, "displayName": name })).into_response()
+        }
+    }
 }
 
 // ------------------------------------------------------------------- Prüfung
@@ -536,18 +666,39 @@ struct Pruefung {
     ausweis: Ausweis,
     /// Ordner mit dem Schlüssel (nur beim Zertifikatsweg; wird aufgeräumt).
     key_ordner: Option<PathBuf>,
+    /// Basis für Graph, wenn Gruppennamen geholt werden (Aufgabe 30).
+    graph_basis: Option<String>,
     http: reqwest::Client,
 }
 
 impl Pruefung {
     async fn neu() -> Self {
-        Self::bauen(None, Ausweis::geheimnis("")).await
+        Self::bauen(None, Ausweis::geheimnis(""), None).await
     }
 
     async fn mit_entra() -> Self {
+        Self::mit_entra_graph(false, None).await
+    }
+
+    /// Entra mit dem Schalter für Gruppennamen; Graph ist der Nachbau (Aufgabe 30).
+    async fn mit_entra_namen() -> Self {
+        Self::mit_entra_graph(true, None).await
+    }
+
+    /// Entra mit Schalter, aber Graph zeigt auf `fremde_basis` (z. B. ins Leere).
+    async fn mit_entra_totem_graph(fremde_basis: &str) -> Self {
+        Self::mit_entra_graph(true, Some(fremde_basis.to_string())).await
+    }
+
+    async fn mit_entra_graph(namen: bool, fremde_basis: Option<String>) -> Self {
         let uhr = Uhr::default();
         let mock = Mock::start(uhr.clone()).await;
-        let mut p = Self::bauen(Some(mock.clone()), Ausweis::geheimnis(ENTRA_SECRET)).await;
+        let basis = if namen {
+            Some(fremde_basis.unwrap_or_else(|| mock.basis.clone()))
+        } else {
+            None
+        };
+        let mut p = Self::bauen(Some(mock.clone()), Ausweis::geheimnis(ENTRA_SECRET), basis).await;
         p.uhr = uhr;
         p
     }
@@ -568,7 +719,12 @@ impl Pruefung {
         let schluessel = erzeugen(&pfad, uhr.jetzt(), tage).expect("Schlüssel");
         mock.setze_zertifikat(schluessel.zertifikat_pem());
         let halter = SchluesselHalter::laden(pfad).expect("Halter");
-        let mut p = Self::bauen(Some(mock.clone()), Ausweis::Schluessel(Arc::new(halter))).await;
+        let mut p = Self::bauen(
+            Some(mock.clone()),
+            Ausweis::Schluessel(Arc::new(halter)),
+            None,
+        )
+        .await;
         p.uhr = uhr;
         p.key_ordner = Some(ordner);
         p
@@ -581,7 +737,7 @@ impl Pruefung {
             .join(SCHLUESSEL_DATEI)
     }
 
-    async fn bauen(mock: Option<Mock>, ausweis: Ausweis) -> Self {
+    async fn bauen(mock: Option<Mock>, ausweis: Ausweis, graph_basis: Option<String>) -> Self {
         static ZAEHLER: AtomicUsize = AtomicUsize::new(0);
         let nummer = ZAEHLER.fetch_add(1, Ordering::SeqCst);
         let stempel = std::time::SystemTime::now()
@@ -607,6 +763,10 @@ impl Pruefung {
                 authority: mock.basis.clone(),
                 issuer: mock.basis.clone(),
                 redirect_uri: format!("{oeffentlich}/auth/callback"),
+                gruppen_namen: graph_basis.is_some(),
+                graph_basis: graph_basis
+                    .clone()
+                    .unwrap_or_else(|| String::from(GRAPH_BASIS)),
             });
         }
         let router = app(konfig).await.expect("App baut");
@@ -619,6 +779,7 @@ impl Pruefung {
             mock,
             ausweis,
             key_ordner: None,
+            graph_basis,
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
@@ -641,6 +802,11 @@ impl Pruefung {
                 authority: mock.basis.clone(),
                 issuer: mock.basis.clone(),
                 redirect_uri: format!("{oeffentlich}/auth/callback"),
+                gruppen_namen: self.graph_basis.is_some(),
+                graph_basis: self
+                    .graph_basis
+                    .clone()
+                    .unwrap_or_else(|| String::from(GRAPH_BASIS)),
             });
         }
         app(konfig).await.expect("App baut")
@@ -2796,6 +2962,352 @@ async fn gleichzeitige_anmeldungen_legen_genau_eine_gruppe_an() {
         assert_eq!(a.geraet.gruppen, b.geraet.gruppen);
         assert_eq!(p.gruppen().await.len(), 1);
         assert_eq!(p.entra_gruppen().await.len(), 1);
+    })
+    .await;
+}
+
+// ------------------------------- Aufgabe 30: Namen der Entra-Gruppen
+
+/// Wartet, bis der Name aus Entra ankommt (Hintergrund, deshalb mit Frist).
+async fn name_warten(p: &Pruefung, id: &str, erwartet: &str) {
+    for _ in 0..200 {
+        let liste = p.entra_gruppen().await;
+        if liste
+            .iter()
+            .any(|zeile| zeile.id == id && zeile.name_entra.as_deref() == Some(erwartet))
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let liste = p.entra_gruppen().await;
+    panic!("Name {erwartet} kam nicht an: {liste:?}");
+}
+
+/// Wartet, bis mindestens eine Graph-Abfrage lief, und gibt ihr Zeit, zu wirken.
+async fn graph_abwarten(p: &Pruefung) {
+    for _ in 0..200 {
+        if !p.mock.as_ref().expect("Mock").graph_ids().is_empty() {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("keine Graph-Abfrage");
+}
+
+fn titel_der_gruppe(gruppen: &[quiver_domain::Gruppe], id: &str) -> String {
+    gruppen
+        .iter()
+        .find(|gruppe| gruppe.id.als_str() == id)
+        .map(|gruppe| gruppe.titel.clone())
+        .unwrap_or_default()
+}
+
+async fn toter_port() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Port frei");
+    let adresse = listener.local_addr().expect("Adresse");
+    drop(listener);
+    format!("http://{adresse}")
+}
+
+#[tokio::test]
+async fn ohne_schalter_kein_scope_und_keine_anfrage() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let _login = p.geraet_anmelden("A", 51234).await;
+        // Auch das Nachprüfen (Refresh) darf keinen Graph-Bereich anfordern.
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mock = p.mock.as_ref().expect("Mock");
+        assert!(
+            mock.graph_ids().is_empty(),
+            "ohne Schalter keine Graph-Anfrage: {:?}",
+            mock.graph_ids()
+        );
+        for scope in mock.scopes().iter().chain(mock.refresh_scopes().iter()) {
+            assert!(!scope.contains("GroupMember"), "scope: {scope}");
+            assert_eq!(scope, "openid profile email offline_access");
+        }
+        assert!(!mock.refresh_scopes().is_empty(), "Refresh lief");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn mit_schalter_kommt_der_name_und_folgt_der_umbenennung() {
+    mit_zeitlimit(async {
+        let mut p = Pruefung::mit_entra_namen().await;
+        let _login = p.geraet_anmelden("A", 51234).await;
+        name_warten(&p, GRUPPE_ENTRA, "Team Alpha").await;
+
+        let gruppen = p.gruppen().await;
+        assert_eq!(
+            titel_der_gruppe(&gruppen, GRUPPE_ENTRA),
+            "Team Alpha",
+            "der Name ersetzt den automatischen Titel"
+        );
+        let gesehen = p.entra_gruppen().await;
+        assert_eq!(gesehen[0].name_entra.as_deref(), Some("Team Alpha"));
+        assert!(gesehen[0].name_entra_am.is_some(), "mit Zeitpunkt");
+
+        let mock = p.mock.as_ref().expect("Mock");
+        assert!(
+            mock.scopes()
+                .iter()
+                .any(|scope| scope.contains(quiver_server::GRAPH_SCOPE)),
+            "Anmeldung fordert den Lesebereich an: {:?}",
+            mock.scopes()
+        );
+
+        // Umbenennen in Entra: nach 24 Stunden (und einer Prüfung) folgt der Titel.
+        mock.setze_graph(GraphVerhalten::Name(String::from("Team Beta")));
+        p.uhr.setze(p.uhr.jetzt() + time::Duration::hours(25));
+        p.cookie = p.root_anmelden().await;
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        name_warten(&p, GRUPPE_ENTRA, "Team Beta").await;
+        assert_eq!(
+            titel_der_gruppe(&p.gruppen().await, GRUPPE_ENTRA),
+            "Team Beta"
+        );
+        assert!(
+            mock.refresh_scopes()
+                .iter()
+                .any(|scope| scope.contains(quiver_server::GRAPH_SCOPE)),
+            "Refresh fordert den Lesebereich an: {:?}",
+            mock.refresh_scopes()
+        );
+        let spur = p.admin("GET", "/admin/pruefspur", None).await;
+        assert!(
+            spur.text.contains("Titel aus Entra übernommen"),
+            "{}",
+            spur.text
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn admin_titel_bleibt_stehen() {
+    mit_zeitlimit(async {
+        let mut p = Pruefung::mit_entra_namen().await;
+        let _login = p.geraet_anmelden("A", 51234).await;
+        name_warten(&p, GRUPPE_ENTRA, "Team Alpha").await;
+
+        // Der Admin benennt um; das gehört ihm.
+        let mut gruppe = p.gruppen().await.pop().expect("Gruppe");
+        gruppe.titel = String::from("Mein Team");
+        let antwort = p
+            .admin(
+                "PUT",
+                &format!("/admin/gruppen/{GRUPPE_ENTRA}"),
+                Some(json!(gruppe)),
+            )
+            .await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_graph(GraphVerhalten::Name(String::from("Team Beta")));
+        p.uhr.setze(p.uhr.jetzt() + time::Duration::hours(25));
+        p.cookie = p.root_anmelden().await;
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        name_warten(&p, GRUPPE_ENTRA, "Team Beta").await;
+
+        let gruppen = p.gruppen().await;
+        assert_eq!(
+            titel_der_gruppe(&gruppen, GRUPPE_ENTRA),
+            "Mein Team",
+            "der Server überschreibt keinen Admin-Titel"
+        );
+        // Der neue Name steht trotzdem als Anzeige bereit.
+        let gesehen = p.entra_gruppen().await;
+        assert_eq!(gesehen[0].name_entra.as_deref(), Some("Team Beta"));
+        assert_eq!(gesehen[0].anzeigename.as_deref(), Some("Mein Team"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn verboten_pausiert_einen_tag_und_aendert_nichts() {
+    mit_zeitlimit(async {
+        let mut p = Pruefung::mit_entra_namen().await;
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_graph(GraphVerhalten::Status(403));
+        let _login = p.geraet_anmelden("A", 51234).await;
+        graph_abwarten(&p).await;
+
+        let mock = p.mock.as_ref().expect("Mock");
+        assert_eq!(mock.graph_ids(), vec![String::from(GRUPPE_ENTRA)]);
+        let gesehen = p.entra_gruppen().await;
+        assert!(gesehen[0].name_entra.is_none(), "403 ändert nichts");
+        assert_eq!(
+            gesehen[0].anzeigename.as_deref(),
+            Some("Entra-Gruppe 12345678")
+        );
+
+        // Zweite Anmeldung: ein Tag Pause, keine neue Anfrage.
+        let _zweit = p.geraet_anmelden("B", 51235).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            p.mock.as_ref().expect("Mock").graph_ids().len(),
+            1,
+            "nach 403 wird einen Tag nicht gefragt"
+        );
+
+        // Nach dem Tag wieder – dann klappt es auch.
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_graph(GraphVerhalten::Name(String::from("Team Alpha")));
+        p.uhr.setze(p.uhr.jetzt() + time::Duration::hours(25));
+        p.cookie = p.root_anmelden().await;
+        let _dritt = p.geraet_anmelden("C", 51236).await;
+        name_warten(&p, GRUPPE_ENTRA, "Team Alpha").await;
+        assert!(
+            p.mock.as_ref().expect("Mock").graph_ids().len() >= 2,
+            "nach der Pause wird wieder gefragt"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn fehler_und_besondere_antworten_aendern_nichts() {
+    mit_zeitlimit(async {
+        for (verhalten, was) in [
+            (GraphVerhalten::Status(404), "404"),
+            (GraphVerhalten::Status(500), "500"),
+            (GraphVerhalten::Weiterleitung, "Weiterleitung"),
+            (GraphVerhalten::FremdeId, "fremde Id"),
+            (GraphVerhalten::Riesig, "riesige Antwort"),
+        ] {
+            let p = Pruefung::mit_entra_namen().await;
+            p.mock
+                .as_ref()
+                .expect("Mock")
+                .setze_graph(verhalten.clone());
+            let _login = p.geraet_anmelden("A", 51234).await;
+            graph_abwarten(&p).await;
+            let gesehen = p.entra_gruppen().await;
+            assert!(
+                gesehen[0].name_entra.is_none(),
+                "{was} darf nichts ändern: {gesehen:?}"
+            );
+            assert_eq!(
+                gesehen[0].anzeigename.as_deref(),
+                Some("Entra-Gruppe 12345678"),
+                "{was}"
+            );
+        }
+
+        // Ein böser Name wird gesäubert (Steuer- und Richtungszeichen weg).
+        let p = Pruefung::mit_entra_namen().await;
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_graph(GraphVerhalten::BoeserName);
+        let _login = p.geraet_anmelden("A", 51234).await;
+        name_warten(&p, GRUPPE_ENTRA, "Team Alpha").await;
+        assert_eq!(
+            titel_der_gruppe(&p.gruppen().await, GRUPPE_ENTRA),
+            "Team Alpha"
+        );
+
+        // Ein Zeitlimit lässt die Anmeldung in Ruhe.
+        let p = Pruefung::mit_entra_namen().await;
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_graph(GraphVerhalten::Langsam);
+        let _login = p.geraet_anmelden("A", 51234).await;
+        graph_abwarten(&p).await;
+        // Zeitlimit (5 s) plus etwas Luft.
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let gesehen = p.entra_gruppen().await;
+        assert!(gesehen[0].name_entra.is_none(), "Zeitlimit ändert nichts");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn anmeldung_wartet_nicht_auf_graph() {
+    mit_zeitlimit(async {
+        // Graph antwortet erst nach sechs Sekunden; die Anmeldung darf nicht
+        // darauf warten.
+        let p = Pruefung::mit_entra_namen().await;
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_graph(GraphVerhalten::Langsam);
+        let start = std::time::Instant::now();
+        let login = p.geraet_anmelden("A", 51234).await;
+        let gedauert = start.elapsed();
+        assert_eq!(login.geraet.gruppen.len(), 1);
+        assert!(
+            gedauert < Duration::from_secs(2),
+            "Anmeldung dauerte {gedauert:?}"
+        );
+
+        // Und mit einem toten Graph erst recht nicht.
+        let tot = toter_port().await;
+        let p = Pruefung::mit_entra_totem_graph(&tot).await;
+        let start = std::time::Instant::now();
+        let login = p.geraet_anmelden("B", 51235).await;
+        assert_eq!(login.geraet.gruppen.len(), 1);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "toter Graph hält die Anmeldung auf"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn zugriffstoken_steht_in_keiner_ausgabe() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra_namen().await;
+        let _login = p.geraet_anmelden("A", 51234).await;
+        name_warten(&p, GRUPPE_ENTRA, "Team Alpha").await;
+        let mock = p.mock.as_ref().expect("Mock");
+        assert_eq!(
+            mock.graph_tokens(),
+            vec![String::from(GRAPH_TOKEN)],
+            "das Token kam bei Graph an"
+        );
+
+        // Datenbank: keine Spur des Tokens, auch nicht im WAL.
+        let mut inhalt = Vec::new();
+        for eintrag in std::fs::read_dir(&p.daten).expect("Datenordner").flatten() {
+            if let Ok(bytes) = std::fs::read(eintrag.path()) {
+                inhalt.extend_from_slice(&bytes);
+            }
+        }
+        let text = String::from_utf8_lossy(&inhalt);
+        assert!(!text.contains(GRAPH_TOKEN), "Token steht in der Datenbank");
+
+        // Prüfspur und Verwaltungsantworten.
+        let spur = p.admin("GET", "/admin/pruefspur", None).await;
+        assert!(!spur.text.contains(GRAPH_TOKEN), "{}", spur.text);
+        let gruppen = p.admin("GET", "/admin/entra-gruppen", None).await;
+        assert!(!gruppen.text.contains(GRAPH_TOKEN));
+        let benutzer = p.admin("GET", "/admin/benutzer", None).await;
+        assert!(!benutzer.text.contains(GRAPH_TOKEN));
     })
     .await;
 }

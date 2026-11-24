@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { EntraAusweis, Gruppe } from "../api/typen";
+import type { EntraAusweis, EntraGruppe, Gruppe } from "../api/typen";
 import {
+  entra_name,
+  entra_name_hinweis,
   gruppe_hinweis,
   ist_entra_gruppe,
   ohne_satz,
@@ -40,6 +42,46 @@ describe("Gruppen aus Entra", () => {
       "Noch kein Satz – gibt noch keine Tools",
     );
     expect(gruppe_hinweis(mit({ saetze: ["basis"] }))).toBeNull();
+  });
+});
+
+describe("Name aus Entra", () => {
+  const ID = "12345678-1234-1234-1234-123456789012";
+
+  function gesehen(name: string | null): EntraGruppe[] {
+    return [
+      {
+        id: ID,
+        anzeigename: "Team intern",
+        zuletzt: "2026-11-24T10:00:00Z",
+        gruppe: ID,
+        geloescht: false,
+        name_entra: name,
+        name_entra_am: "2026-11-24T10:00:00Z",
+      },
+    ];
+  }
+
+  it("nimmt den Namen zur Id, auch in anderer Schreibweise", () => {
+    expect(entra_name(ID, gesehen("Team Alpha"))).toBe("Team Alpha");
+    expect(entra_name(ID.toUpperCase(), gesehen("Team Alpha"))).toBe("Team Alpha");
+    expect(entra_name(ID, gesehen("  "))).toBeNull();
+    expect(entra_name(ID, gesehen(null))).toBeNull();
+    expect(entra_name(ID, [])).toBeNull();
+  });
+
+  it("zeigt „Entra: …“ nur, wenn der Name vom Titel abweicht", () => {
+    const gruppe = mit({ entra: [ID], titel: "Team intern" });
+    expect(entra_name_hinweis(gruppe, gesehen("Team Alpha"))).toBe(
+      "Entra: Team Alpha",
+    );
+    // Gleich dem Titel: nichts zu sagen.
+    expect(
+      entra_name_hinweis(mit({ entra: [ID], titel: "Team Alpha" }), gesehen("Team Alpha")),
+    ).toBeNull();
+    // Ohne Entra-Id oder ohne Namen: nichts.
+    expect(entra_name_hinweis(gruppe, gesehen(null))).toBeNull();
+    expect(entra_name_hinweis(mit({ entra: [], titel: "Team" }), gesehen("Team Alpha"))).toBeNull();
   });
 });
 

@@ -101,16 +101,18 @@ export function entra_gruppen(
   benutzer: BenutzerSicht,
   gesehen: EntraGruppe[],
 ): Gruppenzeile[] {
+  // Der Titel der quiver-Gruppe; fehlt die Gruppe (gelöscht), der Name aus
+  // Entra. Die Id steht nur im Hinweis, nie als Text (Aufgabe 30).
   const namen = new Map(
     gesehen.map((gruppe) => [
       gruppe.id.toLowerCase(),
-      gruppe.anzeigename?.trim() ?? "",
+      gruppe.anzeigename?.trim() || gruppe.name_entra?.trim() || "",
     ]),
   );
   return benutzer.entra
     .map((id) => ({
       id,
-      name: namen.get(id.toLowerCase()) || id,
+      name: namen.get(id.toLowerCase()) || "unbenannt",
     }))
     .sort((a, b) => a.name.localeCompare(b.name, "de", { sensitivity: "base" }));
 }

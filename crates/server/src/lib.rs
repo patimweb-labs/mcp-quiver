@@ -34,6 +34,7 @@ mod einrichtung;
 pub mod entra_schluessel;
 mod fehler;
 mod geraet;
+mod graph;
 mod hilfen;
 mod kopfzeilen;
 mod krypto;
@@ -58,7 +59,7 @@ use tower_http::trace::TraceLayer;
 
 use zustand::Zustand;
 
-pub use config::{Ausweis, EntraKonfig, Konfig, Uhr};
+pub use config::{Ausweis, EntraKonfig, Konfig, Uhr, GRAPH_BASIS, GRAPH_SCOPE};
 pub use entra_schluessel::{EntraSchluessel, ZertifikatStand};
 pub use fehler::{Ergebnis, FehlerAntwort};
 pub use krypto::Schluessel;
@@ -89,6 +90,12 @@ async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
         Some(entra) => Some(Arc::new(oidc::Oidc::neu(entra)?)),
         None => None,
     };
+    // Gruppennamen gibt es nur mit Schalter (Aufgabe 30); sonst kein Client
+    // und damit auch keine Anfrage.
+    let graph = match konfig.entra.as_ref().filter(|entra| entra.gruppen_namen) {
+        Some(entra) => Some(Arc::new(graph::Graph::neu(&entra.graph_basis)?)),
+        None => None,
+    };
     let ist_https = konfig.ist_https();
     let dist = konfig.admin_dist.clone().filter(|pfad| {
         let da = pfad.is_dir();
@@ -106,7 +113,7 @@ async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
     let dummy = tokio::task::spawn_blocking(benutzer::dummy_hash_erzeugen)
         .await
         .map_err(|fehler| anyhow::anyhow!("Dummy-Hash nicht baubar: {fehler}"))??;
-    let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc, dummy));
+    let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc, graph, dummy));
     let router = router(zustand.clone(), dist).layer(middleware::from_fn(move |req, next| {
         kopfzeilen::sicherheits_kopfzeilen(ist_https, req, next)
     }));

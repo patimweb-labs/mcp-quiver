@@ -311,6 +311,12 @@ pub struct EntraGruppe {
     /// Vom Admin gelöscht: bleibt gelöscht, bis er sie wieder aufnimmt.
     #[serde(default)]
     pub geloescht: bool,
+    /// Anzeigename aus Entra (Aufgabe 30); nur Anzeige, nie der Schlüssel.
+    #[serde(default)]
+    pub name_entra: Option<String>,
+    /// Wann der Name aus Entra geholt wurde (RFC 3339).
+    #[serde(default)]
+    pub name_entra_am: Option<String>,
 }
 
 /// Rumpf für `PUT /admin/entra-gruppen/{id}` (Aufgabe 23).
@@ -408,6 +414,8 @@ mod tests {
         assert_eq!(alt.id, "id-1");
         assert!(alt.gruppe.is_none());
         assert!(!alt.geloescht);
+        assert!(alt.name_entra.is_none());
+        assert!(alt.name_entra_am.is_none());
 
         let stand = EntraAusweis {
             art: String::from("schluessel"),

@@ -19,7 +19,11 @@ import Kasten from "../bausteine/Kasten.vue";
 import Leer from "../bausteine/Leer.vue";
 import Seitenkopf from "../bausteine/Seitenkopf.vue";
 import Status from "../bausteine/Status.vue";
-import { gruppe_hinweis, ist_entra_gruppe } from "../logik/ausweis";
+import {
+  entra_name_hinweis,
+  gruppe_hinweis,
+  ist_entra_gruppe,
+} from "../logik/ausweis";
 import { neue_gruppe, saetze_sortiert } from "../logik/satz";
 import { type Zustand, fehler, fertig, laedt } from "../logik/seite";
 import GruppeDialog from "./GruppeDialog.vue";
@@ -29,6 +33,8 @@ const props = defineProps<{ client: Client }>();
 interface Daten {
   gruppen: Gruppe[];
   saetze: Satz[];
+  /** Alle gesehenen Entra-Gruppen; `name_entra` ist die kleine Zeile (Aufgabe 30). */
+  gesehen: EntraGruppe[];
   /** Gelöschte Entra-Gruppen: bleiben gelöscht, bis der Admin sie aufnimmt. */
   geloeschte: EntraGruppe[];
 }
@@ -58,6 +64,7 @@ async function laden(): Promise<void> {
         a.titel.localeCompare(b.titel, "de", { sensitivity: "base" }),
       ),
       saetze: saetze_sortiert(saetze),
+      gesehen: entra,
       geloeschte: entra.filter((eintrag) => eintrag.geloescht),
     });
   } catch (fehlerWert) {
@@ -171,7 +178,9 @@ onMounted(laden);
           <Users class="zeile__zeichen" aria-hidden="true" />
           <div class="zeile__haupt">
             <div class="zeile__kopf">
-              <h3 class="zeile__titel">{{ gruppe.titel }}</h3>
+              <h3 class="zeile__titel" :title="`${gruppe.titel} · ${gruppe.id}`">
+                {{ gruppe.titel }}
+              </h3>
               <span v-if="ist_entra_gruppe(gruppe)" class="marke-chip">
                 Aus Entra
               </span>
@@ -183,10 +192,15 @@ onMounted(laden);
             <p v-if="gruppe.saetze.length > 0" class="blass">
               {{ gruppe.saetze.map((id) => satz_titel(id)).join(", ") }}
             </p>
+            <p
+              v-if="entra_name_hinweis(gruppe, zustand.daten.gesehen)"
+              class="blass klein"
+            >
+              {{ entra_name_hinweis(gruppe, zustand.daten.gesehen) }}
+            </p>
             <p v-if="gruppe_hinweis(gruppe)" class="blass">
               {{ gruppe_hinweis(gruppe) }}
             </p>
-            <p class="mono blass">{{ gruppe.id }}</p>
           </div>
           <div class="zeile__aktionen">
             <WpIconButton
@@ -218,8 +232,11 @@ onMounted(laden);
         >
           <Users class="zeile__zeichen" aria-hidden="true" />
           <div class="zeile__haupt">
-            <p class="mono">{{ eintrag.id }}</p>
-            <p class="blass">
+            <p :title="eintrag.id">{{ eintrag.name_entra ?? eintrag.id }}</p>
+            <p v-if="eintrag.name_entra" class="mono blass klein">
+              {{ eintrag.id }}
+            </p>
+            <p class="blass klein">
               Zuletzt gesehen: {{ eintrag.zuletzt }}
             </p>
           </div>
@@ -341,6 +358,10 @@ onMounted(laden);
   display: flex;
   gap: var(--wp-space-1);
   flex: none;
+}
+
+.klein {
+  font-size: var(--wp-font-size-sm);
 }
 
 .fehler {

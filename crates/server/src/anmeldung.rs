@@ -358,6 +358,7 @@ async fn callback_intern(
         })?;
 
     // Refresh-Token verschlüsselt ablegen; AAD bindet es an (tid, oid).
+    let access_token = tokens.access_token.clone();
     let token_verschluesselt = match tokens.refresh_token.as_deref() {
         Some(refresh) => Some(
             krypto::verschluesseln(
@@ -415,6 +416,9 @@ async fn callback_intern(
     .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
     // Die Geräte sollen den neuen Soll-Zustand sofort sehen.
     zustand.melde_aenderung();
+    // Gruppennamen im Hintergrund (Aufgabe 30): hält die Anmeldung nie auf,
+    // und ein Fehler dort ändert hier nichts.
+    crate::graph::starte(zustand, &identitaet.gruppen, access_token);
 
     if zustand_row.modus == "admin" {
         return verwaltungs_sitzung(zustand, &identitaet, jetzt).await;

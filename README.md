@@ -122,7 +122,13 @@ Entra, devices sign in through the browser and groups come from the token.
    "Entra-Gruppe <first 8 characters>" **once**, without tool sets – so it
    grants nothing until an admin assigns a set in the admin UI. After that the
    title and sets belong to the admin; Entra only replaces the members. Users
-   without a group get no tools.
+   without a group get no tools. With `QUIVER_ENTRA_GRUPPENNAMEN=an` the server
+   also fetches the group's display name via Graph (read scope
+   `GroupMember.Read.All`; the app needs the tenant's consent). The name
+   replaces the automatic title as long as the admin has not set one of their
+   own, and is shown small below the title in the admin UI. Without the switch
+   the server never calls Graph; either way, permissions run on the object id
+   only.
 6. Root can appoint admins; an Entra user must sign in once before
    `quiver-server admin-setzen --oid <object id>` works.
 
@@ -153,6 +159,8 @@ it again. At most 200 groups are created this way.
 | `QUIVER_ENTRA_SECRET_DATEI` | Client secret file (default `<data>/entra-secret`); exactly one of secret and key |
 | `QUIVER_ENTRA_SCHLUESSEL_DATEI` | Private key for `private_key_jwt` (default `<data>/entra-schluessel.pem`) |
 | `QUIVER_ENTRA_AUTHORITY` | Alternative authority, loopback only (tests) |
+| `QUIVER_ENTRA_GRUPPENNAMEN` | `an` fetches group names via Graph; default `aus`, any other value prevents startup |
+| `QUIVER_ENTRA_GRAPH` | Base URL for Graph, loopback only (tests); fixed to `https://graph.microsoft.com` in production |
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
 | `QUIVER_ALTGERAETE` | `erlaubt` (default) or `gesperrt` for devices without a user |
 

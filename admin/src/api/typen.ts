@@ -212,6 +212,9 @@ export interface EntraAusweis {
  * Eine in Anmeldungen gesehene Entra-Gruppe (Aufgabe 23). Der Server legt
  * für jede Id einmal eine quiver-Gruppe an; gelöschte bleiben gemerkt und
  * lassen sich wieder aufnehmen.
+ *
+ * `name_entra` ist der Anzeigename aus Entra (Aufgabe 30) – nur Anzeige, nie
+ * der Schlüssel; Rechte laufen weiter über `id`.
  */
 export interface EntraGruppe {
   id: string;
@@ -220,6 +223,10 @@ export interface EntraGruppe {
   /** Kennung der quiver-Gruppe, falls es sie gibt. */
   gruppe: GruppeId | null;
   geloescht: boolean;
+  /** Anzeigename aus Entra, sofern geholt (Aufgabe 30). */
+  name_entra: string | null;
+  /** Wann er geholt wurde (RFC 3339). */
+  name_entra_am: string | null;
 }
 
 /** Der Besitzer eines Geräts, wie ihn der Server nennt (Aufgabe 21). */
@@ -363,15 +370,6 @@ export interface PruefspurEintrag {
   art: string;
   akteur: string;
   text: string;
-}
-
-/** Eine in Anmeldungen gesehene Entra-Gruppe; der Anzeigename kommt vom Admin. */
-export interface EntraGruppe {
-  /** Objekt-Id (GUID). */
-  id: string;
-  anzeigename: string | null;
-  /** RFC 3339, zuletzt in einem ID-Token gesehen. */
-  zuletzt: string;
 }
 
 /** `POST /api/v1/auth/root`: Root-Anmeldung mit E-Mail und Passwort. */

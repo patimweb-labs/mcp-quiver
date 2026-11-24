@@ -543,6 +543,8 @@ pub(crate) async fn entra_gruppen(
                 zuletzt: zeile.zuletzt,
                 gruppe: zeile.gruppe.map(|id| id.als_str().to_string()),
                 geloescht: zeile.geloescht,
+                name_entra: zeile.name_entra,
+                name_entra_am: zeile.name_entra_am,
             })
             .collect())
     })
@@ -633,6 +635,8 @@ pub(crate) async fn entra_gruppe_setzen(
         zuletzt: zeile.zuletzt,
         gruppe: zeile.gruppe.map(|id| id.als_str().to_string()),
         geloescht: zeile.geloescht,
+        name_entra: zeile.name_entra,
+        name_entra_am: zeile.name_entra_am,
     }))
 }
 

@@ -415,6 +415,8 @@ impl Pruefung {
                     authority: mock.basis.clone(),
                     issuer: mock.basis.clone(),
                     redirect_uri: format!("{basis}/auth/callback"),
+                    gruppen_namen: false,
+                    graph_basis: String::from(quiver_server::GRAPH_BASIS),
                 });
                 (Some(mock), uhr)
             }
