@@ -22,7 +22,7 @@ use quiver_client::{Anmeldewege, Verbindung};
 
 pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
     bausteine::seite(ui, |ui| {
-        hinweis(ui, sicht);
+        hinweis(ui, sicht, aktionen);
         seitenkopf(
             ui,
             sicht,

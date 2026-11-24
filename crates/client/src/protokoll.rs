@@ -11,22 +11,27 @@
 //!
 //! - **Maskieren.** Schlüssel, deren Name `pass`, `token`, `secret`, `key`,
 //!   `pat`, `auth` oder `cookie` enthält, bekommen `<verborgen>` als Wert.
-//!   Und **jeder** Wert aus dem Tresor wird ersetzt – auch als Teilstring, in
-//!   Argumenten, in der Vorschau, im Fehlertext und in den Prozesszeilen.
+//!   `pat` gilt nur als **Wort** (`github_pat` ja, `path` nein). Und **jeder**
+//!   Wert aus dem Tresor wird ersetzt – in Argumenten, in der Vorschau, im
+//!   Fehlertext und in den Prozesszeilen. Werte ab sechs Zeichen auch als
+//!   Teilstring, kürzere nur als ganzes Wort (sonst verschwände jedes `a`),
+//!   zusätzlich in Base64- und URL-kodierter Form.
 //! - **Kürzen.** Je Wert 200 Zeichen, Argumente zusammen 4 KB, Vorschau 500,
-//!   Fehlertext 2000. Was nicht gekürzt wird, wächst unbegrenzt.
+//!   Fehlertext 2000, Prozesszeile 2000. Was nicht gekürzt wird, wächst unbegrenzt.
+//! - **Begrenzen.** Je Eintrag höchstens 200 Prozesszeilen je Minute auf der
+//!   Platte, je Tagesdatei eine feste Größe – geprüft **vor** dem Schreiben.
 //!
 //! Der Speicher ist ein Ringpuffer (2000 Aufrufe, 5000 Zeilen). Auf der Platte
 //! liegen `<profil>/protokoll/aufrufe-JJJJ-MM-TT.jsonl` und
 //! `prozesse-JJJJ-MM-TT.jsonl` mit Rechten 0600; was älter als 7 Tage ist,
 //! fliegt weg, und insgesamt bleiben höchstens 50 MB.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use quiver_domain::EintragId;
 use serde::{Deserialize, Serialize};
@@ -46,6 +51,12 @@ pub const ARGUMENTE_BYTES: usize = 4 * 1024;
 pub const VORSCHAU_ZEICHEN: usize = 500;
 /// So lang darf ein Fehlertext sein.
 pub const FEHLER_ZEICHEN: usize = 2000;
+/// So lang darf eine Prozesszeile sein (Puffer einer Zeile: 8 KB).
+pub const ZEILE_ZEICHEN: usize = 2000;
+/// So viele Prozesszeilen eines Eintrags gehen je Minute auf die Platte.
+pub const ZEILEN_JE_MINUTE: usize = 200;
+/// So groß darf eine Tagesdatei werden – geprüft **vor** dem Schreiben.
+pub const DATEI_BYTES: u64 = 10 * 1024 * 1024;
 /// So alt dürfen Protokolldateien werden.
 pub const TAGE: u64 = 7;
 /// So viel Platz dürfen alle Protokolldateien zusammen brauchen.
@@ -224,6 +235,10 @@ pub struct Protokoll {
     zeilen: Mutex<VecDeque<Zeile>>,
     /// Die Werte aus dem Tresor, die nirgends auftauchen dürfen.
     geheimnisse: Mutex<Vec<String>>,
+    /// Zählt je Eintrag die Zeilen der laufenden Minute auf der Platte.
+    zeilen_je_minute: Mutex<BTreeMap<EintragId, (Instant, usize)>>,
+    /// Wie viele Zeilen wegen der Grenzen **nicht** auf die Platte gingen.
+    verworfen: Mutex<u64>,
     /// Zählt jede neue Zeile – das Fenster lädt bei Änderung neu.
     zaehler: tokio::sync::watch::Sender<u64>,
 }
@@ -245,6 +260,8 @@ impl Protokoll {
             aufrufe: Mutex::new(VecDeque::new()),
             zeilen: Mutex::new(VecDeque::new()),
             geheimnisse: Mutex::new(Vec::new()),
+            zeilen_je_minute: Mutex::new(BTreeMap::new()),
+            verworfen: Mutex::new(0),
             zaehler,
         };
         protokoll.aufraeumen();
@@ -289,7 +306,31 @@ impl Protokoll {
         *gespeichert = werte;
     }
 
-    /// Alle Geheimnisse durch `<verborgen>` ersetzen – auch als Teilstring.
+    /// Wie viele Zeilen die Grenzen abgewiesen haben (für Prüfungen).
+    pub fn verworfene_zeilen(&self) -> u64 {
+        *self
+            .verworfen
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+    }
+
+    /// Eine Zeile, die schon gekürzt wurde, als verworfen zählen (der Rest
+    /// hinter dem Puffer erreicht das Protokoll nicht).
+    pub fn zeile_verworfen(&self, _eintrag: &EintragId) {
+        let mut verworfen = self
+            .verworfen
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+        *verworfen = verworfen.saturating_add(1);
+    }
+
+    /// Alle Geheimnisse durch `<verborgen>` ersetzen.
+    ///
+    /// Lange Werte (ab sechs Zeichen) verschwinden auch als Teilstring, kurze
+    /// nur als **ganzes Wort** – sonst würde ein Geheimnis wie `a` jeden Text
+    /// unlesbar machen. Zusätzlich verschwinden die Base64- und die
+    /// URL-kodierte Form: ein Geheimnis, das in einer Adresse oder in einer
+    /// JSON-Nutzlast steckt, ist genauso geheim.
     pub fn maskieren(&self, text: &str) -> String {
         self.maskieren_mit(text, &[])
     }
@@ -299,18 +340,14 @@ impl Protokoll {
     fn maskieren_mit(&self, text: &str, zusatz: &[String]) -> String {
         let mut text = text.to_string();
         for geheimnis in zusatz {
-            if !geheimnis.is_empty() && text.contains(geheimnis.as_str()) {
-                text = text.replace(geheimnis.as_str(), VERBORGEN);
-            }
+            text = maskieren_wert(&text, geheimnis);
         }
         let geheimnisse = self
             .geheimnisse
             .lock()
             .unwrap_or_else(|vergiftet| vergiftet.into_inner());
         for geheimnis in geheimnisse.iter() {
-            if text.contains(geheimnis.as_str()) {
-                text = text.replace(geheimnis.as_str(), VERBORGEN);
-            }
+            text = maskieren_wert(&text, geheimnis);
         }
         text
     }
@@ -331,9 +368,12 @@ impl Protokoll {
             tool: aufzeichnung.tool.to_string(),
             dauer_ms: u64::try_from(aufzeichnung.dauer.as_millis()).unwrap_or(u64::MAX),
             status: aufzeichnung.status,
-            fehler: aufzeichnung
-                .fehler
-                .map(|text| kuerzen(&self.maskieren_mit(text, &zusatz), FEHLER_ZEICHEN)),
+            fehler: aufzeichnung.fehler.map(|text| {
+                kuerzen(
+                    &self.maskieren_mit(&anzeige_zeichen(text), &zusatz),
+                    FEHLER_ZEICHEN,
+                )
+            }),
             argumente: aufzeichnung
                 .argumente
                 .map(|argumente| self.argumente(argumente))
@@ -341,7 +381,12 @@ impl Protokoll {
             antwort_groesse: aufzeichnung.antwort.map(zeichenzahl).unwrap_or(0),
             vorschau: aufzeichnung
                 .antwort
-                .map(|antwort| kuerzen(&self.maskieren_mit(antwort, &zusatz), VORSCHAU_ZEICHEN))
+                .map(|antwort| {
+                    kuerzen(
+                        &self.maskieren_mit(&anzeige_zeichen(antwort), &zusatz),
+                        VORSCHAU_ZEICHEN,
+                    )
+                })
                 .unwrap_or_default(),
         };
         {
@@ -357,11 +402,22 @@ impl Protokoll {
         if let Ok(zeile) = serde_json::to_string(&aufruf) {
             self.anhaengen("aufrufe", &zeile);
         }
+        self.zaehlen();
     }
 
     /// Eine Prozesszeile eines Eintrags aufzeichnen (ohne ANSI-Farbcodes).
+    ///
+    /// Die Zeile wird maskiert (Tresorwerte **und** Schlüsselwörter wie
+    /// `token`), auf [`ZEILE_ZEICHEN`] gekürzt und nur dann auf die Platte
+    /// geschrieben, wenn der Eintrag in dieser Minute noch nicht
+    /// [`ZEILEN_JE_MINUTE`] Zeilen geschrieben hat und die Tagesdatei noch
+    /// Platz hat. Im Speicher steht sie trotzdem – das Fenster soll zeigen,
+    /// was der Prozess sagt.
     pub fn zeile_schreiben(&self, eintrag: &EintragId, text: &str) {
-        let text = self.maskieren(&ansi_entfernen(text));
+        let text = kuerzen(
+            &crate::anmeldung::maskieren(&self.maskieren(&anzeige_zeichen(text))),
+            ZEILE_ZEICHEN,
+        );
         let zeile = Zeile {
             zeit: jetzt(),
             eintrag: eintrag.clone(),
@@ -377,9 +433,53 @@ impl Protokoll {
                 zeilen.pop_front();
             }
         }
+        let platz = self.platz_fuer_zeile(eintrag);
+        if !platz {
+            return;
+        }
         if let Ok(text) = serde_json::to_string(&zeile) {
             self.anhaengen("prozesse", &text);
         }
+        self.zaehlen();
+    }
+
+    /// Darf dieser Eintrag in dieser Minute noch eine Zeile auf die Platte
+    /// schreiben? Zählt mit und sagt `false`, wenn die Grenze erreicht ist.
+    fn platz_fuer_zeile(&self, eintrag: &EintragId) -> bool {
+        let mut zaehler = self
+            .zeilen_je_minute
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+        let jetzt = Instant::now();
+        let stand = zaehler.entry(eintrag.clone()).or_insert_with(|| (jetzt, 0));
+        if jetzt.duration_since(stand.0) >= Duration::from_secs(60) {
+            *stand = (jetzt, 0);
+        }
+        if stand.1 >= ZEILEN_JE_MINUTE {
+            let mut verworfen = self
+                .verworfen
+                .lock()
+                .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+            *verworfen = verworfen.saturating_add(1);
+            return false;
+        }
+        stand.1 += 1;
+        true
+    }
+
+    /// Hat dieser Agent den Eintrag selbst benutzt? Nur dann darf er dessen
+    /// Prozesszeilen lesen (Paket 3).
+    pub fn von_agent_benutzt(&self, agent: Option<&str>, eintrag: &EintragId) -> bool {
+        let Some(agent) = agent else {
+            return false;
+        };
+        let aufrufe = self
+            .aufrufe
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+        aufrufe
+            .iter()
+            .any(|aufruf| aufruf.agent == agent && &aufruf.eintrag == eintrag)
     }
 
     /// Die Aufrufe, die zum Filter passen – die neuesten zuerst.
@@ -477,11 +577,24 @@ impl Protokoll {
 
     /// Eine Zeile an die Tagesdatei anhängen (Fehler nur ins Log: das
     /// Protokoll darf einen Werkzeug-Aufruf nie scheitern lassen).
+    ///
+    /// Die Größe der Datei wird **vor** dem Schreiben geprüft: eine Datei
+    /// wächst nie über [`DATEI_BYTES`] hinaus.
     fn anhaengen(&self, art: &str, zeile: &str) {
         let tag = tag_heute();
         let pfad = self.ordner.join(format!("{art}-{tag}.jsonl"));
         if let Err(fehler) = std::fs::create_dir_all(&self.ordner) {
             tracing::warn!("Protokollordner nicht anlegbar: {fehler}");
+            return;
+        }
+        let groesse = std::fs::metadata(&pfad).map(|meta| meta.len()).unwrap_or(0);
+        let neu = u64::try_from(zeile.len() + 1).unwrap_or(u64::MAX);
+        if groesse.saturating_add(neu) > DATEI_BYTES {
+            let mut verworfen = self
+                .verworfen
+                .lock()
+                .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+            *verworfen = verworfen.saturating_add(1);
             return;
         }
         let mut optionen = OpenOptions::new();
@@ -499,7 +612,6 @@ impl Protokoll {
             }
             Err(fehler) => tracing::warn!("{pfad:?} nicht schreibbar: {fehler}"),
         }
-        self.zaehlen();
     }
 
     /// Argumente als gekürztes JSON: Geheimschlüssel und Tresorwerte maskiert.
@@ -519,7 +631,10 @@ impl Protokoll {
     /// Ein einzelner Wert: Text kürzen, Kinder durchgehen.
     fn wert_kuerzen(&self, wert: &Value) -> Value {
         match wert {
-            Value::String(text) => Value::String(kuerzen(&self.maskieren(text), WERT_ZEICHEN)),
+            Value::String(text) => Value::String(kuerzen(
+                &self.maskieren(&anzeige_zeichen(text)),
+                WERT_ZEICHEN,
+            )),
             Value::Array(werte) => {
                 Value::Array(werte.iter().map(|w| self.wert_kuerzen(w)).collect())
             }
@@ -542,12 +657,95 @@ impl Protokoll {
 }
 
 /// Enthält der Feldname etwas, das nach Geheimnis klingt?
-/// `pat` steht in der Liste der Aufgabe – deshalb zählt auch `path` dazu.
+///
+/// `pat` gilt nur als **Wort**: `github_pat` und `pat_wert` ja, `path` und
+/// `pattern` nein – die stehen in fast jeder Konfiguration und wären sonst
+/// ständig `verborgen`.
 pub fn schluessel_geheim(schluessel: &str) -> bool {
     let name = schluessel.to_lowercase();
-    ["pass", "token", "secret", "key", "pat", "auth", "cookie"]
+    if ["pass", "token", "secret", "key", "auth", "cookie"]
         .iter()
         .any(|teil| name.contains(teil))
+    {
+        return true;
+    }
+    name.split(|c: char| !c.is_alphanumeric())
+        .any(|wort| wort == "pat")
+}
+
+/// Ist das Zeichen ein Teil eines Worts? (Für „nur als ganzes Wort“.)
+fn wortzeichen(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Ein Geheimnis im Text ersetzen – mit den Regeln aus der Moduldoku.
+pub fn maskieren_wert(text: &str, geheimnis: &str) -> String {
+    if geheimnis.is_empty() || text.is_empty() {
+        return text.to_string();
+    }
+    let kurz = geheimnis.chars().count() < 6;
+    let mut aus = text.to_string();
+    // Die kodierten Formen zuerst: sie enthalten oft das Original als Teil.
+    for form in kodierte_formen(geheimnis) {
+        if aus.contains(&form) {
+            aus = aus.replace(&form, VERBORGEN);
+        }
+    }
+    if kurz {
+        ganzes_wort_ersetzen(&aus, geheimnis)
+    } else {
+        aus.replace(geheimnis, VERBORGEN)
+    }
+}
+
+/// Alle Vorkommen von `wort` ersetzen, die ein **ganzes Wort** bilden.
+fn ganzes_wort_ersetzen(text: &str, wort: &str) -> String {
+    let mut aus = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(stelle) = rest.find(wort) {
+        let davor = &rest[..stelle];
+        let danach = &rest[stelle + wort.len()..];
+        let grenze_vorn = davor.chars().next_back().is_none_or(|c| !wortzeichen(c));
+        let grenze_hinten = danach.chars().next().is_none_or(|c| !wortzeichen(c));
+        aus.push_str(davor);
+        if grenze_vorn && grenze_hinten {
+            aus.push_str(VERBORGEN);
+        } else {
+            aus.push_str(wort);
+        }
+        rest = danach;
+    }
+    aus.push_str(rest);
+    aus
+}
+
+/// Die Base64- (Standard und URL-safe) und die URL-kodierte Form eines Werts.
+fn kodierte_formen(wert: &str) -> Vec<String> {
+    use base64::Engine as _;
+    let mut formen = vec![
+        base64::engine::general_purpose::STANDARD.encode(wert.as_bytes()),
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(wert.as_bytes()),
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(wert.as_bytes()),
+        url_kodiert(wert),
+    ];
+    formen.retain(|form| form != wert && form.chars().count() >= 6);
+    formen.sort_by_key(|form| std::cmp::Reverse(form.len()));
+    formen.dedup();
+    formen
+}
+
+/// Prozentkodierung nach RFC 3986: alles außer `A-Za-z0-9-._~` wird kodiert.
+fn url_kodiert(wert: &str) -> String {
+    let mut aus = String::with_capacity(wert.len());
+    for byte in wert.as_bytes() {
+        let zeichen = *byte as char;
+        if zeichen.is_ascii_alphanumeric() || matches!(zeichen, '-' | '.' | '_' | '~') {
+            aus.push(zeichen);
+        } else {
+            aus.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    aus
 }
 
 /// Die Werte unter Geheimschlüsseln (auch verschachtelt) einsammeln.
@@ -601,6 +799,25 @@ pub fn kuerzen_auf_bytes(text: &str, grenze: usize) -> String {
         ende = ende.saturating_sub(1);
     }
     format!("{}…", &text[..ende])
+}
+
+/// ANSI-Farbcodes entfernen (`ESC [ … Buchstabe`, `ESC ] … BEL`) und
+/// Steuerzeichen sowie Richtungszeichen (bidi) wegnehmen. Ein Werkzeug darf
+/// mit seiner Ausgabe keine Anzeige umsortieren oder eine Zeile zerlegen.
+pub fn anzeige_zeichen(text: &str) -> String {
+    let mut aus = String::with_capacity(text.len());
+    for c in ansi_entfernen(text).chars() {
+        if c.is_control() || ist_richtungszeichen(c) {
+            continue;
+        }
+        aus.push(c);
+    }
+    aus
+}
+
+/// Richtungszeichen (bidi): sie drehen die Anzeige um.
+pub fn ist_richtungszeichen(c: char) -> bool {
+    matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// ANSI-Farbcodes entfernen (`ESC [ … Buchstabe`, `ESC ] … BEL`).
@@ -751,12 +968,17 @@ mod tests {
     use serde_json::json;
 
     fn ordner() -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static ZAEHLER: AtomicUsize = AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, Ordering::SeqCst);
         let stempel = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
-        let pfad =
-            std::env::temp_dir().join(format!("quiver-protokoll-{}-{stempel}", std::process::id()));
+        let pfad = std::env::temp_dir().join(format!(
+            "quiver-protokoll-{}-{nummer}-{stempel}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&pfad).expect("Ordner");
         pfad
     }
@@ -1144,5 +1366,134 @@ mod tests {
             tag_aus_datei(Path::new("prozesse-2026-01-02.jsonl")),
             tag_als_zahl("2026-01-02")
         );
+    }
+
+    // ---------------------------------------------------------- Paket 3
+
+    /// Kurze Werte (unter sechs Zeichen) verschwinden nur als **ganzes Wort**
+    /// – sonst würde ein Geheimnis wie `a` jeden Text unlesbar machen.
+    #[test]
+    fn kurze_werte_verschwinden_nur_als_ganzes_wort() {
+        assert_eq!(
+            maskieren_wert("davor 42 danach", "42"),
+            "davor <verborgen> danach"
+        );
+        assert_eq!(maskieren_wert("wert=42", "42"), "wert=<verborgen>");
+        assert_eq!(
+            maskieren_wert("super-geheim-42", "42"),
+            "super-geheim-<verborgen>",
+            "ein Bindestrich trennt Wörter"
+        );
+        assert_eq!(
+            maskieren_wert("die Zahl 4210 ist groß", "42"),
+            "die Zahl 4210 ist groß",
+            "mitten im Wort bleibt sie stehen"
+        );
+        assert_eq!(maskieren_wert("x42y", "42"), "x42y");
+        // Ab sechs Zeichen auch als Teilstring.
+        assert_eq!(
+            maskieren_wert("davor super-geheim danach", "super-geheim"),
+            "davor <verborgen> danach"
+        );
+        assert_eq!(
+            maskieren_wert("xsuper-geheimy", "super-geheim"),
+            "x<verborgen>y"
+        );
+    }
+
+    /// Base64- und URL-kodiert ist ein Geheimnis genauso geheim.
+    #[test]
+    fn kodierte_formen_verschwinden_auch() {
+        let wert = "streng/geheim?42";
+        let base64 = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode(wert.as_bytes())
+        };
+        let url = "streng%2Fgeheim%3F42";
+        assert_eq!(url_kodiert(wert), url);
+        for text in [format!("wert={base64}"), format!("adresse?t={url}")] {
+            let maskiert = maskieren_wert(&text, wert);
+            assert!(maskiert.contains(VERBORGEN), "{maskiert}");
+            assert!(!maskiert.contains(&base64), "{maskiert}");
+            assert!(!maskiert.contains(url), "{maskiert}");
+        }
+    }
+
+    /// `pat` gilt nur als Wort: `path` und `pattern` sind keine Geheimnisse.
+    #[test]
+    fn pat_ist_ein_wort_und_path_nicht() {
+        for geheim in ["pat", "github_pat", "pat_wert", "MY-PAT"] {
+            assert!(schluessel_geheim(geheim), "{geheim}");
+        }
+        for offen in ["path", "file_path", "pattern", "patch", "sympathy"] {
+            assert!(!schluessel_geheim(offen), "{offen}");
+        }
+        assert!(schluessel_geheim("api_token"));
+        assert!(schluessel_geheim("passwort"));
+    }
+
+    /// Eine Prozesszeile wird auf 2000 Zeichen gekürzt und behält keine
+    /// Steuer- oder Richtungszeichen.
+    #[test]
+    fn prozesszeilen_sind_gekuerzt_und_ohne_steuerzeichen() {
+        let ordner = ordner();
+        let protokoll = Protokoll::neu(&ordner);
+        let id = EintragId::neu("echo");
+        let lang = format!("Anfang\u{1b}[31m{}\u{202e}Ende", "x".repeat(5000));
+        protokoll.zeile_schreiben(&id, &lang);
+        let zeile = &protokoll.zeilen(&id, &LogFilter::default())[0];
+        assert_eq!(zeile.text.chars().count(), ZEILE_ZEICHEN, "gekürzt");
+        assert!(!zeile.text.contains('\u{1b}'), "{}", zeile.text);
+        assert!(!zeile.text.contains('\u{202e}'), "keine Richtungszeichen");
+        std::fs::remove_dir_all(&ordner).ok();
+    }
+
+    /// Je Eintrag gehen höchstens 200 Zeilen je Minute auf die Platte; im
+    /// Speicher stehen sie trotzdem.
+    #[test]
+    fn je_minute_gehen_hoechstens_200_zeilen_auf_die_platte() {
+        let ordner = ordner();
+        let protokoll = Protokoll::neu(&ordner);
+        let id = EintragId::neu("echo");
+        for nummer in 0..(ZEILEN_JE_MINUTE + 50) {
+            protokoll.zeile_schreiben(&id, &format!("Zeile {nummer}"));
+        }
+        assert_eq!(
+            protokoll.zeilen(&id, &LogFilter::default()).len(),
+            ZEILEN_JE_MINUTE + 50,
+            "im Speicher steht alles"
+        );
+        let datei = ordner
+            .join(ORDNER)
+            .join(format!("prozesse-{}.jsonl", tag_heute()));
+        let inhalt = std::fs::read_to_string(&datei).expect("Datei");
+        assert_eq!(inhalt.lines().count(), ZEILEN_JE_MINUTE, "{inhalt}");
+        assert_eq!(protokoll.verworfene_zeilen(), 50);
+        std::fs::remove_dir_all(&ordner).ok();
+    }
+
+    /// Die Größe der Tagesdatei wird **vor** dem Schreiben geprüft: sie wächst
+    /// nie über die Grenze.
+    #[test]
+    fn eine_volle_tagesdatei_waechst_nicht_weiter() {
+        let ordner = ordner();
+        let protokoll = Protokoll::neu(&ordner);
+        let id = EintragId::neu("echo");
+        let datei = ordner
+            .join(ORDNER)
+            .join(format!("prozesse-{}.jsonl", tag_heute()));
+        std::fs::create_dir_all(datei.parent().expect("Ordner")).expect("Ordner");
+        std::fs::File::create(&datei)
+            .expect("Datei")
+            .set_len(DATEI_BYTES)
+            .expect("Größe");
+        protokoll.zeile_schreiben(&id, "passt nicht mehr");
+        assert_eq!(
+            std::fs::metadata(&datei).expect("Datei").len(),
+            DATEI_BYTES,
+            "nichts wurde angehängt"
+        );
+        assert_eq!(protokoll.verworfene_zeilen(), 1);
+        std::fs::remove_dir_all(&ordner).ok();
     }
 }

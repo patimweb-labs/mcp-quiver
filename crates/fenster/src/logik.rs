@@ -169,6 +169,8 @@ pub enum EinrichtKnopf {
     Einrichten,
     /// „Erneut versuchen“ nach einem Fehler.
     Erneut,
+    /// „Abbrechen“: die Einrichtung läuft und lässt sich beenden (Paket 3).
+    Abbrechen,
 }
 
 /// Was die Karte zur Einrichtung eines Eintrags zeigt: Bedeutung, Text, Knopf.
@@ -189,10 +191,12 @@ pub fn einrichtung_zeile(sprache: Sprache, zustand: &EinrichtZustand) -> Einrich
             text: t(sprache, "einrichtung.bereit"),
             knopf: EinrichtKnopf::Einrichten,
         },
+        // Läuft: der Knopf „Abbrechen“ beendet den Prozess im Browser
+        // (Paket 3) – sonst bliebe eine hängende Einrichtung stehen.
         EinrichtZustand::Laeuft => EinrichtZeile {
             ton: Ton::Leise,
             text: t(sprache, "einrichtung.laeuft"),
-            knopf: EinrichtKnopf::Keiner,
+            knopf: EinrichtKnopf::Abbrechen,
         },
         EinrichtZustand::Fehler { text } => EinrichtZeile {
             ton: Ton::Fehler,
@@ -771,45 +775,95 @@ pub fn ergebnis_text(
     text
 }
 
+/// Die Shell-Variable, in der das Token für **einen** Befehl steht. Es wird
+/// nie als Prozessargument übergeben (Paket 3): jedes Argument steht in der
+/// Prozessliste und in der Shell-Historie.
+pub const TOKEN_VARIABLE: &str = "QUIVER_TOKEN";
+
+/// Vorspann jedes Schnipsels: das Token verdeckt einlesen (`read -s`).
+fn token_einlesen() -> String {
+    format!("read -rs {TOKEN_VARIABLE} && ")
+}
+
+/// Nachsatz: die Variable wieder vergessen.
+fn token_verwerfen() -> String {
+    format!("; unset {TOKEN_VARIABLE}")
+}
+
 /// Der Befehl für pi 1.5 (`pi mcp add --help`: `--url <url>`, `--header <KEY=VALUE>`).
-pub fn schnipsel_pi(endpunkt: &str, token: &str) -> String {
-    format!("pi mcp add quiver --url {endpunkt} --header \"Authorization=Bearer {token}\"")
+///
+/// Das Token kommt verdeckt aus `read -s` und steht nur als `$QUIVER_TOKEN`
+/// im Argument – nie der Wert selbst.
+pub fn schnipsel_pi(endpunkt: &str) -> String {
+    format!(
+        "{}{}{}",
+        token_einlesen(),
+        format_args!(
+            "pi mcp add quiver --url {endpunkt} --header \"Authorization=Bearer ${TOKEN_VARIABLE}\""
+        ),
+        token_verwerfen()
+    )
 }
 
 /// Der Befehl für Claude Code (`claude mcp add --help`: `--transport http`,
 /// `--header <header>`).
-pub fn schnipsel_claude(endpunkt: &str, token: &str) -> String {
+pub fn schnipsel_claude(endpunkt: &str) -> String {
     format!(
-        "claude mcp add --transport http quiver {endpunkt} --header \"Authorization: Bearer {token}\""
+        "{}{}{}",
+        token_einlesen(),
+        format_args!(
+            "claude mcp add --transport http quiver {endpunkt} --header \"Authorization: Bearer ${TOKEN_VARIABLE}\""
+        ),
+        token_verwerfen()
     )
 }
 
 /// Die Einstellung für OpenCode (`opencode.json`, Schlüssel `mcp`).
-pub fn schnipsel_opencode(endpunkt: &str, token: &str) -> String {
+///
+/// Die Datei entsteht mit `printf`: das Token wird eingesetzt, ohne dass es in
+/// einem Argument steht.
+pub fn schnipsel_opencode(endpunkt: &str) -> String {
     format!(
-        "{{\"mcp\":{{\"quiver\":{{\"type\":\"remote\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer {token}\"}}}}}}}}"
+        "{}{}{}",
+        token_einlesen(),
+        format_args!(
+            "printf '{{\"mcp\":{{\"quiver\":{{\"type\":\"remote\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer %s\"}}}}}}}}' \"${TOKEN_VARIABLE}\" > opencode.json"
+        ),
+        token_verwerfen()
     )
 }
 
 /// Die Einstellung für GitHub Copilot in VS Code (`.vscode/mcp.json` bzw. die
 /// Benutzer-`mcp.json`, Schlüssel `servers`).
-pub fn schnipsel_copilot(endpunkt: &str, token: &str) -> String {
+pub fn schnipsel_copilot(endpunkt: &str) -> String {
     format!(
-        "{{\"servers\":{{\"quiver\":{{\"type\":\"http\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer {token}\"}}}}}}}}"
+        "{}{}{}",
+        token_einlesen(),
+        format_args!(
+            "printf '{{\"servers\":{{\"quiver\":{{\"type\":\"http\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer %s\"}}}}}}}}' \"${TOKEN_VARIABLE}\" > .vscode/mcp.json"
+        ),
+        token_verwerfen()
     )
 }
 
 /// Der Befehl für Hermes. `--auth header` fragt das Token verdeckt ab und legt
 /// es in `~/.hermes/.env` (`MCP_QUIVER_API_KEY`) ab; in `config.yaml` steht nur
 /// der Verweis darauf (geprüft im Quelltext von Hermes 0.21, `mcp_config.py`).
+/// Auch hier steht kein Token in einem Argument.
 pub fn schnipsel_hermes(endpunkt: &str) -> String {
     format!("hermes mcp add quiver --url {endpunkt} --auth header")
 }
 
-/// Dasselbe als JSON für andere MCP-Clients.
-pub fn schnipsel_json(endpunkt: &str, token: &str) -> String {
+/// Dasselbe als JSON für andere MCP-Clients – zum Einfügen in die eigene
+/// Konfiguration. Das Token wird verdeckt eingelesen und eingesetzt.
+pub fn schnipsel_json(endpunkt: &str) -> String {
     format!(
-        "{{\"mcpServers\":{{\"quiver\":{{\"type\":\"http\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer {token}\"}}}}}}}}"
+        "{}{}{}",
+        token_einlesen(),
+        format_args!(
+            "printf '{{\"mcpServers\":{{\"quiver\":{{\"type\":\"http\",\"url\":\"{endpunkt}\",\"headers\":{{\"Authorization\":\"Bearer %s\"}}}}}}}}' \"${TOKEN_VARIABLE}\""
+        ),
+        token_verwerfen()
     )
 }
 
@@ -823,25 +877,31 @@ pub struct Schnipsel {
 }
 
 /// Die Schnipsel für eine Agent-Art. Hermes bekommt drei: den Befehl, das
-/// Token für seine Rückfrage und den Prüfbefehl danach. „Andere" bekommt das allgemeine JSON.
+/// Token für seine Rückfrage und den Prüfbefehl danach. „Andere" bekommt das
+/// allgemeine JSON.
+///
+/// Kein Schnipsel enthält das Token als **Wert** in einem Befehl (Paket 3):
+/// die Shell liest es verdeckt ein (`read -s`). Nur der Hermes-Schnipsel für
+/// die Rückfrage zeigt es – dort wird es an der Eingabeaufforderung eingefügt,
+/// nicht als Argument.
 pub fn schnipsel(sprache: Sprache, art: &AgentArt, endpunkt: &str, token: &str) -> Vec<Schnipsel> {
     let ort = |schluessel: &str| t(sprache, schluessel);
     match art {
         AgentArt::Pi => vec![Schnipsel {
             ort: ort("agenten.ort.shell"),
-            text: schnipsel_pi(endpunkt, token),
+            text: schnipsel_pi(endpunkt),
         }],
         AgentArt::ClaudeCode => vec![Schnipsel {
             ort: ort("agenten.ort.shell"),
-            text: schnipsel_claude(endpunkt, token),
+            text: schnipsel_claude(endpunkt),
         }],
         AgentArt::OpenCode => vec![Schnipsel {
             ort: ort("agenten.ort.opencode"),
-            text: schnipsel_opencode(endpunkt, token),
+            text: schnipsel_opencode(endpunkt),
         }],
         AgentArt::Copilot => vec![Schnipsel {
             ort: ort("agenten.ort.copilot"),
-            text: schnipsel_copilot(endpunkt, token),
+            text: schnipsel_copilot(endpunkt),
         }],
         AgentArt::Hermes => vec![
             Schnipsel {
@@ -859,7 +919,7 @@ pub fn schnipsel(sprache: Sprache, art: &AgentArt, endpunkt: &str, token: &str) 
         ],
         AgentArt::Andere(_) => vec![Schnipsel {
             ort: ort("agenten.ort.andere"),
-            text: schnipsel_json(endpunkt, token),
+            text: schnipsel_json(endpunkt),
         }],
     }
 }
@@ -1072,9 +1132,13 @@ pub fn datum_text(zeit: &str) -> String {
 /// nicht doppelt im Werkzeugnamen (Aufgabe 18).
 pub fn tool_text(aufruf: &Aufruf) -> String {
     let eintrag = aufruf.eintrag.als_str();
-    let kurz = quiver_domain::tool_name_zerlegen(&aufruf.tool)
-        .filter(|(id, _)| id.als_str() == eintrag)
-        .map_or_else(|| aufruf.tool.clone(), |(_, kurz)| kurz.to_string());
+    // Nur das eigene Präfix abtrennen – keine Zerlegung am `__` (Paket 3).
+    let praefix = format!("{eintrag}__");
+    let kurz = aufruf
+        .tool
+        .strip_prefix(&praefix)
+        .filter(|kurz| !kurz.is_empty())
+        .unwrap_or(&aufruf.tool);
     format!("{eintrag} › {kurz}")
 }
 
@@ -1236,6 +1300,8 @@ mod tests {
             server_url: None,
             anmeldewege: None,
             protokoll_fuer_agenten: false,
+            tresor_fehler: None,
+            profil_hinweis: None,
         }
     }
 
@@ -1282,6 +1348,7 @@ mod tests {
             einrichtung: None,
             zugaenge: None,
             am_geraet_aus: false,
+            unzulaessig: None,
         }
     }
 
@@ -1468,12 +1535,12 @@ mod tests {
         assert_eq!(bereit.ton, Ton::Leise);
         assert_eq!(bereit.text, "Einrichtung im Browser");
         assert_eq!(bereit.knopf, EinrichtKnopf::Einrichten);
-        // Läuft: derselbe leise Ton, aber kein Knopf – ein zweiter Klick
-        // würde nichts tun.
+        // Läuft: derselbe leise Ton und „Abbrechen“ – eine hängende
+        // Einrichtung lässt sich beenden (Paket 3).
         let laeuft = einrichtung_zeile(sprache, &EinrichtZustand::Laeuft);
         assert_eq!(laeuft.ton, Ton::Leise);
         assert_eq!(laeuft.text, "Einrichtung im Browser geöffnet …");
-        assert_eq!(laeuft.knopf, EinrichtKnopf::Keiner);
+        assert_eq!(laeuft.knopf, EinrichtKnopf::Abbrechen);
         // Fehler: sein Text und „Erneut versuchen“.
         let fehler = einrichtung_zeile(
             sprache,
@@ -1676,25 +1743,40 @@ mod tests {
     }
 
     #[test]
-    fn schnipsel_tragen_adresse_und_token() {
-        let pi = schnipsel_pi("http://127.0.0.1:8741/mcp", "abc123");
+    fn schnipsel_tragen_adresse_und_kein_token_als_argument() {
+        let e = "http://127.0.0.1:8741/mcp";
+        let pi = schnipsel_pi(e);
         assert_eq!(
             pi,
-            "pi mcp add quiver --url http://127.0.0.1:8741/mcp \
-             --header \"Authorization=Bearer abc123\""
+            "read -rs QUIVER_TOKEN && pi mcp add quiver --url http://127.0.0.1:8741/mcp \
+             --header \"Authorization=Bearer $QUIVER_TOKEN\"; unset QUIVER_TOKEN"
         );
-        let json = schnipsel_json("http://127.0.0.1:8741/mcp", "abc123");
+        // Kein Wert, nur die Variable – und die wird verdeckt eingelesen.
+        for text in [
+            schnipsel_pi(e),
+            schnipsel_claude(e),
+            schnipsel_opencode(e),
+            schnipsel_copilot(e),
+            schnipsel_json(e),
+        ] {
+            assert!(text.contains("read -rs QUIVER_TOKEN"), "{text}");
+            assert!(text.contains("$QUIVER_TOKEN"), "{text}");
+            assert!(text.ends_with("unset QUIVER_TOKEN"), "{text}");
+            assert!(text.contains(e), "{text}");
+        }
+        // Das JSON im printf ist gültig, wenn man das Token einsetzt.
+        let schnipsel_text = schnipsel_json(e);
+        let json = schnipsel_text
+            .split_once("printf '")
+            .and_then(|(_, rest)| rest.split_once('\''))
+            .map(|(json, _)| json)
+            .expect("printf mit JSON");
+        let wert: serde_json::Value =
+            serde_json::from_str(&json.replace("%s", "abc123")).expect("gültiges JSON");
+        assert_eq!(wert["mcpServers"]["quiver"]["url"], e);
         assert_eq!(
-            json,
-            "{\"mcpServers\":{\"quiver\":{\"type\":\"http\",\"url\":\
-             \"http://127.0.0.1:8741/mcp\",\"headers\":\
-             {\"Authorization\":\"Bearer abc123\"}}}}"
-        );
-        // Gültiges JSON, nicht nur richtig aussehend.
-        let wert: serde_json::Value = serde_json::from_str(&json).expect("JSON");
-        assert_eq!(
-            wert["mcpServers"]["quiver"]["url"],
-            "http://127.0.0.1:8741/mcp"
+            wert["mcpServers"]["quiver"]["headers"]["Authorization"],
+            "Bearer abc123"
         );
     }
 
@@ -2107,25 +2189,24 @@ mod tests {
                 assert!(!s.ort.is_empty(), "{art:?} ohne Ort");
                 // Bei Hermes verteilen sich Endpunkt und Token auf drei Schnipsel.
                 if !matches!(art, AgentArt::Hermes) {
-                    assert!(s.text.contains("abc123"), "{art:?} ohne Token: {}", s.text);
                     assert!(s.text.contains(e), "{art:?} ohne Endpunkt: {}", s.text);
+                    assert!(
+                        !s.text.contains(t),
+                        "{art:?} trägt das Token als Wert: {}",
+                        s.text
+                    );
+                    assert!(
+                        s.text.contains("read -rs"),
+                        "{art:?} liest nicht verdeckt ein"
+                    );
                 }
             }
             liste
         };
-        assert_eq!(schnipsel(AgentArt::Pi)[0].text, schnipsel_pi(e, t));
-        assert_eq!(
-            schnipsel(AgentArt::ClaudeCode)[0].text,
-            schnipsel_claude(e, t)
-        );
-        assert_eq!(
-            schnipsel(AgentArt::OpenCode)[0].text,
-            schnipsel_opencode(e, t)
-        );
-        assert_eq!(
-            schnipsel(AgentArt::Copilot)[0].text,
-            schnipsel_copilot(e, t)
-        );
+        assert_eq!(schnipsel(AgentArt::Pi)[0].text, schnipsel_pi(e));
+        assert_eq!(schnipsel(AgentArt::ClaudeCode)[0].text, schnipsel_claude(e));
+        assert_eq!(schnipsel(AgentArt::OpenCode)[0].text, schnipsel_opencode(e));
+        assert_eq!(schnipsel(AgentArt::Copilot)[0].text, schnipsel_copilot(e));
         let hermes = schnipsel(AgentArt::Hermes);
         assert_eq!(hermes.len(), 3, "Befehl, Token und Prüfbefehl");
         assert_eq!(
@@ -2136,16 +2217,22 @@ mod tests {
         assert_eq!(hermes[2].text, "hermes mcp test quiver");
         assert_eq!(
             schnipsel(AgentArt::Andere(String::new()))[0].text,
-            schnipsel_json(e, t)
+            schnipsel_json(e)
         );
 
-        // Die JSON-Schnipsel sind gültiges JSON, nicht nur richtig aussehend.
+        // Die JSON-Schnipsel sind gültiges JSON (mit eingesetztem Token), nicht
+        // nur richtig aussehend.
         for (art, wert) in [
-            (AgentArt::OpenCode, schnipsel_opencode(e, t)),
-            (AgentArt::Copilot, schnipsel_copilot(e, t)),
-            (AgentArt::Andere(String::new()), schnipsel_json(e, t)),
+            (AgentArt::OpenCode, schnipsel_opencode(e)),
+            (AgentArt::Copilot, schnipsel_copilot(e)),
+            (AgentArt::Andere(String::new()), schnipsel_json(e)),
         ] {
-            let json: serde_json::Value = serde_json::from_str(&wert)
+            let json_teil = wert
+                .split_once("printf '")
+                .and_then(|(_, rest)| rest.split_once('\''))
+                .map(|(json, _)| json.to_string())
+                .unwrap_or_else(|| panic!("{art:?} ohne printf: {wert}"));
+            let json: serde_json::Value = serde_json::from_str(&json_teil.replace("%s", "abc123"))
                 .unwrap_or_else(|fehler| panic!("{art:?} ist kein JSON: {fehler}\n{wert}"));
             assert_eq!(
                 json.to_string().matches("Authorization").count(),

@@ -187,6 +187,9 @@ pub enum Dialog {
     Aufruf { aufruf: Aufruf },
     /// Das Protokoll leeren — mit Rückfrage (Aufgabe 17).
     ProtokollLeeren,
+    /// Der Tresor ist nicht lesbar: mit einem leeren beginnen (Paket 3).
+    /// Die alten Dateien bleiben als `.kaputt-<zeit>` liegen.
+    TresorNeuBeginnen,
 }
 
 /// Was in den Eingabefeldern der Verbindungsseite steht.
@@ -270,6 +273,19 @@ impl Sicht {
             .clone()
             .or_else(|| modell.verbindung.server().map(str::to_string))
             .unwrap_or_default();
+        // Was schon beim Start schiefsteht (Tresor, gespeicherter Stand),
+        // steht als Hinweis oben (Paket 3) – noch bevor sich das Modell ändert.
+        let hinweis = modell
+            .tresor_fehler
+            .as_ref()
+            .map(|fehler| {
+                format!(
+                    "{} {}",
+                    crate::texte::t(einstellungen.sprache(), "tresor.nicht_lesbar"),
+                    fehler
+                )
+            })
+            .or_else(|| modell.profil_hinweis.clone());
         Self {
             seite: logik::startseite(&modell),
             modell,
@@ -283,7 +299,7 @@ impl Sicht {
                 server,
                 code: String::new(),
             },
-            hinweis: None,
+            hinweis,
             ergebnis: None,
             datei: None,
             autostart: false,
@@ -397,6 +413,21 @@ impl Sicht {
         // Der Server hat das Gerät abgelehnt: das sagt der Hinweis oben.
         if neu.abgelehnt && !self.modell.abgelehnt {
             self.hinweis = Some(crate::texte::t(self.sprache, "verbindung.abgelehnt"));
+        }
+        // Der Tresor ist nicht lesbar (Paket 3): das Fenster sagt es, und der
+        // Knopf „Neu beginnen“ steht daneben. Nichts wird überschrieben.
+        if neu.tresor_fehler.is_some() && self.modell.tresor_fehler != neu.tresor_fehler {
+            self.hinweis = Some(format!(
+                "{} {}",
+                crate::texte::t(self.sprache, "tresor.nicht_lesbar"),
+                neu.tresor_fehler.clone().unwrap_or_default()
+            ));
+        }
+        // Der gespeicherte Stand war nicht lesbar (Paket 3) – einmal sagen.
+        if let Some(text) = &neu.profil_hinweis {
+            if self.modell.profil_hinweis.as_ref() != Some(text) {
+                self.hinweis = Some(text.clone());
+            }
         }
         // Was der Server nicht mehr kennt, hat keinen Dialog mehr verdient.
         let verschwunden = match &self.dialog {
@@ -543,6 +574,7 @@ impl Sicht {
             }
             Dialog::Aufruf { .. } => {}
             Dialog::ProtokollLeeren => return Some(Aktion::ProtokollLeeren),
+            Dialog::TresorNeuBeginnen => return Some(Aktion::TresorNeuBeginnen),
         }
         None
     }
@@ -565,6 +597,8 @@ mod tests {
             server_url: None,
             anmeldewege: None,
             protokoll_fuer_agenten: false,
+            tresor_fehler: None,
+            profil_hinweis: None,
         }
     }
 
@@ -690,5 +724,37 @@ mod tests {
                 name: "hermes".into()
             })
         );
+    }
+
+    /// Ein kaputter gespeicherter Stand und ein unlesbarer Tresor stehen als
+    /// Hinweis oben – einmal, nicht bei jedem Bild neu (Paket 3).
+    #[test]
+    fn tresor_und_profilfehler_stehen_als_hinweis() {
+        let mut neu = leeres_modell();
+        neu.tresor_fehler = Some("tresor.json ist beschädigt".into());
+        let mut sicht = Sicht::neu(neu.clone(), &Einstellungen::default());
+        assert_eq!(
+            sicht.hinweis.as_deref(),
+            Some("Tresor nicht lesbar: tresor.json ist beschädigt"),
+            "der Hinweis steht schon beim Start"
+        );
+
+        // Ein neuer Stand mit demselben Fehler erzeugt keinen neuen Hinweis.
+        sicht.hinweis = Some("etwas anderes".into());
+        sicht.modell_setzen(neu);
+        assert_eq!(sicht.hinweis.as_deref(), Some("etwas anderes"));
+
+        // Ein kaputter gespeicherter Stand wird gemeldet.
+        let mut neu = leeres_modell();
+        neu.profil_hinweis = Some(
+            "Der gespeicherte Stand war nicht lesbar und liegt als zustand.json.kaputt-… daneben"
+                .into(),
+        );
+        sicht.modell_setzen(neu);
+        assert!(sicht
+            .hinweis
+            .as_deref()
+            .unwrap_or_default()
+            .contains("nicht lesbar"));
     }
 }

@@ -355,6 +355,12 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                     ui.add_space(thema::SPACE_2);
                     ui.label(text(&f, t(sprache, "agenten.token"), Ton::Leise).small());
                     bausteine::kopierbar(ui, &f, token, &t(sprache, "allg.kopieren"));
+                    ui.add_space(thema::SPACE_1);
+                    // Kein Befehl trägt das Token als Argument (Paket 3).
+                    ui.add(
+                        egui::Label::new(text(&f, t(sprache, "agenten.token_hinweis"), Ton::Leise))
+                            .wrap(),
+                    );
                     ui.add_space(thema::SPACE_3);
                     // Der Schnipsel folgt der Art des Agenten.
                     let art = AgentArt::aus_name(name);
@@ -978,6 +984,35 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                             &t(sprache, "allg.schliessen"),
                         )
                         .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
+                Dialog::TresorNeuBeginnen => {
+                    ui.label(RichText::new(t(sprache, "tresor.neu_beginnen_titel")).heading());
+                    ui.add(
+                        egui::Label::new(text(
+                            &f,
+                            t(sprache, "tresor.neu_beginnen_text"),
+                            Ton::Warnung,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if bausteine::knopf(
+                            ui,
+                            &f,
+                            Icon::Neuladen,
+                            &t(sprache, "tresor.neu_beginnen"),
+                        )
+                        .clicked()
+                        {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
                         {
                             abbrechen = true;
                         }

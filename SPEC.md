@@ -294,6 +294,38 @@ Server übernehmen, und genau das ist gewollt (Aufgabe 25).
 
 Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
 
+### Grenzen im Client (Paket 3)
+
+Ein Eintrag ist fremder Code und ein Agent ist ein fremder Aufrufer. Beides
+bekommt im Client feste Grenzen; sie stehen an einer Stelle und sind getestet:
+
+| Was | Grenze |
+|---|---|
+| ein Werkzeugaufruf | 120 s ohne Lebenszeichen, je Eintrag 1–900 s; Fortschrittsmeldungen verlängern, mehr als 15 min nie |
+| Abbruch | bricht der Agent ab, endet auch der Aufruf beim Tool |
+| Antwort eines Aufrufs | 8 MB, sonst Fehler mit klarem Text |
+| gleichzeitig | 32 Aufrufe insgesamt, 8 je Eintrag, darüber sofort „ausgelastet“ |
+| Prozessausgaben | Zeile 8 KB Puffer und 2000 Zeichen, 200 Zeilen je Minute und Eintrag auf die Platte, Tagesdatei 10 MB – geprüft **vor** dem Schreiben |
+| Meldung des Tools (stdio) | 16 MB; darüber startet der Eintrag neu (gezählt, mit Pause) |
+| Werkzeugliste | 500 Werkzeuge, Name ≤ 128 aus `[A-Za-z0-9_.-]`, Beschreibung ≤ 4000 Zeichen, Schema ≤ 64 KB, ohne Steuer- und Richtungszeichen |
+| `list_changed` | höchstens einmal je Sekunde an die Agenten |
+| Kennung eines Eintrags | `[a-z0-9-]{1,40}`, kein `__`, nicht `quiver`; sonst startet der Eintrag nicht und das Fenster nennt den Grund |
+| Netz | Verbinden 10 s, Antwort 30 s, Strom 60 s ohne Byte, Antwort ≤ 4 MB (Soll 8 MB), Ereigniszeile ≤ 64 KB, keine Weiterleitungen |
+| Sitzungen am Endpunkt | höchstens 64, ohne Nutzung nach 10 Minuten abgelaufen („verbunden“ folgt daraus) |
+| Herkunft am Endpunkt | mit `Origin` nur von Loopback, `Host` nur der eigene Port, ohne `Origin` erlaubt (CLI-Agent) |
+| Umgebung eines Werkzeugs | Whitelist (PATH, HOME, USER, LANG, LC_*, TZ, TMPDIR, Proxy, Plattform-nötiges) plus die Werte des Eintrags |
+| Soll-Abgleich | zusätzlich alle 5 Minuten ± Streuung, unabhängig vom Ereignis-Strom |
+| Tresor | ein Lesezugriff je Abgleich, in `spawn_blocking`, Sperre mit Frist; fehlt der Schlüssel, wird **kein** neuer erzeugt; ein kaputter Tresor verhindert den Start nicht (`Neu beginnen` mit Rückfrage, alte Dateien bleiben als `.kaputt-<zeit>`) |
+| gespeicherter Stand | Zwischendatei mit PID und Zufall, `fsync` für Datei und Ordner; unlesbar → `.kaputt-<zeit>` und Hinweis im Fenster; eine Sperrdatei verhindert den zweiten Kern auf demselben Profil |
+| zweite Instanz | Sperrdatei im Profil (der Port darin ist nur zum Zeigen, frei gewählt); je Verbindung 500 ms, höchstens 8 |
+| Einrichtung | Frist 15 Minuten, „Abbrechen“ beendet den Prozess, beim Beenden wird aufgeräumt |
+| Agent koppeln | kein Befehl trägt das Token als Argument (die Shell liest es verdeckt ein); die Zwischenablage wird nach 60 s geleert, solange sie den Wert noch enthält |
+| Import | Datei ≤ 8 MB, geprüfte Kennungen und Mengen, der Rest „übersprungen“; die Maße des Schlüssel-Ableiters aus der Datei werden begrenzt |
+
+**Bewusste Grenze:** Ein Tool läuft mit dem Konto des Benutzers und könnte den
+Tresor lesen. Der Client kann das nicht verhindern; der Schutz sind geprüfte,
+signierte Pakete und die Freigabe durch den Admin (Abschnitt 4).
+
 ## 9. Oberfläche
 
 - **Client:** egui, Bausteine und Themes wie in crosspoint, wledambilight und
@@ -356,9 +388,11 @@ Antwort. Dazu kommen die stderr-Zeilen jedes stdio-Eintrags, je Eintrag.
   3). Eine zentrale Auswertung wäre ein eigener Entwurf (Zustimmung, Aufbewahrung,
   Zugriff) und ist nicht Teil des MVP.
 - **Festlegung: maskiert.** Schlüssel mit `pass`, `token`, `secret`, `key`,
-  `pat`, `auth` oder `cookie` im Namen bekommen `<verborgen>`; jeder Wert aus dem
-  Tresor wird ersetzt, auch als Teilstring. Kürzen: 200 Zeichen je Wert, 4 KB
-  Argumente, 500 Zeichen Vorschau, 2000 Zeichen Fehlertext.
+  `pat` (nur als Wort, nicht in `path`), `auth` oder `cookie` im Namen bekommen
+  `<verborgen>`; jeder Wert aus dem Tresor wird ersetzt – ab sechs Zeichen auch
+  als Teilstring und zusätzlich in Base64- und URL-kodierter Form, kürzere nur
+  als ganzes Wort. Kürzen: 200 Zeichen je Wert, 4 KB Argumente, 500 Zeichen
+  Vorschau, 2000 Zeichen Fehlertext und Prozesszeile.
 
 *Preis:* Wer die Dateien liest, sieht Tool-Namen, Zeiten und Fehlertexte; nach
 7 Tagen ist das meiste weg. Ein Geheimnis, das ein Tool **selbst** in eine
@@ -374,6 +408,11 @@ Prozesszeilen gibt es erst, wenn der User im Fenster unter „Agenten“
 „Agenten dürfen Inhalte im Protokoll sehen“ einschaltet (in `zustand.json`
 gespeichert). Fehlertexte sind auch dann maskiert. Die Aufrufe der beiden
 eigenen Werkzeuge landen nicht im Protokoll (keine Rückkopplung).
+
+Ein Agent sieht dabei **nur seine eigenen** Aufrufe (sein Name kommt aus seinem
+Token; das Argument `agent` gibt es nicht), und `quiver__tool_log` gibt es nur
+für Einträge, die er selbst benutzt hat. Prozesszeilen tragen zusätzlich die
+Schlüsselwort-Maske (`token`, `passwort`, …).
 
 ## 11. Offene Punkte
 

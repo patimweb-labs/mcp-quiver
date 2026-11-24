@@ -196,8 +196,9 @@ fn tool_namen_rundlauf() {
     let id = EintragId::neu("microsoft-mail");
     let n = tool_name(&id, "send_mail");
     assert_eq!(n, "microsoft-mail__send_mail");
-    assert_eq!(tool_name_zerlegen(&n), Some((id, "send_mail")));
-    assert_eq!(tool_name_zerlegen("ohne"), None);
+    // Die Umkehrung ist keine Zerlegung mehr (Paket 3): der Client ordnet
+    // über eine Tabelle zu und trennt nur das eigene Präfix ab.
+    assert_eq!(n.strip_prefix("microsoft-mail__"), Some("send_mail"));
 }
 
 #[test]
@@ -300,4 +301,34 @@ fn altes_feld_ohne_art_und_titel_ist_text() {
     let feld: Feld = serde_json::from_str(json).unwrap();
     assert_eq!(feld.art, FeldArt::Text);
     assert_eq!(feld.titel, None);
+}
+
+/// Kennungen werden Teil jedes Werkzeugnamens (`<kennung>__<werkzeug>`) und
+/// müssen deshalb eng bleiben (Paket 3).
+#[test]
+fn kennungen_sind_eng_und_reserviert() {
+    for gut in ["echo", "microsoft-mail", "a", "m365", &"a".repeat(40)] {
+        assert!(kennung_gueltig(gut), "{gut}");
+        assert_eq!(kennung_fehler(gut), None, "{gut}");
+    }
+    for schlecht in [
+        "",
+        "Echo",
+        "mit leerzeichen",
+        "mit__trenner",
+        "quiver",
+        "unter_strich",
+        &"a".repeat(41),
+        "größer",
+    ] {
+        assert!(!kennung_gueltig(schlecht), "{schlecht}");
+        assert!(kennung_fehler(schlecht).is_some(), "{schlecht}");
+    }
+    // Die Begründungen sind für das Fenster gedacht.
+    assert!(kennung_fehler("quiver")
+        .unwrap_or_default()
+        .contains("reserviert"));
+    assert!(kennung_fehler("mit__trenner")
+        .unwrap_or_default()
+        .contains("__"));
 }

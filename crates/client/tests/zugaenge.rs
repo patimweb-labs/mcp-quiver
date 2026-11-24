@@ -150,6 +150,21 @@ impl Pruefung {
             .count()
     }
 
+    /// Warten, bis der Eintrag neu gestartet wurde (ein Start mehr im Protokoll
+    /// des Demo-Servers). Der Start läuft im Hintergrund; die Sicht kann schon
+    /// die neue Liste zeigen, bevor der Prozess seine Zeile geschrieben hat.
+    async fn warte_auf_start(&self, vorher: usize) {
+        let frist = Instant::now() + FRIST;
+        while self.starts() <= vorher {
+            assert!(
+                Instant::now() < frist,
+                "der Eintrag startet nicht neu ({} Starts, vorher {vorher})",
+                self.starts()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     /// Was das Tool beim Start in `QUIVER_ZUGAENGE` gesehen hat. `None`, solange
     /// die Datei (noch) nicht lesbar ist – sie entsteht bei jedem Start neu.
     fn zugaenge_im_tool(&self) -> Option<Vec<Zugang>> {
@@ -481,10 +496,7 @@ async fn zwei_zugaenge_stehen_beim_start_im_tool_einer_weniger_nach_dem_loeschen
         })
         .await;
     assert_eq!(liste[0].name, "db-01", "nur db-01 bleibt");
-    assert!(
-        p.starts() > vorher,
-        "nach der Änderung startet der Eintrag neu"
-    );
+    p.warte_auf_start(vorher).await;
     let abgelegt = p.tresor.alles();
     for feld in ["anmelde_passwort", "sudo_passwort"] {
         assert!(

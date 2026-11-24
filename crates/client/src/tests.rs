@@ -714,6 +714,10 @@ fn die_sicherung_nimmt_die_abschaltung_mit() {
         anmeldung: BTreeMap::new(),
         einrichtung: BTreeMap::new(),
         einrichtung_laufend: BTreeSet::new(),
+        einrichtung_abbruch: BTreeMap::new(),
+        aufruf_fristen: BTreeMap::new(),
+        tresor_fehler: None,
+        profil_hinweis: None,
         am_geraet_aus: BTreeSet::from([id.clone()]),
         angenommen: false,
         protokoll_fuer_agenten: false,
@@ -772,4 +776,193 @@ fn grund_text_ist_verstaendlich() {
     assert!(grund_text(Some(AnmeldeGrund::KeinZugriff), "technisch").contains("Gruppe"));
     assert!(grund_text(Some(AnmeldeGrund::NeuAnmelden), "technisch").contains("erneut"));
     assert_eq!(grund_text(None, "technisch"), "technisch");
+}
+
+/// Eine Kennung, die nicht als Präfix taugt, steht in der Sicht mit Grund –
+/// der Eintrag startet nicht (Paket 3).
+#[test]
+fn eine_unbrauchbare_kennung_steht_mit_grund_in_der_sicht() {
+    let soll = Soll::neu(vec![
+        SollEintrag {
+            eintrag: eintrag("quiver"),
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: eintrag("echo"),
+            werte: Werte::new(),
+        },
+    ]);
+    let werte = BTreeMap::new();
+    let geheim = BTreeMap::new();
+    let zugaenge = BTreeMap::new();
+    let leer = BTreeSet::new();
+    let sicht = eintraege_sicht(
+        &soll,
+        &Lokales {
+            werte: &werte,
+            geheim_gesetzt: &geheim,
+            zugaenge: &zugaenge,
+            zugang_geheim: &zugaenge,
+            am_geraet_aus: &leer,
+        },
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let kaputt = sicht
+        .iter()
+        .find(|eintrag| eintrag.id == EintragId::neu("quiver"))
+        .expect("der Eintrag steht in der Sicht");
+    let grund = kaputt.unzulaessig.clone().expect("Grund");
+    assert!(grund.contains("reserviert"), "{grund}");
+    let gut = sicht
+        .iter()
+        .find(|eintrag| eintrag.id == EintragId::neu("echo"))
+        .expect("echo");
+    assert_eq!(gut.unzulaessig, None);
+    // Ein unbrauchbarer Eintrag läuft nie – auch nicht, wenn er an wäre.
+    let stand = stand_mit(&soll, &leer);
+    assert!(!darf_laufen(&stand, &EintragId::neu("quiver")));
+    assert!(darf_laufen(&stand, &EintragId::neu("echo")));
+}
+
+/// Ein Gerüst für Prüfungen an [`darf_laufen`].
+fn stand_mit(soll: &Soll, aus: &BTreeSet<EintragId>) -> Stand {
+    Stand {
+        abgelehnt: false,
+        anmelde_grund: None,
+        server_url: None,
+        geraet: None,
+        token: None,
+        benutzer: None,
+        anmeldewege: None,
+        anmeldung_abbruch: None,
+        lokale_werte: BTreeMap::new(),
+        geheim: BTreeMap::new(),
+        zugaenge: BTreeMap::new(),
+        zugang_geheim: BTreeMap::new(),
+        agenten: Vec::new(),
+        soll: soll.clone(),
+        laeufer: BTreeMap::new(),
+        anmeldung: BTreeMap::new(),
+        einrichtung: BTreeMap::new(),
+        einrichtung_laufend: BTreeSet::new(),
+        einrichtung_abbruch: BTreeMap::new(),
+        aufruf_fristen: BTreeMap::new(),
+        tresor_fehler: None,
+        profil_hinweis: None,
+        am_geraet_aus: aus.clone(),
+        angenommen: false,
+        protokoll_fuer_agenten: false,
+        verbindung: Verbindung::NichtEingebunden,
+        endpunkt: String::new(),
+    }
+}
+
+/// „Verbunden“ eines Agenten folgt allein aus den offenen Sitzungen
+/// (Paket 3): ohne Sitzung ist er es nicht, mit Sitzung schon.
+#[test]
+fn verbunden_folgt_aus_den_offenen_sitzungen() {
+    let soll = Soll::neu(Vec::new());
+    let aus = BTreeSet::new();
+    let stand = Stand {
+        agenten: vec![profil::Agent {
+            id: "a1".into(),
+            name: "pi".into(),
+            token_hash: "00".into(),
+        }],
+        ..stand_mit(&soll, &aus)
+    };
+    let ohne = stand.modell(&BTreeSet::new());
+    assert!(!ohne.agenten[0].verbunden, "ohne Sitzung nicht verbunden");
+    let mit = stand.modell(&BTreeSet::from(["a1".to_string()]));
+    assert!(mit.agenten[0].verbunden, "mit Sitzung verbunden");
+}
+
+/// Sitzungen werden abgeräumt: abgelaufene zuerst, sonst die älteste, und
+/// höchstens 64 (Paket 3).
+#[test]
+fn sitzungen_laufen_ab_und_bleiben_bei_64() {
+    let jetzt = std::time::Instant::now();
+    let mut zeiten: BTreeMap<u64, std::time::Instant> = BTreeMap::new();
+    assert_eq!(sitzung_weicht(&zeiten, jetzt), None, "Platz für die erste");
+
+    // Eine abgelaufene Sitzung weicht zuerst – auch wenn noch Platz wäre.
+    zeiten.insert(1, jetzt - SITZUNG_FRIST - Duration::from_secs(1));
+    zeiten.insert(2, jetzt);
+    assert_eq!(sitzung_weicht(&zeiten, jetzt), Some(1));
+    zeiten.remove(&1);
+
+    // Volle Liste ohne abgelaufene: die älteste weicht.
+    let mut voll: BTreeMap<u64, std::time::Instant> = BTreeMap::new();
+    for nummer in 0..SITZUNGEN_MAX as u64 {
+        voll.insert(
+            nummer,
+            jetzt - Duration::from_secs(SITZUNGEN_MAX as u64 + 10 - nummer),
+        );
+    }
+    let weicht = sitzung_weicht(&voll, jetzt).expect("die älteste weicht");
+    assert_eq!(weicht, 0, "die älteste ist die erste");
+    // Unter der Grenze bleibt alles.
+    voll.remove(&0);
+    assert_eq!(sitzung_weicht(&voll, jetzt), None);
+}
+
+/// Der zusätzliche Soll-Abgleich läuft alle fünf Minuten (± Streuung).
+#[test]
+fn die_zusaetzliche_nachfrage_hat_streuung() {
+    let abstand = abgleich::nachfrage_abstand_fuer_test();
+    assert!(
+        abstand >= Duration::from_secs(5 * 60),
+        "mindestens fünf Minuten: {abstand:?}"
+    );
+    assert!(
+        abstand <= Duration::from_secs(5 * 60 + 30),
+        "höchstens fünf Minuten und die Streuung: {abstand:?}"
+    );
+}
+
+/// Die Auslastung zählt insgesamt und je Eintrag mit (Paket 3): 8 je Eintrag,
+/// 32 insgesamt.
+#[test]
+fn die_auslastung_zaehlt_gesamt_und_je_eintrag() {
+    let mut auslastung = Auslastung::default();
+    let eins = EintragId::neu("eins");
+    let zwei = EintragId::neu("zwei");
+    for _ in 0..Auslastung::EINTRAG_MAX {
+        assert!(auslastung.belegen(&eins));
+    }
+    assert!(
+        !auslastung.belegen(&eins),
+        "der neunte Aufruf desselben Eintrags ist zu viel"
+    );
+    // Andere Einträge haben ihren eigenen Anteil.
+    assert!(auslastung.belegen(&zwei));
+
+    // Insgesamt höchstens 32: mit 8 + 1 sind noch 23 übrig.
+    let mut weitere = 0;
+    for nummer in 0..30 {
+        if auslastung.belegen(&EintragId::neu(format!("eintrag-{nummer}"))) {
+            weitere += 1;
+        }
+    }
+    assert_eq!(
+        weitere,
+        Auslastung::GESAMT_MAX - Auslastung::EINTRAG_MAX - 1,
+        "die Gesamtgrenze greift"
+    );
+    for _ in 0..Auslastung::EINTRAG_MAX {
+        auslastung.freigeben(&eins);
+    }
+    assert!(auslastung.belegen(&eins), "nach dem Freigeben wieder frei");
+}
+
+/// Die Größe einer Antwort wird gezählt, ohne die Antwort zusammenzukleben.
+#[test]
+fn die_antwortgroesse_zaehlt_ohne_kopie() {
+    let ergebnis = rmcp::model::CallToolResult::success(vec![
+        rmcp::model::ContentBlock::text("hallo"),
+        rmcp::model::ContentBlock::text("welt"),
+    ]);
+    assert_eq!(endpunkt::antwort_groesse(&ergebnis), 9, "5 + 4 Zeichen");
 }

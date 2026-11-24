@@ -36,6 +36,9 @@
 //!   Start sieht).
 //! - `zugaenge <datei>`: schreibt `QUIVER_ZUGAENGE` (oder `[]`) in die Datei
 //!   und endet, Exit 0 – derselbe Blick auf die Umgebung ohne MCP-Server.
+//! - `warten <ms>`: wartet so viele Millisekunden und endet mit 0 – so sieht
+//!   eine Einrichtung aus, die auf den User wartet (Paket 3: der Abbruch muss
+//!   sie beenden können).
 //! - `kaputt`: Exit 3 – für den Fehlerfall im Test.
 
 use std::process::ExitCode;
@@ -104,6 +107,13 @@ fn main() -> ExitCode {
             } else {
                 ExitCode::from(2)
             }
+        }
+        // Eine Einrichtung, die auf den User wartet.
+        "warten" => {
+            let ms = konto.trim().parse::<u64>().unwrap_or(0);
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            println!("gewartet");
+            ExitCode::SUCCESS
         }
         "kaputt" => {
             eprintln!("kaputt");

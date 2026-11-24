@@ -407,14 +407,15 @@ async fn ein_aufruf_steht_mit_agent_dauer_und_status_im_protokoll() {
     assert!(aufruf.vorschau.contains("hallo"), "{}", aufruf.vorschau);
     assert!(aufruf.antwort_groesse > 0);
 
-    // Ein unbekanntes Werkzeug des Eintrags: der Eintrag antwortet mit einem
-    // Fehler, der Client hält ihn fest.
+    // Ein Werkzeug, das der Eintrag nicht anbietet: der Client reicht es
+    // **nicht** weiter (die Zuordnung ist eine Tabelle, Paket 3) und hält die
+    // Ablehnung fest.
     let fehler = aufrufen(agent.peer(), "echo__gibtsnicht", json!({})).await;
-    assert!(fehler.is_err(), "der Demo-Server kennt das Werkzeug nicht");
+    assert!(fehler.is_err(), "der Client kennt das Werkzeug nicht");
     let aufruf = p
         .warte_auf_aufruf("der Fehler", |aufruf| aufruf.tool == "echo__gibtsnicht")
         .await;
-    assert_eq!(aufruf.status, Status::Fehler);
+    assert_eq!(aufruf.status, Status::Abgelehnt);
     assert!(
         aufruf
             .fehler

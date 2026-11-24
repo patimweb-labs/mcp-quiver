@@ -17,6 +17,18 @@
 //! - `QUIVER_DEMO_WARTE_AUF` + `QUIVER_DEMO_FREIGABE`: Testhilfe. Existiert die
 //!   erste Datei beim Start, wird auf die zweite gewartet, bevor der Dienst
 //!   antwortet – so lässt sich ein Start anhalten (Aufgabe 12: Doppelstart).
+//! - `QUIVER_DEMO_LANGSAM_MS`: optional; jeder Werkzeugaufruf wartet so lange
+//!   (Paket 3: Frist je Aufruf).
+//! - `QUIVER_DEMO_FORTSCHRITT`: optional; so viele Fortschrittsmeldungen
+//!   schickt jeder Aufruf (Paket 3: sie verlängern die Frist).
+//! - `QUIVER_DEMO_FORTSCHRITT_MS`: Abstand dazwischen (Standard 200 ms).
+//! - `QUIVER_DEMO_GROSS`: optional; die Antwort wird so viele Zeichen lang
+//!   (Paket 3: Größengrenzen).
+//! - `QUIVER_DEMO_VIELE`: optional; so viele Werkzeuge bietet der Server an
+//!   (Paket 3: höchstens 500).
+//! - `QUIVER_DEMO_UMGEBUNG`: optional; der Name einer Umgebungsvariablen, die
+//!   in die Antwort geschrieben wird (`gesetzt`/`leer`) – so prüft ein Test,
+//!   dass ein Werkzeug nicht die ganze Umgebung erbt (Paket 3).
 //! - `QUIVER_DEMO_PID`: optional, ein Ordner. Jeder Start legt dort eine Datei
 //!   mit seiner PID ab und entfernt sie beim Beenden wieder – so zählt ein
 //!   Test, wie viele Demo-Prozesse wirklich laufen (Aufgabe 19).
@@ -24,9 +36,10 @@
 //! Jede Zeile geht nach stderr (landet im Protokoll des Clients) und ggf. in die Datei.
 
 use rmcp::handler::server::ServerHandler;
+use rmcp::model::RequestParamsMeta;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServiceExt};
@@ -43,21 +56,44 @@ struct Demo {
     echo_geheim: bool,
     /// Mit `QUIVER_DEMO_FARBE=1` tragen die stderr-Zeilen ANSI-Farbcodes.
     farbe: bool,
+    /// So lange wartet jeder Aufruf (Paket 3: Frist).
+    langsam_ms: u64,
+    /// So viele Fortschrittsmeldungen schickt jeder Aufruf.
+    fortschritte: u64,
+    /// Abstand der Fortschrittsmeldungen.
+    fortschritt_ms: u64,
+    /// So lang wird die Antwort (Paket 3: Größengrenzen).
+    gross: u64,
+    /// Der Name einer Umgebungsvariablen, die in die Antwort kommt.
+    umgebung: Option<String>,
 }
 
 impl Demo {
     fn aus_umgebung() -> Self {
         let name = std::env::var("QUIVER_DEMO_NAME").unwrap_or_else(|_| "demo".into());
-        let werkzeuge = std::env::var("QUIVER_DEMO_TOOLS")
-            .unwrap_or_else(|_| "ausfuehren=Führt etwas aus (Demo)".into())
-            .split(';')
-            .filter_map(|teil| {
-                let (n, b) = teil.split_once('=').unwrap_or((teil, "Demo-Werkzeug"));
-                let n = n.trim();
-                (!n.is_empty()).then(|| (n.to_string(), b.trim().to_string()))
-            })
-            .collect();
+        let werkzeuge: Vec<(String, String)> = match std::env::var("QUIVER_DEMO_VIELE")
+            .ok()
+            .and_then(|wert| wert.trim().parse::<usize>().ok())
+        {
+            Some(anzahl) => (0..anzahl)
+                .map(|nummer| (format!("werkzeug{nummer}"), format!("Werkzeug {nummer}")))
+                .collect(),
+            None => std::env::var("QUIVER_DEMO_TOOLS")
+                .unwrap_or_else(|_| "ausfuehren=Führt etwas aus (Demo)".into())
+                .split(';')
+                .filter_map(|teil| {
+                    let (n, b) = teil.split_once('=').unwrap_or((teil, "Demo-Werkzeug"));
+                    let n = n.trim();
+                    (!n.is_empty()).then(|| (n.to_string(), b.trim().to_string()))
+                })
+                .collect(),
+        };
         let flagge = |name: &str| std::env::var(name).is_ok_and(|wert| wert.trim() == "1");
+        let zahl = |name: &str| {
+            std::env::var(name)
+                .ok()
+                .and_then(|wert| wert.trim().parse::<u64>().ok())
+        };
         Self {
             name,
             werkzeuge,
@@ -66,6 +102,13 @@ impl Demo {
                 .filter(|wert| !wert.is_empty()),
             echo_geheim: flagge("QUIVER_DEMO_GEHEIM_ECHO"),
             farbe: flagge("QUIVER_DEMO_FARBE"),
+            langsam_ms: zahl("QUIVER_DEMO_LANGSAM_MS").unwrap_or(0),
+            fortschritte: zahl("QUIVER_DEMO_FORTSCHRITT").unwrap_or(0),
+            fortschritt_ms: zahl("QUIVER_DEMO_FORTSCHRITT_MS").unwrap_or(200),
+            gross: zahl("QUIVER_DEMO_GROSS").unwrap_or(0),
+            umgebung: std::env::var("QUIVER_DEMO_UMGEBUNG")
+                .ok()
+                .filter(|wert| !wert.trim().is_empty()),
         }
     }
 
@@ -118,7 +161,7 @@ impl ServerHandler for Demo {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let werkzeug = request.name.to_string();
         if !self.werkzeuge.iter().any(|(n, _)| *n == werkzeug) {
@@ -127,9 +170,26 @@ impl ServerHandler for Demo {
                 None,
             ));
         }
+        let fortschritts_token = request.progress_token();
         let argumente = serde_json::to_string(&request.arguments.unwrap_or_default())
             .unwrap_or_else(|_| "{}".into());
         self.protokoll(&format!("Aufruf {werkzeug} {argumente}"));
+        // Fortschrittsmeldungen (Paket 3): sie verlängern die Frist des
+        // Clients, ohne dass die Antwort früher kommt.
+        if self.fortschritte > 0 {
+            if let Some(token) = fortschritts_token {
+                for schritt in 0..self.fortschritte {
+                    tokio::time::sleep(std::time::Duration::from_millis(self.fortschritt_ms)).await;
+                    let meldung = ProgressNotificationParam::new(token.clone(), schritt as f64)
+                        .with_total(self.fortschritte as f64)
+                        .with_message(format!("Schritt {}", schritt + 1));
+                    let _ = context.peer.notify_progress(meldung).await;
+                }
+            }
+        }
+        if self.langsam_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(self.langsam_ms)).await;
+        }
         let mut inhalt = format!(
             "[{}] {werkzeug} wurde aufgerufen und protokolliert: {argumente}",
             self.name
@@ -140,6 +200,18 @@ impl ServerHandler for Demo {
             if let Some(geheim) = &self.geheim {
                 inhalt.push_str(&format!("\nGeheimnis: {geheim}"));
             }
+        }
+        if let Some(name) = &self.umgebung {
+            let stand = if std::env::var_os(name).is_some() {
+                "gesetzt"
+            } else {
+                "leer"
+            };
+            inhalt.push_str(&format!("\n{name}={stand}"));
+        }
+        if self.gross > 0 {
+            let platzhalter = "x".repeat(usize::try_from(self.gross).unwrap_or(usize::MAX));
+            inhalt.push_str(&format!("\n{platzhalter}"));
         }
         Ok(CallToolResponse::Complete(CallToolResult::success(vec![
             ContentBlock::text(inhalt),

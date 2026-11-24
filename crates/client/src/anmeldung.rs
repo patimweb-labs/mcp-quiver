@@ -20,7 +20,9 @@ use std::time::Duration;
 use anyhow::Context;
 use quiver_domain::{Anmeldung, EintragId, Laufzeit, SollEintrag, Werte};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncReadExt, BufReader};
+
+use crate::hilfen::Abbruch;
 
 /// Wie es um die Anmeldung eines Eintrags steht. Nur für das Fenster; der
 /// Server bekommt sie nie zu sehen.
@@ -47,6 +49,15 @@ pub const STATUS_FRIST: Duration = Duration::from_secs(15);
 pub const ANMELDEN_FRIST: Duration = Duration::from_secs(5 * 60);
 /// Das Abmelden ist ein Aufräumschritt und braucht keine fünf Minuten.
 pub const ABMELDEN_FRIST: Duration = Duration::from_secs(60);
+/// So lange darf die Einrichtung im Browser höchstens dauern – danach wird
+/// der Prozess beendet, damit kein hängender Kindprozess zurückbleibt.
+pub const EINRICHT_FRIST: Duration = Duration::from_secs(15 * 60);
+/// So viel stdout eines Anmelde- oder Einrichtungsbefehls wird gelesen. Was
+/// darüber hinausgeht, wird verworfen – ein Befehl soll den Client nicht mit
+/// einer riesigen Ausgabe füllen.
+pub const AUSGABE_BYTES: u64 = 64 * 1024;
+/// So groß ist der Puffer einer Ausgabezeile.
+pub const AUSGABE_ZEILE_BYTES: usize = 8 * 1024;
 
 /// Welcher der drei Befehle eines Eintrags gemeint ist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,28 +278,34 @@ pub struct Ausgang {
 /// Einen Anmelde-Befehl ausführen. stdout und stderr gehen ins Protokoll des
 /// Clients (wie bei den MCP-Prozessen), nie in eine Meldung an den Server.
 pub async fn laufen(id: &EintragId, befehl: &Befehl, frist: Duration) -> anyhow::Result<Ausgang> {
-    befehl_laufen(id, befehl, Some(frist)).await
+    befehl_laufen(id, befehl, Some(frist), None).await
 }
 
 /// Einen Befehl ausführen und auf sein Ende warten.
 ///
-/// `frist: None` heißt: warten, bis der User fertig ist (so läuft die
-/// Einrichtung, Aufgabe 11). Eine Frist gibt es für die Anmeldung, damit ein
+/// `frist: None` heißt: warten, bis der User fertig ist – so lief die
+/// Einrichtung früher. Seit Paket 3 hat auch sie eine Frist
+/// ([`EINRICHT_FRIST`]). Eine Frist für die Anmeldung gibt es, damit ein
 /// hängender Status-Befehl den Kern nicht blockiert.
+///
+/// `abbruch` beendet den Kindprozess sofort – „Abbrechen“ im Fenster und das
+/// Beenden des Clients räumen so jede laufende Einrichtung ab.
 pub async fn befehl_laufen(
     id: &EintragId,
     befehl: &Befehl,
     frist: Option<Duration>,
+    abbruch: Option<Abbruch>,
 ) -> anyhow::Result<Ausgang> {
     tracing::info!(eintrag = %id, "Befehl: {}", maskieren(&befehl.zeile()));
     let mut kommando = tokio::process::Command::new(&befehl.programm);
     kommando
         .args(&befehl.argumente)
-        .envs(&befehl.umgebung)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Dieselbe Whitelist wie bei den Werkzeugen (Paket 3).
+    crate::laufzeit::umgebung_setzen(&mut kommando, &befehl.umgebung);
     let mut kind = kommando
         .spawn()
         .with_context(|| format!("{} lässt sich nicht starten", befehl.programm))?;
@@ -302,11 +319,33 @@ pub async fn befehl_laufen(
         .take()
         .map(|stderr| tokio::spawn(fehler_lesen(id.als_str().to_string(), stderr)));
 
-    // Ohne Frist wird einfach gewartet: die Einrichtung endet selbst, wenn der
-    // User die Seite abschließt oder abbricht.
-    let gewartet = match frist {
-        None => Some(kind.wait().await),
-        Some(frist) => tokio::time::timeout(frist, kind.wait()).await.ok(),
+    let gewartet = match (frist, &abbruch) {
+        (None, None) => Some(kind.wait().await),
+        (Some(frist), None) => tokio::time::timeout(frist, kind.wait()).await.ok(),
+        (None, Some(abbruch)) => Some(tokio::select! {
+            _ = abbruch.warten() => {
+                let _ = kind.kill().await;
+                anyhow::bail!("Der Befehl wurde abgebrochen")
+            }
+            status = kind.wait() => status,
+        }),
+        (Some(frist), Some(abbruch)) => Some(tokio::select! {
+            _ = abbruch.warten() => {
+                let _ = kind.kill().await;
+                anyhow::bail!("Der Befehl wurde abgebrochen")
+            }
+            status = tokio::time::timeout(frist, kind.wait()) => match status {
+                Ok(status) => status,
+                Err(_) => {
+                    let _ = kind.kill().await;
+                    anyhow::bail!(
+                        "{} antwortet nicht binnen {} s",
+                        befehl.programm,
+                        frist.as_secs()
+                    )
+                }
+            },
+        }),
     };
     let Some(status) = gewartet else {
         let _ = kind.kill().await;
@@ -336,24 +375,44 @@ pub async fn befehl_laufen(
     })
 }
 
-/// stdout einsammeln und ins Protokoll schreiben.
-async fn ausgabe_lesen(id: String, mut stdout: tokio::process::ChildStdout) -> String {
+/// stdout einsammeln (höchstens [`AUSGABE_BYTES`]) und ins Protokoll schreiben.
+async fn ausgabe_lesen(id: String, stdout: tokio::process::ChildStdout) -> String {
     let mut ausgabe = String::new();
-    if let Err(fehler) = stdout.read_to_string(&mut ausgabe).await {
+    let mut begrenzt = stdout.take(AUSGABE_BYTES);
+    if let Err(fehler) = begrenzt.read_to_string(&mut ausgabe).await {
         tracing::warn!(eintrag = %id, "Anmeldung: stdout nicht lesbar: {fehler}");
     }
     for zeile in ausgabe.lines() {
-        tracing::info!(eintrag = %id, "{}", maskieren(zeile));
+        tracing::info!(eintrag = %id, "{}", maskieren(&kuerzen(zeile)));
     }
     ausgabe
 }
 
-/// stderr Zeile für Zeile ins Protokoll schreiben.
+/// stderr Zeile für Zeile ins Protokoll schreiben – mit Puffer und gekürzt.
+///
+/// Gelesen wird mit [`crate::laufzeit::zeile_begrenzt`]: eine Zeile ohne Ende
+/// füllt so nie den Speicher.
 async fn fehler_lesen(id: String, stderr: tokio::process::ChildStderr) {
-    let mut zeilen = BufReader::new(stderr).lines();
-    while let Ok(Some(zeile)) = zeilen.next_line().await {
-        tracing::info!(eintrag = %id, "{}", maskieren(&zeile));
+    let mut leser = BufReader::new(stderr);
+    // Der Puffer einer Zeile ([`AUSGABE_ZEILE_BYTES`]) ist kleiner als der
+    // allgemeine; deshalb wird hier nach dem Lesen noch einmal gekürzt.
+    let mut zeile = Vec::new();
+    loop {
+        match crate::laufzeit::zeile_begrenzt(&mut leser, &mut zeile).await {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return,
+        }
+        let text = String::from_utf8_lossy(&zeile[..zeile.len().min(AUSGABE_ZEILE_BYTES)]);
+        tracing::info!(eintrag = %id, "{}", maskieren(&kuerzen(text.trim_end())));
     }
+}
+
+/// Eine Ausgabezeile auf das Protokollmaß kürzen.
+fn kuerzen(zeile: &str) -> String {
+    crate::protokoll::kuerzen(
+        &crate::protokoll::anzeige_zeichen(zeile),
+        crate::protokoll::ZEILE_ZEICHEN,
+    )
 }
 
 /// Den Status-Befehl auswerten: Exit 0 = angemeldet, Exit 1 = abgemeldet,

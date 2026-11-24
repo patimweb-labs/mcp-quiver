@@ -57,6 +57,23 @@ const SCHLUESSEL_LEN: usize = 32;
 const ARGON2_MEMORIE: u32 = 64 * 1024;
 /// Durchläufe des Schlüssel-Ableiters.
 const ARGON2_RUNDEN: u32 = 3;
+/// So groß darf eine Sicherungsdatei höchstens sein (Paket 3): sie wird
+/// **vor** dem Lesen geprüft, damit eine 4-GB-Datei den Client nicht
+/// umbringt.
+pub const DATEI_BYTES: u64 = 8 * 1024 * 1024;
+/// So viele Einträge übernimmt eine Sicherung höchstens.
+pub const EINTRAEGE_MAX: usize = 200;
+/// So viele Werte je Eintrag.
+pub const WERTE_MAX: usize = 100;
+/// So viele Zugänge je Eintrag.
+pub const ZUGAENGE_MAX: usize = 50;
+/// So viel Speicher darf der Schlüssel-Ableiter aus einer **fremden** Datei
+/// höchstens belegen (KiB) – nie mehr als der eigene Standard.
+const ARGON2_MEMORIE_MAX: u32 = ARGON2_MEMORIE;
+/// So viele Durchläufe höchstens.
+const ARGON2_RUNDEN_MAX: u32 = 6;
+/// So viele Fäden höchstens.
+const ARGON2_PARALLEL_MAX: u32 = 4;
 
 // ---------------------------------------------------------------- Ergebnis
 
@@ -194,12 +211,25 @@ impl Geheimnisse {
 }
 
 /// Der Umschlag um die Geheimnisse.
+///
+/// Die Parameter des Schlüssel-Ableiters stehen mit in der Datei; beim Lesen
+/// werden sie **begrenzt** (Paket 3): eine fremde Datei darf den Client nicht
+/// dazu bringen, Gigabyte an Speicher zu belegen.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Umschlag {
     kdf: String,
     salz: String,
     nonce: String,
     daten: String,
+    /// Speicher in KiB (Standard: 64 MiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    speicher_kib: Option<u32>,
+    /// Durchläufe (Standard: 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runden: Option<u32>,
+    /// Fäden (Standard: 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parallel: Option<u32>,
 }
 
 /// Die Datei, wie sie auf der Platte steht.
@@ -223,6 +253,9 @@ pub struct Gelesen {
     /// Die Datei führt Geheimnisse – auch wenn sie (noch) nicht entschlüsselt
     /// sind.
     pub hat_geheimnisse: bool,
+    /// Was beim Lesen **übersprungen** wurde (Paket 3): unbrauchbare Kennungen
+    /// und alles über den Mengen-Grenzen. Der Import sagt das im Fenster.
+    pub uebersprungen: Vec<String>,
 }
 
 // ------------------------------------------------------- Schreiben, Lesen
@@ -269,8 +302,28 @@ pub fn schreiben(
 /// Eine Datei lesen und prüfen. Ein fremdes Format und ein falsches Passwort
 /// sind Fehler **ohne** Inhalt: es wird nichts übernommen.
 pub fn lesen(pfad: &Path, passwort: Option<&str>) -> anyhow::Result<Gelesen> {
-    let text = std::fs::read_to_string(pfad)
+    // Zuerst die Größe: eine riesige Datei wird gar nicht erst gelesen.
+    if let Ok(meta) = std::fs::metadata(pfad) {
+        if meta.len() > DATEI_BYTES {
+            anyhow::bail!(
+                "Die Sicherung ist zu groß ({} Byte, erlaubt sind {DATEI_BYTES})",
+                meta.len()
+            );
+        }
+    }
+    let datei = std::fs::File::open(pfad)
         .map_err(|fehler| anyhow::anyhow!("Die Datei lässt sich nicht lesen: {fehler}"))?;
+    let mut text = String::new();
+    {
+        use std::io::Read as _;
+        let mut begrenzt = datei.take(DATEI_BYTES + 1);
+        begrenzt
+            .read_to_string(&mut text)
+            .map_err(|fehler| anyhow::anyhow!("Die Datei lässt sich nicht lesen: {fehler}"))?;
+        if text.len() as u64 > DATEI_BYTES {
+            anyhow::bail!("Die Sicherung ist zu groß (erlaubt sind {DATEI_BYTES} Byte)");
+        }
+    }
     let huelle: Huelle = serde_json::from_str(&text)
         .map_err(|_| anyhow::anyhow!("Das ist keine mcp-quiver-Sicherung"))?;
     if huelle.format != FORMAT {
@@ -290,11 +343,37 @@ pub fn lesen(pfad: &Path, passwort: Option<&str>) -> anyhow::Result<Gelesen> {
         }
         _ => None,
     };
+    // Namen und Mengen prüfen (Paket 3): nur brauchbare Kennungen, und je
+    // Eintrag nicht mehr als die Grenzen. Was wegfällt, steht im Ergebnis.
+    let mut uebersprungen = Vec::new();
+    let mut eintraege = BTreeMap::new();
+    for (id, mut teil) in huelle.eintraege {
+        if !quiver_domain::kennung_gueltig(&id) {
+            uebersprungen.push(id);
+            continue;
+        }
+        if eintraege.len() >= EINTRAEGE_MAX {
+            uebersprungen.push(id);
+            continue;
+        }
+        teil.werte = begrenzen(teil.werte, WERTE_MAX);
+        teil.zugaenge = begrenzen(teil.zugaenge, ZUGAENGE_MAX);
+        for werte in teil.zugaenge.values_mut() {
+            *werte = begrenzen(std::mem::take(werte), WERTE_MAX);
+        }
+        eintraege.insert(id, teil);
+    }
     Ok(Gelesen {
-        eintraege: huelle.eintraege,
+        eintraege,
         geheimnisse,
         hat_geheimnisse,
+        uebersprungen,
     })
+}
+
+/// Eine Zuordnung auf die ersten `grenze` Einträge kürzen.
+fn begrenzen<K: Ord + Clone, V>(map: BTreeMap<K, V>, grenze: usize) -> BTreeMap<K, V> {
+    map.into_iter().take(grenze).collect()
 }
 
 /// Der Vorschlag für den Dateinamen: `quiver-einstellungen-2026-11-23.json`.
@@ -366,6 +445,18 @@ pub fn vorschau(
             am_geraet_aus: aus_mischen(aus.contains(eintrag_id), teil.am_geraet_aus),
         });
     }
+    // Was beim Lesen übergangen wurde, steht auch in der Vorschau (Paket 3).
+    for id in &gelesen.uebersprungen {
+        vorschau.eintraege.push(VorschauEintrag {
+            id: id.clone(),
+            titel: id.clone(),
+            art: VorschauArt::Uebersprungen,
+            neue: 0,
+            geaenderte: 0,
+            zugaenge: 0,
+            am_geraet_aus: false,
+        });
+    }
     vorschau
 }
 
@@ -421,7 +512,7 @@ fn verschliessen(geheimnisse: &Geheimnisse, passwort: &str) -> anyhow::Result<Um
     rand::rng().fill_bytes(&mut salz);
     let mut nonce = [0u8; NONCE_LEN];
     rand::rng().fill_bytes(&mut nonce);
-    let schluessel = schluessel_ableiten(passwort, &salz)?;
+    let schluessel = schluessel_ableiten(passwort, &salz, ARGON2_MEMORIE, ARGON2_RUNDEN, 1)?;
     let klar = serde_json::to_vec(geheimnisse)?;
     let daten = XChaCha20Poly1305::new(Key::from_slice(&schluessel))
         .encrypt(XNonce::from_slice(&nonce), klar.as_ref())
@@ -431,6 +522,9 @@ fn verschliessen(geheimnisse: &Geheimnisse, passwort: &str) -> anyhow::Result<Um
         salz: B64.encode(salz),
         nonce: B64.encode(nonce),
         daten: B64.encode(daten),
+        speicher_kib: Some(ARGON2_MEMORIE),
+        runden: Some(ARGON2_RUNDEN),
+        parallel: Some(1),
     })
 }
 
@@ -453,16 +547,34 @@ fn entschluesseln(umschlag: &Umschlag, passwort: &str) -> anyhow::Result<Geheimn
     let daten = B64
         .decode(&umschlag.daten)
         .map_err(|_| anyhow::anyhow!("Die Sicherung ist beschädigt"))?;
-    let schluessel = schluessel_ableiten(passwort, &salz)?;
+    // Parameter aus der Datei – aber begrenzt: eine fremde Datei darf den
+    // Client nicht dazu bringen, Gigabyte an Speicher zu belegen.
+    let speicher = umschlag
+        .speicher_kib
+        .unwrap_or(ARGON2_MEMORIE)
+        .clamp(8, ARGON2_MEMORIE_MAX);
+    let runden = umschlag
+        .runden
+        .unwrap_or(ARGON2_RUNDEN)
+        .clamp(1, ARGON2_RUNDEN_MAX);
+    let parallel = umschlag.parallel.unwrap_or(1).clamp(1, ARGON2_PARALLEL_MAX);
+    let schluessel = schluessel_ableiten(passwort, &salz, speicher, runden, parallel)?;
     let klar = XChaCha20Poly1305::new(Key::from_slice(&schluessel))
         .decrypt(XNonce::from_slice(&nonce), daten.as_ref())
         .map_err(|_| anyhow::anyhow!("Das Passwort ist falsch"))?;
     serde_json::from_slice(&klar).map_err(|_| anyhow::anyhow!("Die Sicherung ist beschädigt"))
 }
 
-/// Der Schlüssel aus dem Passwort (Argon2id, m = 64 MiB, t = 3, p = 1).
-fn schluessel_ableiten(passwort: &str, salz: &[u8]) -> anyhow::Result<[u8; SCHLUESSEL_LEN]> {
-    let params = argon2::Params::new(ARGON2_MEMORIE, ARGON2_RUNDEN, 1, Some(SCHLUESSEL_LEN))
+/// Der Schlüssel aus dem Passwort (Argon2id). Die Maße kommen aus der Datei
+/// (begrenzt) oder sind die eigenen: m = 64 MiB, t = 3, p = 1.
+fn schluessel_ableiten(
+    passwort: &str,
+    salz: &[u8],
+    speicher_kib: u32,
+    runden: u32,
+    parallel: u32,
+) -> anyhow::Result<[u8; SCHLUESSEL_LEN]> {
+    let params = argon2::Params::new(speicher_kib, runden, parallel, Some(SCHLUESSEL_LEN))
         .map_err(|fehler| anyhow::anyhow!("Argon2-Parameter: {fehler}"))?;
     let argon2 = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
     let mut schluessel = [0u8; SCHLUESSEL_LEN];
@@ -573,6 +685,7 @@ mod tests {
             eintraege: BTreeMap::new(),
             geheimnisse: None,
             hat_geheimnisse: false,
+            uebersprungen: Vec::new(),
         }
     }
 
@@ -832,5 +945,120 @@ mod tests {
         let name = dateiname();
         assert!(name.starts_with("quiver-einstellungen-"), "{name}");
         assert!(name.ends_with(".json"), "{name}");
+    }
+
+    // ---------------------------------------------------------- Paket 3
+
+    /// Eine zu große Datei wird gar nicht erst gelesen.
+    #[test]
+    fn eine_zu_grosse_datei_wird_abgelehnt() {
+        let ordner = tempfile::tempdir().unwrap();
+        let pfad = ordner.path().join("gross.json");
+        std::fs::write(&pfad, b"{}").unwrap();
+        let datei = std::fs::OpenOptions::new().write(true).open(&pfad).unwrap();
+        datei.set_len(DATEI_BYTES + 1).unwrap();
+        let fehler = format!("{:#}", lesen(&pfad, None).expect_err("zu groß"));
+        assert!(fehler.contains("zu groß"), "{fehler}");
+    }
+
+    /// Unbrauchbare Kennungen und alles über den Mengen-Grenzen wird
+    /// übersprungen und gemeldet – nie stillschweigend übernommen.
+    #[test]
+    fn unbrauchbare_namen_und_zu_viele_eintraege_werden_uebersprungen() {
+        let ordner = tempfile::tempdir().unwrap();
+        let pfad = ordner.path().join("einstellungen.json");
+        let mut eintraege = BTreeMap::new();
+        eintraege.insert(
+            "Eintrag mit Großbuchstaben".to_string(),
+            EintragTeil {
+                werte: werte(&[("host", "böse")]),
+                ..EintragTeil::default()
+            },
+        );
+        eintraege.insert(
+            "quiver".to_string(),
+            EintragTeil {
+                werte: werte(&[("host", "reserviert")]),
+                ..EintragTeil::default()
+            },
+        );
+        for nummer in 0..(EINTRAEGE_MAX + 5) {
+            eintraege.insert(
+                format!("eintrag-{nummer}"),
+                EintragTeil {
+                    werte: werte(&[("host", "x")]),
+                    ..EintragTeil::default()
+                },
+            );
+        }
+        eintraege.insert(
+            "echo".to_string(),
+            EintragTeil {
+                werte: (0..WERTE_MAX + 5)
+                    .map(|nummer| (format!("feld{nummer}"), "x".to_string()))
+                    .collect(),
+                ..EintragTeil::default()
+            },
+        );
+        schreiben(&pfad, eintraege, None, None).expect("schreibbar");
+
+        let gelesen = lesen(&pfad, None).expect("lesbar");
+        assert!(
+            !gelesen.eintraege.contains_key("Eintrag mit Großbuchstaben"),
+            "unbrauchbare Kennungen fliegen raus"
+        );
+        assert!(!gelesen.eintraege.contains_key("quiver"), "reserviert");
+        assert_eq!(
+            gelesen.eintraege.len(),
+            EINTRAEGE_MAX,
+            "höchstens so viele Einträge"
+        );
+        assert_eq!(
+            gelesen.eintraege["echo"].werte.len(),
+            WERTE_MAX,
+            "höchstens so viele Werte je Eintrag"
+        );
+        assert!(
+            gelesen.uebersprungen.len() >= 7,
+            "was wegfällt, wird gemeldet: {:?}",
+            gelesen.uebersprungen
+        );
+    }
+
+    /// Die Maße des Schlüssel-Ableiters aus der Datei werden begrenzt: eine
+    /// fremde Sicherung darf den Client nicht Gigabyte an Speicher belegen
+    /// lassen. Sie scheitert stattdessen schnell am Passwort.
+    #[test]
+    fn fremde_argon2_parameter_werden_begrenzt() {
+        let ordner = tempfile::tempdir().unwrap();
+        let pfad = ordner.path().join("fremd.json");
+        let text = serde_json::json!({
+            "format": FORMAT,
+            "version": VERSION,
+            "erstellt": "2026-01-02T03:04:05Z",
+            "eintraege": {},
+            "geheim": {
+                "kdf": "argon2id",
+                "salz": B64.encode([1u8; SALZ_LEN]),
+                "nonce": B64.encode([2u8; NONCE_LEN]),
+                "daten": B64.encode([3u8; 40]),
+                "speicher_kib": 8_000_000u32,
+                "runden": 1000u32,
+                "parallel": 64u32
+            }
+        })
+        .to_string();
+        std::fs::write(&pfad, text).unwrap();
+        let beginn = std::time::Instant::now();
+        let fehler = format!(
+            "{:#}",
+            lesen(&pfad, Some("ein-langes-passwort")).expect_err("muss scheitern")
+        );
+        assert!(fehler.contains("Passwort ist falsch"), "{fehler}");
+        assert!(
+            beginn.elapsed() < std::time::Duration::from_secs(10),
+            "die Maße wurden begrenzt: {:?}",
+            beginn.elapsed()
+        );
     }
 }
