@@ -411,7 +411,7 @@ impl Pruefung {
                 konfig.entra = Some(EntraKonfig {
                     tenant: TENANT.into(),
                     client_id: CLIENT.into(),
-                    secret: ENTRA_SECRET.into(),
+                    ausweis: quiver_server::Ausweis::Geheimnis(ENTRA_SECRET.into()),
                     authority: mock.basis.clone(),
                     issuer: mock.basis.clone(),
                     redirect_uri: format!("{basis}/auth/callback"),
