@@ -30,6 +30,11 @@ pub fn leer(ui: &mut egui::Ui, sicht: &Sicht, titel: &str, erklaerung: &str) {
     bausteine::leer(ui, sicht.thema.farben(), titel, erklaerung);
 }
 
+/// Eine leere Fläche mit mittig stehender Zeile (Protokoll, Aufgabe 18).
+pub fn leer_mitte(ui: &mut egui::Ui, sicht: &Sicht, titel: &str, erklaerung: &str) {
+    bausteine::leer_mitte(ui, sicht.thema.farben(), titel, erklaerung);
+}
+
 /// Der Hinweis des Kerns (Fehler, Rückmeldung), oben auf jeder Seite.
 pub fn hinweis(ui: &mut egui::Ui, sicht: &Sicht) {
     let Some(text) = &sicht.hinweis else {

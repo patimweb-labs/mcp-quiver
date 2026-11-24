@@ -269,6 +269,27 @@
     },
     "titlebar-macos": {
       "$value": "68px"
+    },
+    "seitenleiste-schmal": {
+      "$value": "56px"
+    },
+    "inhalt-max": {
+      "$value": "1100px"
+    },
+    "dialog": {
+      "$value": "576px"
+    }
+  },
+  "breakpoint": {
+    "$type": "dimension",
+    "formular": {
+      "$value": "700px"
+    },
+    "schmal": {
+      "$value": "760px"
+    },
+    "flach": {
+      "$value": "560px"
     }
   },
   "duration": {

@@ -648,8 +648,8 @@
     "en": "Log"
   },
   "protokoll.sub": {
-    "de": "Was die Agenten angefragt haben und was die Tools dabei ausgegeben haben.",
-    "en": "What the agents requested and what the tools printed along the way."
+    "de": "Aufrufe der Agenten und Ausgaben der Tools.",
+    "en": "Agent calls and tool output."
   },
   "protokoll.reiter.aufrufe": {
     "de": "Aufrufe",
@@ -736,12 +736,12 @@
     "en": "{} ms"
   },
   "protokoll.leer": {
-    "de": "Noch keine Aufrufe",
-    "en": "No calls yet"
+    "de": "Noch keine Aufrufe in diesem Zeitraum",
+    "en": "No calls in this period"
   },
   "protokoll.leer_text": {
-    "de": "Sobald ein Agent ein Tool aufruft, steht es hier — im gewählten Zeitraum.",
-    "en": "As soon as an agent calls a tool it shows up here — within the chosen period."
+    "de": "Prüfen Sie die Filter oder wählen Sie einen größeren Zeitraum.",
+    "en": "Check the filters or choose a longer period."
   },
   "protokoll.leeren": {
     "de": "Protokoll leeren",
@@ -814,5 +814,33 @@
   "agenten.protokoll_haken": {
     "de": "Agenten dürfen Inhalte im Protokoll sehen",
     "en": "Agents may see log contents"
+  },
+  "kopf.ansicht": {
+    "de": "Ansicht",
+    "en": "View"
+  },
+  "kopf.farbschema": {
+    "de": "Farbschema",
+    "en": "Colour scheme"
+  },
+  "kopf.sprache": {
+    "de": "Sprache",
+    "en": "Language"
+  },
+  "protokoll.spalte.stufe": {
+    "de": "Stufe",
+    "en": "Level"
+  },
+  "protokoll.stufe.info": {
+    "de": "INFO",
+    "en": "INFO"
+  },
+  "protokoll.stufe.warnung": {
+    "de": "WARN",
+    "en": "WARN"
+  },
+  "protokoll.stufe.fehler": {
+    "de": "FEHLER",
+    "en": "ERROR"
   }
 }

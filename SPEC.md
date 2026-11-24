@@ -172,6 +172,19 @@ Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
 - **Festlegung: Hand-Cursor auf allem Klickbaren.** In egui ist das nicht
   Standard. Darum setzen die Bausteine `CursorIcon::PointingHand` zentral,
   und ein Oberflächentest prüft es. In Vue gilt `cursor: pointer` im Baustein.
+- **Festlegung: drei Breitengrenzen als Tokens** (Aufgabe 18). Unter
+  `breakpoint.schmal` (760 px) trägt die Seitenleiste nur Zeichen mit Hinweis,
+  unter `breakpoint.formular` (700 px) steht die Beschriftung über dem Feld,
+  die Kopfzeile legt Farbschema und Sprache in ein Menü und die
+  Protokolltabelle lässt *Agent* und *Dauer* weg (beide im Detail). Der Inhalt
+  endet bei `size.inhalt-max` (1100 px) und bleibt mittig; Leisten brechen um.
+  In einem flachen Fenster (`breakpoint.flach`) ist der Seitenkopf eine Stufe
+  kleiner, damit der Inhalt Platz behält. Beide Oberflächen lesen dieselben
+  Tokens — egui als Konstanten, Vue über `--wp-*` und `data-breite`.
+
+  *Preis:* Die Grenzen sind fest und nicht einstellbar; zwischen 700 und 760 px
+  ist die Seitenleiste breit, obwohl der Inhalt schon knapp ist. Die Stufe einer
+  Tool-Log-Zeile wird aus dem Text geraten, weil die Zeile kein Feld dafür hat.
 
 ## 10. Protokoll und Datenschutz
 

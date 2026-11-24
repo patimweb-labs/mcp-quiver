@@ -19,7 +19,7 @@ use tokens_lesen::{aufloesen, farb_pfade, lesen, pfad, GRUNDWERTE, THEMEN};
 const KONSTANTEN: [&str; 3] = ["DUNKEL", "HELL", "MONO"];
 
 /// Gruppen der Grundwerte, die als `f32` ins Programm wandern.
-const MASSE: [&str; 4] = ["space", "size", "duration", "radius"];
+const MASSE: [&str; 5] = ["space", "size", "duration", "radius", "breakpoint"];
 
 fn ist_mass(pfad: &str) -> bool {
     let gruppe = pfad.split('.').next().unwrap_or("");

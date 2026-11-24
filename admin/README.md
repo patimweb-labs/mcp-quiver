@@ -36,7 +36,8 @@ dann `http://127.0.0.1:8740` öffnen. Der Admin-Token steht in
 src/
   api/typen.ts        Vertrag, eins zu eins aus crates/protocol und crates/domain
   api/client.ts       fetch mit Bearer-Token; 401 führt zur Anmeldung
-  logik/              reine Funktionen mit Tests (Zustände, Prüfung, Format)
+  logik/              reine Funktionen mit Tests (Zustände, Prüfung, Format,
+                      Breitenstufen)
   bausteine/          eigene Bausteine, gleiche Namen und Maße wie in
                       crates/oberflaeche/src/bausteine.rs: Kopf,
                       Seitenleiste, Segmentauswahl, Karte, Status, Feld, …
@@ -49,6 +50,18 @@ src/
 Der Zustand einer Seite ist ein Summentyp (`Zustand<T>` in `logik/seite.ts`):
 `laedt`, `fertig` mit Daten oder `fehler` mit Text. Die Ansichten entscheiden
 nichts; Rechnen, Filtern und Prüfen steht in `logik/` und ist getestet.
+
+## Fenstergröße
+
+Die Verwaltung folgt denselben Grenzen wie das Client-Fenster (Aufgabe 18):
+`logik/breite.ts` misst das Fenster, liest die Grenzen aus den Tokens
+(`--wp-breakpoint-formular`, `--wp-breakpoint-schmal`) und schreibt die Stufe als
+`data-breite` an `<html>`. Unter *schmal* (760 px) trägt die Seitenleiste nur
+die Zeichen — der Name steht in `title` und `aria-label` —, unter *eng* (700 px)
+öffnet ein Zeichen im Kopf das Farbschema als Menü. Der Inhalt endet bei
+`size.inhalt-max` (1100 px) und bleibt mittig; Formulare (`Feld.vue`) und
+Werkzeugleisten brechen von sich aus um. Die Stufen rechnet `logik/breite.ts`
+und ist mit `npm test` geprüft.
 
 In der Bibliothek trägt jeder Eintrag ein `aktiv` (Standard `true`, siehe
 `crates/domain`). Ein abgeschalteter Eintrag bleibt in Bibliothek und Sätzen,

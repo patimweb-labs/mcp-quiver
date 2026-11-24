@@ -73,6 +73,9 @@
 }
 
 :root {
+  --wp-breakpoint-flach: 560px;
+  --wp-breakpoint-formular: 700px;
+  --wp-breakpoint-schmal: 760px;
   --wp-duration-fast: 120ms;
   --wp-duration-normal: 200ms;
   --wp-font-family-display: Archivo, 'IBM Plex Sans', system-ui, sans-serif;
@@ -101,10 +104,13 @@
   --wp-size-control-md: 32px;
   --wp-size-control-padding: 14px;
   --wp-size-control-sm: 28px;
+  --wp-size-dialog: 576px;
   --wp-size-focus: 2px;
+  --wp-size-inhalt-max: 1100px;
   --wp-size-kopf: 62px;
   --wp-size-navzeile: 28px;
   --wp-size-seitenleiste: 192px;
+  --wp-size-seitenleiste-schmal: 56px;
   --wp-size-titlebar-macos: 68px;
   --wp-space-0: 0;
   --wp-space-1: 4px;

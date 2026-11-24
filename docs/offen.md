@@ -45,6 +45,16 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] `image` als Dev-Abhängigkeit in `oberflaeche`, nur zum Zuschneiden der Musterbilder.
 - [ ] Keine Saat-Daten für die Admin-Bildschirmfotos (werden aus einer temporären DB erzeugt).
 - [ ] weppelmann-ui: `--wp-fact-label` fehlt in `tokens/`; Bausteine dort haben intern noch px-/Hex-Werte.
+- [ ] Layout (Aufgabe 18): Die Stufe einer Tool-Log-Zeile wird aus dem Text geraten
+      (`ERROR`, `WARN`, `INFO`) — `quiver_client::protokoll::Zeile` trägt kein Feld dafür.
+      Schreibt ein Tool etwas anderes, bleibt die Stufe leer.
+- [ ] Layout: Die Tool-Logs zeichnen alle Zeilen statt nur der sichtbaren
+      (`show_rows`): mit umbrechenden Zeilen sind die Höhen nicht mehr gleich.
+      Bei 5000 Zeilen kostet das Layout je Bild spürbar.
+- [ ] Layout: In der schmalen Seitenleiste (unter 760 px) fällt der
+      Abschnittsname („Gerät“) weg — es gibt keinen Hinweis dafür.
+- [ ] Layout: Passt „Protokoll leeren“ nicht mehr in die letzte Filterzeile,
+      steht es allein in einer eigenen Zeile (rechts).
 
 ## Allgemein
 - [ ] `docs/architektur.md` und `docs/datenfluss.md` fehlen noch.

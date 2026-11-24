@@ -994,6 +994,103 @@ pub fn zeit_text(zeit: &str) -> String {
     rest.chars().take(8).collect()
 }
 
+/// Das Datum eines Aufrufs (`2026-01-02T03:04:05Z` → `2026-01-02`) — steht
+/// in der Protokollzeile im Hinweis, nicht in der Spalte (Aufgabe 18).
+pub fn datum_text(zeit: &str) -> String {
+    zeit.split_once('T')
+        .map_or(zeit, |(datum, _)| datum)
+        .to_string()
+}
+
+/// Das Werkzeug einer Zeile: `eintrag › tool` — der Eintrag steht einmal,
+/// nicht doppelt im Werkzeugnamen (Aufgabe 18).
+pub fn tool_text(aufruf: &Aufruf) -> String {
+    let eintrag = aufruf.eintrag.als_str();
+    let kurz = quiver_domain::tool_name_zerlegen(&aufruf.tool)
+        .filter(|(id, _)| id.als_str() == eintrag)
+        .map_or_else(|| aufruf.tool.clone(), |(_, kurz)| kurz.to_string());
+    format!("{eintrag} › {kurz}")
+}
+
+/// Der Name einer Protokollzeile — der zugängliche Name des Knopfs, der das
+/// Detail öffnet. Eine Wahrheit für Ansicht und Test.
+pub fn aufruf_zeile(sprache: Sprache, aufruf: &Aufruf) -> String {
+    format!(
+        "{} {} {} {}",
+        zeit_text(&aufruf.zeit),
+        status_text(sprache, aufruf.status),
+        tool_text(aufruf),
+        aufruf.agent
+    )
+}
+
+/// Welche Spalten die Protokolltabelle zeigt. Unter `breakpoint.formular`
+/// fallen Agent und Dauer weg; sie stehen dann im Detail (Aufgabe 18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtokollSpalten {
+    pub agent: bool,
+    pub dauer: bool,
+}
+
+/// Die Spalten der Protokolltabelle bei dieser Fensterbreite.
+pub fn protokoll_spalten(fenster_breite: f32) -> ProtokollSpalten {
+    let breit = fenster_breite >= crate::thema::BREAKPOINT_FORMULAR;
+    ProtokollSpalten {
+        agent: breit,
+        dauer: breit,
+    }
+}
+
+/// Die Stufe, die eine Prozesszeile selbst nennt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogStufe {
+    Fehler,
+    Warnung,
+    Info,
+}
+
+/// Die Stufe aus dem Text einer Prozesszeile — viele Tools schreiben sie ins
+/// stderr, ein eigenes Feld gibt es nicht (Aufgabe 18).
+pub fn log_stufe_art(text: &str) -> Option<LogStufe> {
+    let oben = text.to_uppercase();
+    if ["ERROR", "FATAL", "PANIC", "FEHLER"]
+        .iter()
+        .any(|wort| oben.contains(wort))
+    {
+        Some(LogStufe::Fehler)
+    } else if oben.contains("WARN") {
+        Some(LogStufe::Warnung)
+    } else if oben.contains("INFO") {
+        Some(LogStufe::Info)
+    } else {
+        None
+    }
+}
+
+/// Die Stufe als kurzes Wort für die Spalte.
+pub fn log_stufe(sprache: Sprache, text: &str) -> Option<String> {
+    log_stufe_art(text).map(|stufe| {
+        t(
+            sprache,
+            match stufe {
+                LogStufe::Fehler => "protokoll.stufe.fehler",
+                LogStufe::Warnung => "protokoll.stufe.warnung",
+                LogStufe::Info => "protokoll.stufe.info",
+            },
+        )
+    })
+}
+
+/// Die Bedeutung einer Prozesszeile: Fehlerzeilen stehen in der Fehlerfarbe,
+/// Warnungen als Warnung, alles andere normal (Aufgabe 18).
+pub fn log_ton(text: &str) -> Ton {
+    match log_stufe_art(text) {
+        Some(LogStufe::Fehler) => Ton::Fehler,
+        Some(LogStufe::Warnung) => Ton::Warnung,
+        Some(LogStufe::Info) | None => Ton::Normal,
+    }
+}
+
 /// Wie lange ein Aufruf gedauert hat.
 pub fn dauer_text(sprache: Sprache, millisekunden: u64) -> String {
     tf(sprache, "protokoll.dauer", &[&millisekunden])
@@ -2020,6 +2117,38 @@ mod tests {
         assert_eq!(log_filter(" Fehler ").enthaelt.as_deref(), Some("Fehler"));
     }
 
+    /// Die Zeile der Protokolltabelle nennt Eintrag und Werkzeug einmal, die
+    /// Spalten folgen der Fensterbreite (Aufgabe 18).
+    #[test]
+    fn protokollzeile_und_spalten() {
+        use crate::thema::BREAKPOINT_FORMULAR;
+
+        let aufruf = aufruf();
+        assert_eq!(tool_text(&aufruf), "echo › echo");
+        assert_eq!(
+            aufruf_zeile(Sprache::De, &aufruf),
+            "03:04:05 OK echo › echo pi"
+        );
+
+        let schmal = protokoll_spalten(BREAKPOINT_FORMULAR - 1.0);
+        assert!(!schmal.agent && !schmal.dauer, "unter 700 px ohne Agent");
+        let breit = protokoll_spalten(BREAKPOINT_FORMULAR);
+        assert!(breit.agent && breit.dauer);
+
+        // Die Stufe kommt aus dem Text; Fehler färben die Zeile.
+        assert_eq!(log_stufe_art("ERROR: weg"), Some(LogStufe::Fehler));
+        assert_eq!(log_stufe_art("warning: spät"), Some(LogStufe::Warnung));
+        assert_eq!(log_stufe_art("info: da"), Some(LogStufe::Info));
+        assert_eq!(log_stufe_art("nur so"), None);
+        assert_eq!(log_ton("ERROR: weg"), Ton::Fehler);
+        assert_eq!(log_ton("warnung"), Ton::Warnung);
+        assert_eq!(log_ton("nur so"), Ton::Normal);
+        assert_eq!(
+            log_stufe(Sprache::En, "panic: kaputt"),
+            Some("ERROR".to_string())
+        );
+    }
+
     #[test]
     fn status_zeit_dauer_und_kopiertext() {
         assert_eq!(status_ton(Status::Ok), Ton::Gut);
@@ -2035,6 +2164,7 @@ mod tests {
         }
         assert_eq!(zeit_text("2026-01-02T03:04:05Z"), "03:04:05");
         assert_eq!(zeit_text("ohne-t"), "ohne-t");
+        assert_eq!(datum_text("2026-01-02T03:04:05Z"), "2026-01-02");
         assert_eq!(dauer_text(Sprache::De, 12), "12 ms");
         assert_eq!(zeitraum_text(Sprache::De, Zeitraum::Heute), "Heute");
         assert_eq!(zeitraum_text(Sprache::En, Zeitraum::Tage), "7 days");

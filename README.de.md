@@ -116,7 +116,7 @@ pi, Claude Code, OpenCode, GitHub Copilot und Hermes bringen jeweils ihren
 fertigen Text mit; das Token lässt sich jederzeit erneuern — das alte gilt sofort
 nicht mehr.
 
-![Koppeln-Dialog](docs/bilder/fenster-dark-koppeln.png)
+![Koppeln-Dialog](docs/bilder/fenster-dark-koppeln-800.png)
 
 Auf der Admin-Seite lässt sich ein Eintrag abschalten, ohne ihn zu löschen
 (*Aktiv* im Bearbeiten-Dialog oder der Schalter in der Zeile). Er bleibt in
@@ -134,7 +134,7 @@ durchlaufen dabei nie einen Agenten. In der Verwaltung steht der Befehl im
 Abschnitt *Einrichtung (optional)*, die Liste zeigt das Abzeichen *mit
 Einrichtung*.
 
-![Einrichten auf der Tools-Karte](docs/bilder/fenster-dark-einrichten.png)
+![Einrichten auf der Tools-Karte](docs/bilder/fenster-dark-einrichten-800.png)
 
 Manche Tools brauchen **mehrere gleichartige Zugänge**, die der User nach und
 nach anlegt — etwa SSH-Verbindungen mit Name, Host, Port und Benutzer. Solche
@@ -148,7 +148,7 @@ liegt in der Tresor-Datei, die übrigen Werte in der Client-Konfiguration. Beim
 Start bekommt das Tool alle Zugänge als JSON in `QUIVER_ZUGAENGE`; ein Eintrag
 ohne Zugang läuft trotzdem und meldet selbst „kein Zugang“.
 
-![Zugänge auf der Tools-Karte](docs/bilder/fenster-dark-zugaenge.png)
+![Zugänge auf der Tools-Karte](docs/bilder/fenster-dark-zugaenge-800.png)
 
 Manche Felder bringen einen **Hilfe-Link** neben der Eingabe mit (Verwaltung:
 *Link-Text* und *Link-Adresse*, Platzhalter `${feld}` erlaubt — zum Beispiel
@@ -157,7 +157,7 @@ Platzhalter aus dem füllen lässt, was gerade im Dialog steht; sonst ist er
 gesperrt und sagt, welches Feld noch fehlt. Ein Klick öffnet die Adresse im
 Standardbrowser — sonst nichts, keine Anmeldung, kein Lauscher.
 
-![Angaben-Dialog mit Hilfe-Link](docs/bilder/fenster-dark-angaben.png)
+![Angaben-Dialog mit Hilfe-Link](docs/bilder/fenster-dark-angaben-800.png)
 
 Felder tragen eine **Art** (Verwaltung: *Art* und *Titel*): Text, Passwort,
 Zahl, Schalter (Häkchen), Adresse (mit `http(s)://`-Prüfung) oder Auswahl mit
@@ -212,11 +212,22 @@ unter *Agenten* „Agenten dürfen Inhalte im Protokoll sehen“ eingeschaltet i
 (gespeichert in `zustand.json`); Fehlertexte bleiben in jedem Fall maskiert, und
 die Aufrufe dieser beiden Werkzeuge stehen selbst nie im Protokoll.
 
-![Protokollseite](docs/bilder/fenster-dark-protokoll.png)
+![Protokollseite](docs/bilder/fenster-dark-protokoll-800.png)
 
 Aufbau wie die Admin-Oberfläche: Kopf, Navigation links, Inhalt als Karten, drei
-Themes aus denselben Tokens. Die Bildschirmfotos erzeugt der Oberflächentest
-(mit Attrappe, ohne Server und ohne Laufzeit):
+Themes aus denselben Tokens.
+
+**Fenstergröße.** Unter 760 px schrumpft die Navigation auf Zeichen (der Name
+steht im Hinweis), der Inhalt endet bei 1100 px und bleibt mittig, und Filter-
+und Knopfleisten brechen um, statt seitlich hinauszuragen. Unter 700 px stellt
+ein Formular die Beschriftung über das Feld und die Kopfzeile legt Farbschema
+und Sprache in ein Menü; die Protokolltabelle lässt dann *Agent* und *Dauer*
+weg (beide stehen im Detail-Dialog). Die Grenzen sind Tokens
+(`breakpoint.*`) — die Verwaltung rechnet mit denselben Zahlen.
+
+Die Bildschirmfotos erzeugt der Oberflächentest (mit Attrappe, ohne Server und
+ohne Laufzeit) — jede Seite und jeder Dialog in 560 × 460, 800 × 600 und
+1200 × 820, als `fenster-<thema>-<seite>-<breite>.png`:
 
 ```bash
 QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
@@ -230,8 +241,8 @@ deshalb unterscheiden sich die Bilder nur in der Schriftglättung:
 ![Musterseite, egui](docs/bilder/muster-egui-dark.png)
 ![Musterseite, Vue](docs/bilder/muster-vue-dark.png)
 
-![Client-Fenster, dunkel](docs/bilder/fenster-dark-tools.png)
-![Client-Fenster, hell](docs/bilder/fenster-light-tools.png)
+![Client-Fenster, dunkel](docs/bilder/fenster-dark-tools-1200.png)
+![Client-Fenster, hell](docs/bilder/fenster-light-tools-1200.png)
 ![Bibliothek der Verwaltung, dunkel](docs/bilder/admin-dark-bibliothek.png)
 
 ## Lizenz

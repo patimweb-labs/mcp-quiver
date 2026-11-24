@@ -22,7 +22,7 @@ use quiver_client::{
 use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, FeldOption, Quelle, Werte};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
 use quiver_fenster::egui::accesskit::{Role, Toggled};
-use quiver_fenster::egui::{CursorIcon, OutputCommand};
+use quiver_fenster::egui::{self, CursorIcon, OutputCommand};
 use quiver_fenster::modell::{Dialog, Meldung, Seite, Sicht};
 use quiver_fenster::profil::Einstellungen;
 use quiver_fenster::thema::Thema;
@@ -85,19 +85,30 @@ fn beispiel_aufrufe() -> Vec<Aufruf> {
     ]
 }
 
-/// Zwei Prozesszeilen des Eintrags „Echo“.
+/// Prozesszeilen der Einträge „Echo“ und „Dateien“ — mit Stufe und einer
+/// Fehlerzeile, damit die Tool-Logs alle Fälle zeigen (Aufgabe 18).
 fn beispiel_log() -> Vec<Zeile> {
     let zeit = quiver_client::protokoll::jetzt();
     vec![
         Zeile {
             zeit: zeit.clone(),
             eintrag: EintragId::neu("echo"),
-            text: "gestartet, Werkzeuge: echo, ping".into(),
+            text: "INFO gestartet, Werkzeuge: echo, ping".into(),
         },
         Zeile {
             zeit: zeit.clone(),
             eintrag: EintragId::neu("echo"),
             text: "Aufruf echo {\"text\":\"hallo\"}".into(),
+        },
+        Zeile {
+            zeit: zeit.clone(),
+            eintrag: EintragId::neu("echo"),
+            text: "WARN ping antwortet langsam".into(),
+        },
+        Zeile {
+            zeit: zeit.clone(),
+            eintrag: EintragId::neu("echo"),
+            text: "ERROR echo: Verbindung abgebrochen".into(),
         },
         Zeile {
             zeit,
@@ -434,6 +445,15 @@ fn fenster(
 
 fn gross() -> (f32, f32) {
     (1200.0, 820.0)
+}
+
+/// Lässt die Zeichnung zur Ruhe kommen. egui scrollt weich: nach
+/// `scroll_to_me` wandert ein Steuerelement noch einige Bilder, und ein Klick
+/// auf die alte Stelle träfe daneben.
+fn zur_ruhe(h: &mut Harness<'static, Stand>) {
+    for _ in 0..6 {
+        h.run();
+    }
 }
 
 #[test]
@@ -886,30 +906,31 @@ fn bildschirmfoto_der_angaben() {
         return;
     };
     std::fs::create_dir_all(&ziel).expect("Bilderordner");
-    for thema in [Thema::Dunkel, Thema::Hell] {
-        let mut h = fenster(
-            modell(verbunden(), vec![link_eintrag()]),
-            Some(Seite::Tools),
-            thema,
-            gross(),
-        );
-        h.run();
-        h.get_by_role_and_label(Role::Button, "Braucht Angaben")
-            .click();
-        h.run();
-        // Mit Adresse: der Link steht aktiv neben dem Token-Feld.
-        if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
-            eingaben[0].wert = "https://wiki.example.de".into();
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut h = fenster(
+                modell(verbunden(), vec![link_eintrag()]),
+                Some(Seite::Tools),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+                .click();
+            zur_ruhe(&mut h);
+            // Mit Adresse: der Link steht aktiv neben dem Token-Feld.
+            if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+                eingaben[0].wert = "https://wiki.example.de".into();
+            }
+            zur_ruhe(&mut h);
+            assert!(
+                h.query_by_label("Token in Outline erstellen").is_some(),
+                "{}: der Link-Knopf fehlt",
+                thema.name()
+            );
+            nichts_ragt_heraus(&h, groesse.masse.0, "angaben");
+            foto(&mut h, &ziel, "angaben", thema, groesse.px);
         }
-        h.run();
-        assert!(
-            h.query_by_label("Token in Outline erstellen").is_some(),
-            "{}: der Link-Knopf fehlt",
-            thema.name()
-        );
-        let bild = h.render().expect("zeichnen (wgpu)");
-        bild.save(ziel.join(format!("fenster-{}-angaben.png", thema.name())))
-            .expect("Bild schreibbar");
     }
 }
 
@@ -1454,9 +1475,78 @@ fn bilder_ordner() -> Option<PathBuf> {
     })
 }
 
-/// Alle Seiten in allen drei Themes: nichts stürzt ab, jede Seite hat ihren
-/// Inhalt. Mit `QUIVER_BILDER` entstehen dabei die Bildschirmfotos
-/// (`fenster-{dark,light}-{tools,agenten,verbindung}.png`).
+/// Die drei Größen der Abnahme (Aufgabe 18): Minimum, mittel, breit.
+#[derive(Debug, Clone, Copy)]
+struct Groesse {
+    /// Breite im Dateinamen.
+    px: u32,
+    masse: (f32, f32),
+}
+
+const GROESSEN: [Groesse; 3] = [
+    Groesse {
+        px: 560,
+        masse: (560.0, 460.0),
+    },
+    Groesse {
+        px: 800,
+        masse: (800.0, 600.0),
+    },
+    Groesse {
+        px: 1200,
+        masse: (1200.0, 820.0),
+    },
+];
+
+/// Die beiden Themes, die die Doku zeigt (Bilder entstehen nur für sie).
+const BILDER_THEMEN: [Thema; 2] = [Thema::Dunkel, Thema::Hell];
+
+/// Ein Bildschirmfoto: `fenster-<thema>-<seite>-<breite>.png` (Aufgabe 18).
+fn foto(
+    h: &mut Harness<'static, Stand>,
+    ziel: &std::path::Path,
+    seite: &str,
+    thema: Thema,
+    px: u32,
+) {
+    // Der Zeiger steht nach einem Klick über einem Knopf; fürs Bild wandert er
+    // aus dem Fenster, damit er nichts verdeckt.
+    h.event(egui::Event::PointerMoved(egui::pos2(-100.0, -100.0)));
+    h.run();
+    let bild = h.render().expect("zeichnen (wgpu)");
+    bild.save(ziel.join(format!("fenster-{}-{seite}-{px}.png", thema.name())))
+        .expect("Bild schreibbar");
+}
+
+/// Kein Steuerelement ragt seitlich aus dem Fenster (Aufgabe 18). Geprüft
+/// wird über die Rechtecke der Widgets; nach unten darf Inhalt laufen — das
+/// ist der Scrollbereich der Seite.
+#[track_caller]
+fn nichts_ragt_heraus(h: &Harness<'static, Stand>, breite: f32, seite: &str) {
+    let mut draussen = Vec::new();
+    for knoten in h.root().children_recursive() {
+        let node = knoten.accesskit_node();
+        if node.is_hidden() || node.raw_bounds().is_none() {
+            continue;
+        }
+        let rect = knoten.rect();
+        let name = node.label().unwrap_or_else(|| format!("{:?}", node.role()));
+        if rect.left() < -0.5 || rect.right() > breite + 0.5 || rect.top() < -0.5 {
+            draussen.push(format!("{name}: {rect:?}"));
+        }
+    }
+    assert!(
+        draussen.is_empty(),
+        "{seite} bei {breite} px: {} Steuerelemente ragen hinaus:\n{:#?}",
+        draussen.len(),
+        draussen
+    );
+}
+
+/// Alle Seiten in allen drei Themes und in den drei Größen der Abnahme:
+/// nichts stürzt ab, nichts ragt seitlich hinaus, jede Seite hat ihren
+/// Inhalt. Mit `QUIVER_BILDER` entstehen dabei die Bildschirmfotos in `dark`
+/// und `light`.
 #[test]
 fn alle_seiten_in_allen_themes() {
     let ziel = bilder_ordner();
@@ -1471,83 +1561,89 @@ fn alle_seiten_in_allen_themes() {
             ("protokoll", Seite::Protokoll),
         ] {
             // Die Verbindungsseite zeigt als Startseite das Formular.
-            let daten = match seite {
-                Seite::Verbindung => modell(Verbindung::NichtEingebunden, Vec::new()),
-                _ => modell(verbunden(), eintraege()),
-            };
-            let mut h = fenster(daten, Some(seite), thema, gross());
-            h.run();
-            assert!(
-                h.query_by_label("mcp-quiver").is_some(),
-                "{name}/{}: Kopf fehlt",
-                thema.name()
-            );
-            let titel = quiver_fenster::texte::t(
-                quiver_fenster::texte::Sprache::De,
-                seite.text_schluessel(),
-            );
-            assert!(
-                h.query_by_role_and_label(Role::Button, &titel).is_some(),
-                "{name}: Navigation fehlt"
-            );
-            if let Some(ziel) = &ziel {
-                // Nur die beiden Themes, die die Doku zeigt.
-                if matches!(thema, Thema::Dunkel | Thema::Hell) {
-                    let bild = h.render().expect("zeichnen (wgpu)");
-                    bild.save(ziel.join(format!("fenster-{}-{name}.png", thema.name())))
-                        .expect("Bild schreibbar");
+            for groesse in GROESSEN {
+                let daten = match seite {
+                    Seite::Verbindung => modell(Verbindung::NichtEingebunden, Vec::new()),
+                    _ => modell(verbunden(), eintraege()),
+                };
+                let mut h = fenster(daten, Some(seite), thema, groesse.masse);
+                zur_ruhe(&mut h);
+                nichts_ragt_heraus(&h, groesse.masse.0, name);
+                assert!(
+                    h.query_by_label("mcp-quiver").is_some(),
+                    "{name}/{}: Kopf fehlt",
+                    thema.name()
+                );
+                let titel = quiver_fenster::texte::t(
+                    quiver_fenster::texte::Sprache::De,
+                    seite.text_schluessel(),
+                );
+                assert!(
+                    h.query_by_role_and_label(Role::Button, &titel).is_some(),
+                    "{name}: Navigation fehlt"
+                );
+                if let (Some(ziel), true) = (&ziel, BILDER_THEMEN.contains(&thema)) {
+                    foto(&mut h, ziel, name, thema, groesse.px);
                 }
             }
         }
     }
-    // Der Koppeln-Dialog mit der Art-Auswahl — ein eigenes Bild, weil er
-    // sonst nie zu sehen wäre.
-    if let Some(ziel) = &ziel {
-        for thema in [Thema::Dunkel, Thema::Hell] {
+}
+
+/// Der Koppeln-Dialog mit der Art-Auswahl — ein eigenes Bild, weil er sonst
+/// nie zu sehen wäre (`fenster-<thema>-koppeln-<breite>.png`).
+#[test]
+fn bildschirmfoto_des_koppelns() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
             let mut h = fenster(
                 modell(verbunden(), eintraege()),
                 Some(Seite::Agenten),
                 thema,
-                gross(),
+                groesse.masse,
             );
-            h.run();
+            zur_ruhe(&mut h);
             h.get_by_role_and_label(Role::Button, "Agent koppeln")
                 .click();
-            h.run();
+            zur_ruhe(&mut h);
             assert!(matches!(h.state().0.sicht.dialog, Dialog::Koppeln { .. }));
-            let bild = h.render().expect("zeichnen (wgpu)");
-            bild.save(ziel.join(format!("fenster-{}-koppeln.png", thema.name())))
-                .expect("Bild schreibbar");
+            nichts_ragt_heraus(&h, groesse.masse.0, "koppeln");
+            foto(&mut h, &ziel, "koppeln", thema, groesse.px);
         }
     }
 }
 
 /// Die Anmeldung auf der Tools-Karte: alle vier Zustände in einem Bild
-/// (`fenster-{dark,light}-anmeldung.png`).
+/// (`fenster-<thema>-anmeldung-<breite>.png`).
 #[test]
 fn bildschirmfoto_der_anmeldung() {
     let Some(ziel) = bilder_ordner() else {
         return;
     };
     std::fs::create_dir_all(&ziel).expect("Bilderordner");
-    for thema in [Thema::Dunkel, Thema::Hell] {
-        let mut h = fenster(
-            modell(verbunden(), anmelde_zustaende()),
-            Some(Seite::Tools),
-            thema,
-            (1200.0, 1000.0),
-        );
-        h.run();
-        // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
-        assert!(h.query_by_label("Anmeldung nötig").is_some());
-        assert!(h.query_by_label("Anmeldung im Browser läuft …").is_some());
-        assert!(h
-            .query_by_label("Angemeldet als test@beispiel.de")
-            .is_some());
-        assert!(h.query_by_label("Der Status endet mit Code 3").is_some());
-        let bild = h.render().expect("zeichnen (wgpu)");
-        bild.save(ziel.join(format!("fenster-{}-anmeldung.png", thema.name())))
-            .expect("Bild schreibbar");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut h = fenster(
+                modell(verbunden(), anmelde_zustaende()),
+                Some(Seite::Tools),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
+            assert!(h.query_by_label("Anmeldung nötig").is_some());
+            assert!(h.query_by_label("Anmeldung im Browser läuft …").is_some());
+            assert!(h
+                .query_by_label("Angemeldet als test@beispiel.de")
+                .is_some());
+            assert!(h.query_by_label("Der Status endet mit Code 3").is_some());
+            nichts_ragt_heraus(&h, groesse.masse.0, "anmeldung");
+            foto(&mut h, &ziel, "anmeldung", thema, groesse.px);
+        }
     }
 }
 
@@ -1741,40 +1837,41 @@ fn anmeldefehler_zeigt_text_und_erneut_versuchen() {
 /// gespeichert werden nur die beiden, die die Doku zeigt.
 #[test]
 fn bildschirmfoto_der_einrichtung() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
     for thema in Thema::ALLE {
-        let ziel = bilder_ordner();
-        let mut h = fenster(
-            modell(verbunden(), einricht_zustaende()),
-            Some(Seite::Tools),
-            thema,
-            (1200.0, 1000.0),
-        );
-        h.run();
-        // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
-        assert!(
-            h.query_by_label("Einrichtung im Browser").is_some(),
-            "{}: „Bereit“ fehlt",
-            thema.name()
-        );
-        assert!(
-            h.query_by_label("Einrichtung im Browser geöffnet …")
-                .is_some(),
-            "{}: „Läuft“ fehlt",
-            thema.name()
-        );
-        assert!(
-            h.query_by_label("Die Einrichtung endet mit Code 3")
-                .is_some(),
-            "{}: der Fehlertext fehlt",
-            thema.name()
-        );
-        let Some(ziel) = &ziel else {
-            continue;
-        };
-        if matches!(thema, Thema::Dunkel | Thema::Hell) {
-            let bild = h.render().expect("zeichnen (wgpu)");
-            bild.save(ziel.join(format!("fenster-{}-einrichten.png", thema.name())))
-                .expect("Bild schreibbar");
+        for groesse in GROESSEN {
+            let mut h = fenster(
+                modell(verbunden(), einricht_zustaende()),
+                Some(Seite::Tools),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
+            assert!(
+                h.query_by_label("Einrichtung im Browser").is_some(),
+                "{}: „Bereit“ fehlt",
+                thema.name()
+            );
+            assert!(
+                h.query_by_label("Einrichtung im Browser geöffnet …")
+                    .is_some(),
+                "{}: „Läuft“ fehlt",
+                thema.name()
+            );
+            assert!(
+                h.query_by_label("Die Einrichtung endet mit Code 3")
+                    .is_some(),
+                "{}: der Fehlertext fehlt",
+                thema.name()
+            );
+            nichts_ragt_heraus(&h, groesse.masse.0, "einrichten");
+            if BILDER_THEMEN.contains(&thema) {
+                foto(&mut h, &ziel, "einrichten", thema, groesse.px);
+            }
         }
     }
 }
@@ -2209,6 +2306,9 @@ fn zugang_anlegen_schickt_namen_und_werte() {
             .is_none(),
         "mit gültigem Namen ist der Hinweis weg"
     );
+    // Der Dialog setzt sich neu zusammen; erst dann trifft der Klick.
+    h.run();
+    h.run();
     h.get_by_role_and_label(Role::Button, "Speichern").click();
     h.run();
     let aktionen = h.state().1.aktionen.borrow();
@@ -2280,7 +2380,7 @@ fn zugang_bearbeiten_hat_festen_namen_und_loescht_ein_geheimnis() {
         .expect("Knopf am Geheimfeld");
     // Die Feldliste scrollt (Höhe wie in der Verwaltung) – erst hinscrollen.
     knopf.scroll_to_me();
-    h.run();
+    zur_ruhe(&mut h);
     let knopf = h
         .get_all_by_role_and_label(Role::Button, "Geheimnis löschen")
         .next()
@@ -2378,31 +2478,32 @@ fn bildschirmfoto_der_zugaenge() {
         return;
     };
     std::fs::create_dir_all(&ziel).expect("Bilderordner");
-    for thema in [Thema::Dunkel, Thema::Hell] {
-        let mut h = fenster(
-            modell(verbunden(), vec![zwei_zugaenge()]),
-            Some(Seite::Tools),
-            thema,
-            (1200.0, 820.0),
-        );
-        h.run();
-        h.get_by_role_and_label(Role::Button, "Verbindungen (2)")
-            .click();
-        h.run();
-        h.get_all_by_role_and_label(Role::Button, "Bearbeiten")
-            .next()
-            .expect("Knopf der ersten Zeile")
-            .click();
-        h.run();
-        assert!(
-            h.query_by_label("Passwort der Anmeldung · Gesetzt – leer lassen behält es.")
-                .is_some(),
-            "{}: der Dialog zeigt den Geheimnis-Hinweis nicht",
-            thema.name()
-        );
-        let bild = h.render().expect("zeichnen (wgpu)");
-        bild.save(ziel.join(format!("fenster-{}-zugaenge.png", thema.name())))
-            .expect("Bild schreibbar");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut h = fenster(
+                modell(verbunden(), vec![zwei_zugaenge()]),
+                Some(Seite::Tools),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            h.get_by_role_and_label(Role::Button, "Verbindungen (2)")
+                .click();
+            zur_ruhe(&mut h);
+            h.get_all_by_role_and_label(Role::Button, "Bearbeiten")
+                .next()
+                .expect("Knopf der ersten Zeile")
+                .click();
+            zur_ruhe(&mut h);
+            assert!(
+                h.query_by_label("Passwort der Anmeldung · Gesetzt – leer lassen behält es.")
+                    .is_some(),
+                "{}: der Dialog zeigt den Geheimnis-Hinweis nicht",
+                thema.name()
+            );
+            nichts_ragt_heraus(&h, groesse.masse.0, "zugaenge");
+            foto(&mut h, &ziel, "zugaenge", thema, groesse.px);
+        }
     }
 }
 
@@ -2440,8 +2541,9 @@ fn die_protokollseite_ist_erreichbar_und_zeigt_die_aufrufe() {
     // Je Aufruf eine Zeile, mit Werkzeug und Ergebnis.
     let zeilen = h.query_all(By::new().role(Role::Button)).count();
     assert!(zeilen >= 3, "die Aufrufe fehlen ({zeilen} Knöpfe)");
-    assert!(h.query_by_label("echo__echo").is_some());
-    assert!(h.query_by_label("dateien__lesen").is_some());
+    // Das Werkzeug steht als „Eintrag › Tool“ in der Spalte.
+    assert!(h.query_by_label("echo › echo").is_some());
+    assert!(h.query_by_label("dateien › lesen").is_some());
     // Die Ergebnisspalte als Abzeichen.
     assert!(h.query_by_label("OK").is_some());
     assert!(h.query_by_label("Fehler").is_some());
@@ -2460,7 +2562,7 @@ fn die_filter_der_protokollseite_wirken() {
     let aufrufe = h.state().0.sicht.aufrufe.clone();
     assert_eq!(aufrufe.len(), 1, "{aufrufe:?}");
     assert_eq!(aufrufe[0].tool, "echo__echo");
-    assert!(h.query_by_label("dateien__lesen").is_none());
+    assert!(h.query_by_label("dateien › lesen").is_none());
 
     // Agent wählen: nur „hermes“.
     h.state_mut().0.sicht.protokoll_eingaben.eintrag.clear();
@@ -2492,22 +2594,16 @@ fn ein_klick_auf_einen_aufruf_oeffnet_die_einzelheiten() {
     let mut h = protokoll_fenster(Thema::Dunkel);
     h.run();
     // Die Zeile „dateien“ trägt den Fehlertext.
-    let name = h
+    let aufruf = h
         .state()
         .0
         .sicht
         .aufrufe
         .iter()
         .find(|aufruf| aufruf.tool == "dateien__lesen")
-        .map(|aufruf| {
-            format!(
-                "{} {} {} Fehler",
-                quiver_fenster::logik::zeit_text(&aufruf.zeit),
-                aufruf.agent,
-                aufruf.tool
-            )
-        })
+        .cloned()
         .expect("Aufruf im Modell");
+    let name = quiver_fenster::logik::aufruf_zeile(quiver_fenster::texte::Sprache::De, &aufruf);
     h.get_by_role_and_label(Role::Button, &name).click();
     h.run();
     match &h.state().0.sicht.dialog {
@@ -2555,6 +2651,121 @@ fn hand_cursor_auf_alles_klickbarem_der_protokollseite() {
     }
 }
 
+/// „nur Fehler“ steht in derselben Zeile wie die Filter, nicht in einer
+/// eigenen (Aufgabe 18).
+#[test]
+fn die_checkbox_nur_fehler_steht_in_der_filterzeile() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    zur_ruhe(&mut h);
+    let haken = h.get_by_role_and_label(Role::CheckBox, "nur Fehler").rect();
+    let auswahl = h
+        .get_all_by_role_and_label(Role::ComboBox, "Alle")
+        .next()
+        .expect("Filter Eintrag")
+        .rect();
+    assert!(
+        auswahl.center().y >= haken.top() && auswahl.center().y <= haken.bottom(),
+        "die Checkbox steht nicht auf der Höhe der Filter: {haken:?} / {auswahl:?}"
+    );
+    assert!(
+        haken.left() > auswahl.right(),
+        "die Checkbox folgt den Auswahlen in derselben Zeile: {haken:?} / {auswahl:?}"
+    );
+}
+
+/// Ein Klick auf eine Zeile öffnet das Detail; darüber liegt der Hand-Cursor
+/// (Aufgabe 18).
+#[test]
+fn zeilen_hover_hat_einen_hand_cursor() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    zur_ruhe(&mut h);
+    let aufruf = h.state().0.sicht.aufrufe[0].clone();
+    let name = quiver_fenster::logik::aufruf_zeile(quiver_fenster::texte::Sprache::De, &aufruf);
+    h.get_by_role_and_label(Role::Button, &name).hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf der Zeile"
+    );
+}
+
+/// Unter 700 px fallen Agent und Dauer aus der Tabelle; sie stehen im Detail
+/// (Aufgabe 18).
+#[test]
+fn unter_700_px_fehlen_agent_und_dauer() {
+    for (breite, erwartet) in [(560.0, false), (1200.0, true)] {
+        let mut h = fenster(
+            modell(verbunden(), eintraege()),
+            Some(Seite::Protokoll),
+            Thema::Dunkel,
+            (breite, 600.0),
+        );
+        zur_ruhe(&mut h);
+        // „Agent“ steht auch an der Filterleiste; die Spalte kommt dazu.
+        assert_eq!(
+            h.query_all(By::new().role(Role::Label).value("Agent"))
+                .count(),
+            if erwartet { 2 } else { 1 },
+            "Agentspalte bei {breite} px"
+        );
+        assert_eq!(
+            h.query_all(By::new().role(Role::Label).value("Dauer"))
+                .count(),
+            usize::from(erwartet),
+            "Dauerspalte bei {breite} px"
+        );
+
+        // Im Detail stehen beide Angaben immer.
+        let aufruf = h.state().0.sicht.aufrufe[0].clone();
+        let name = quiver_fenster::logik::aufruf_zeile(quiver_fenster::texte::Sprache::De, &aufruf);
+        h.get_by_role_and_label(Role::Button, &name).hover();
+        h.run();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            CursorIcon::PointingHand,
+            "kein Hand-Cursor auf der Zeile bei {breite} px"
+        );
+        h.get_by_role_and_label(Role::Button, &name).click();
+        zur_ruhe(&mut h);
+        assert!(
+            matches!(h.state().0.sicht.dialog, Dialog::Aufruf { .. }),
+            "der Klick öffnet das Detail bei {breite} px"
+        );
+        assert!(
+            h.query_all(By::new().role(Role::Label).value("Dauer"))
+                .count()
+                >= 1,
+            "die Dauer fehlt im Detail bei {breite} px"
+        );
+        assert!(
+            h.query_all(By::new().role(Role::Label).value("Agent"))
+                .count()
+                >= 2,
+            "der Agent fehlt im Detail bei {breite} px"
+        );
+    }
+}
+
+/// Die Fehlerzeile der Tool-Logs steht in der Fehlerfarbe (Aufgabe 18) —
+/// geprüft über die reine Rechnung, die die Ansicht benutzt.
+#[test]
+fn fehlerzeilen_der_tool_logs_sind_fehler() {
+    use quiver_fenster::logik::{log_stufe, log_ton, LogStufe};
+    use quiver_fenster::thema::Ton;
+    assert_eq!(log_ton("ERROR: Verbindung weg"), Ton::Fehler);
+    assert_eq!(log_ton("warning: keine Antwort"), Ton::Warnung);
+    assert_eq!(log_ton("gestartet, Werkzeuge: echo"), Ton::Normal);
+    assert_eq!(
+        log_stufe(quiver_fenster::texte::Sprache::De, "panic: kaputt"),
+        Some("FEHLER".to_string())
+    );
+    assert_eq!(
+        quiver_fenster::logik::log_stufe_art("gestartet"),
+        None::<LogStufe>
+    );
+}
+
 #[test]
 fn protokoll_leeren_fragt_nach_und_schickt_die_aktion() {
     let mut h = protokoll_fenster(Thema::Dunkel);
@@ -2600,7 +2811,7 @@ fn der_reiter_tool_logs_zeigt_die_zeilen_in_monoschrift() {
     // Der erste Eintrag ist vorgewählt; seine zwei Zeilen stehen da.
     assert_eq!(h.state().0.sicht.log_eintrag, Some(EintragId::neu("echo")));
     assert!(h
-        .query_by_label("gestartet, Werkzeuge: echo, ping")
+        .query_by_label("INFO gestartet, Werkzeuge: echo, ping")
         .is_some());
     assert!(
         h.query_by_label("Dateien gestartet").is_none(),
@@ -2652,16 +2863,37 @@ fn bildschirmfoto_des_protokolls() {
         return;
     };
     std::fs::create_dir_all(&ziel).expect("Bilderordner");
-    for thema in [Thema::Dunkel, Thema::Hell] {
-        let mut h = protokoll_fenster(thema);
-        h.run();
-        assert!(
-            h.query_by_label("echo__echo").is_some(),
-            "{}: die Liste fehlt",
-            thema.name()
-        );
-        let bild = h.render().expect("zeichnen (wgpu)");
-        bild.save(ziel.join(format!("fenster-{}-protokoll.png", thema.name())))
-            .expect("Bild schreibbar");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            // Erst die Aufrufe, dann die Tool-Logs — beide Reiter der Seite.
+            let mut h = fenster(
+                modell(verbunden(), eintraege()),
+                Some(Seite::Protokoll),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            // Der neueste Aufruf steht oben; im kleinsten Fenster ist nur er
+            // zu sehen.
+            assert!(
+                h.query_by_label("Abgelehnt").is_some(),
+                "{} bei {} px: die Liste fehlt",
+                thema.name(),
+                groesse.px
+            );
+            nichts_ragt_heraus(&h, groesse.masse.0, "protokoll");
+            foto(&mut h, &ziel, "protokoll", thema, groesse.px);
+
+            h.get_by_role_and_label(Role::Button, "Tool-Logs").click();
+            zur_ruhe(&mut h);
+            assert!(
+                h.query_by_label("INFO gestartet, Werkzeuge: echo, ping")
+                    .is_some(),
+                "{}: die Prozesszeilen fehlen",
+                thema.name()
+            );
+            nichts_ragt_heraus(&h, groesse.masse.0, "tool-logs");
+            foto(&mut h, &ziel, "tool-logs", thema, groesse.px);
+        }
     }
 }

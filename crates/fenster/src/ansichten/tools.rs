@@ -58,47 +58,58 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
 }
 
 /// Die Kopfzeile der Seite: Titel und Unterzeile links, „Exportieren“ und
-/// „Importieren“ rechts (Aufgabe 15).
+/// „Importieren“ rechts (Aufgabe 15). Ist das Fenster zu schmal für beides
+/// nebeneinander, stehen die Knöpfe darunter (Aufgabe 18): die Unterzeile
+/// wird dann nicht abgeschnitten.
 fn kopfzeile(ui: &mut egui::Ui, sicht: &Sicht, exportieren: &mut bool, importieren: &mut bool) {
     let f = *sicht.thema.farben();
     let sprache = sicht.sprache;
-    ui.add_space(thema::SPACE_4);
-    egui::Sides::new().shrink_left().truncate().show(
-        ui,
-        |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = thema::SPACE_1;
-                ui.label(
-                    RichText::new(t(sprache, "nav.tools"))
-                        .font(egui::FontId::new(thema::FONT_SIZE_2XL, thema::fett())),
-                );
-                ui.label(text(&f, t(sprache, "tools.sub"), Ton::Leise));
-            });
-        },
-        |ui| {
-            if bausteine::knopf(
-                ui,
-                &f,
-                Icon::Herunterladen,
-                &t(sprache, "einstellungen.exportieren"),
-            )
-            .clicked()
-            {
+    let export = t(sprache, "einstellungen.exportieren");
+    let import = t(sprache, "einstellungen.importieren");
+    let knoepfe = bausteine::knopfbreite(ui, &export) + bausteine::knopfbreite(ui, &import);
+    // So viel Platz braucht der Titel, damit er lesbar bleibt.
+    let titel = thema::SPACE_8 * 5.0;
+    let nebeneinander = ui.available_width() >= titel + knoepfe + thema::SPACE_3;
+    if nebeneinander {
+        ui.add_space(thema::SPACE_4);
+        egui::Sides::new().shrink_left().truncate().show(
+            ui,
+            |ui| titelkopf(ui, &f, sprache),
+            |ui| {
+                // Die rechte Seite füllt egui von rechts: erst „Importieren“,
+                // damit links „Exportieren“ steht — wie in der Leiste darunter.
+                if bausteine::knopf(ui, &f, Icon::Hochladen, &import).clicked() {
+                    *importieren = true;
+                }
+                if bausteine::knopf(ui, &f, Icon::Herunterladen, &export).clicked() {
+                    *exportieren = true;
+                }
+            },
+        );
+    } else {
+        bausteine::seitenkopf(ui, &f, &t(sprache, "nav.tools"), &t(sprache, "tools.sub"));
+        bausteine::leiste(ui, |ui| {
+            if bausteine::knopf(ui, &f, Icon::Herunterladen, &export).clicked() {
                 *exportieren = true;
             }
-            if bausteine::knopf(
-                ui,
-                &f,
-                Icon::Hochladen,
-                &t(sprache, "einstellungen.importieren"),
-            )
-            .clicked()
-            {
+            if bausteine::knopf(ui, &f, Icon::Hochladen, &import).clicked() {
                 *importieren = true;
             }
-        },
-    );
+        });
+    }
     ui.add_space(thema::SPACE_5);
+}
+
+/// Titel und Unterzeile der Seite.
+fn titelkopf(ui: &mut egui::Ui, f: &crate::thema::Farben, sprache: crate::texte::Sprache) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = thema::SPACE_1;
+        ui.label(
+            RichText::new(t(sprache, "nav.tools"))
+                .font(egui::FontId::new(thema::FONT_SIZE_2XL, thema::fett())),
+        );
+        ui.label(text(f, t(sprache, "tools.sub"), Ton::Leise));
+    });
 }
 
 fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen: &mut Vec<Aktion>) {
@@ -313,16 +324,22 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                                 .show(
                                     ui,
                                     |ui| {
-                                        ui.label(RichText::new(&zugang.name).strong());
+                                        // Gekürzt, mit dem ganzen Text im Hinweis.
+                                        ui.add(
+                                            egui::Label::new(RichText::new(&zugang.name).strong())
+                                                .truncate(),
+                                        )
+                                        .on_hover_text(&zugang.name);
                                         let werte =
                                             logik::zugang_werte_zeile(&zugaenge.felder, zugang);
                                         if !werte.is_empty() {
                                             ui.add(
                                                 egui::Label::new(
-                                                    text(&f, werte, Ton::Leise).small(),
+                                                    text(&f, &werte, Ton::Leise).small(),
                                                 )
                                                 .truncate(),
-                                            );
+                                            )
+                                            .on_hover_text(&werte);
                                         }
                                     },
                                     |ui| {

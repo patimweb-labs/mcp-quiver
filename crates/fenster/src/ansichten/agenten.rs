@@ -89,10 +89,13 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
                                 // stehen die Knöpfe rechts auf derselben Höhe.
                                 ui.horizontal(|ui| {
                                     bausteine::status_klein(ui, &f, ton, &stand);
-                                    ui.label(RichText::new(&agent.name).font(egui::FontId::new(
-                                        thema::FONT_SIZE_MD,
-                                        thema::fett(),
-                                    )));
+                                    ui.add(
+                                        egui::Label::new(RichText::new(&agent.name).font(
+                                            egui::FontId::new(thema::FONT_SIZE_MD, thema::fett()),
+                                        ))
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(&agent.name);
                                     ui.label(text(&f, &stand, Ton::Leise).small());
                                 });
                             },

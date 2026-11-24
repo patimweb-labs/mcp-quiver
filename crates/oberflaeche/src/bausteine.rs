@@ -16,14 +16,37 @@ pub fn text(f: &Farben, inhalt: impl Into<String>, art: Ton) -> RichText {
 /// Überschrift einer Seite mit Unterzeile.
 pub fn seitenkopf(ui: &mut egui::Ui, f: &Farben, titel: &str, unter: &str) {
     // Titel und Unterzeile stehen 4 px auseinander, darunter folgt der Inhalt
-    // mit 32 px — dieselben Maße wie `Seitenkopf.vue` und `.seite`.
-    ui.add_space(thema::SPACE_4);
+    // mit 32 px — dieselben Maße wie `Seitenkopf.vue` und `.seite`. In einem
+    // flachen Fenster (`breakpoint.flach`) ist die Überschrift eine Stufe
+    // kleiner und der Abstand darunter enger: sonst bliebe für den Inhalt
+    // nichts übrig (Aufgabe 18).
+    let flach = ist_flach(ui);
+    ui.add_space(if flach {
+        thema::SPACE_2
+    } else {
+        thema::SPACE_4
+    });
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = thema::SPACE_1;
-        ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_2XL, fett())));
+        let groesse = if flach {
+            thema::FONT_SIZE_XL
+        } else {
+            thema::FONT_SIZE_2XL
+        };
+        ui.label(RichText::new(titel).font(egui::FontId::new(groesse, fett())));
         ui.label(text(f, unter, Ton::Leise));
     });
-    ui.add_space(thema::SPACE_5);
+    ui.add_space(if flach {
+        thema::SPACE_4
+    } else {
+        thema::SPACE_5
+    });
+}
+
+/// Ist das Fenster flach (`breakpoint.flach`)? Dann sind Überschriften und
+/// Abstände eine Stufe kleiner.
+pub fn ist_flach(ui: &egui::Ui) -> bool {
+    ui.ctx().content_rect().height() < thema::BREAKPOINT_FLACH
 }
 
 /// Eine Karte: Rahmen, Titel, Inhalt.
@@ -71,6 +94,19 @@ pub fn leer(ui: &mut egui::Ui, f: &Farben, titel: &str, erklaerung: &str) {
         ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_MD, fett())));
         if !erklaerung.is_empty() {
             ui.add(egui::Label::new(text(f, erklaerung, Ton::Leise)).wrap());
+        }
+    });
+}
+
+/// Eine leere Fläche mit **mittig** stehender Zeile — dort, wo eine Liste
+/// leer ist und die Zeile für sich steht (Protokoll, Aufgabe 18).
+pub fn leer_mitte(ui: &mut egui::Ui, f: &Farben, titel: &str, erklaerung: &str) {
+    ui.add_space(thema::SPACE_6);
+    ui.vertical_centered(|ui| {
+        ui.label(RichText::new(titel).font(egui::FontId::new(thema::FONT_SIZE_MD, fett())));
+        if !erklaerung.is_empty() {
+            ui.add_space(thema::SPACE_1);
+            ui.add(egui::Label::new(text(f, erklaerung, Ton::Leise).small()).wrap());
         }
     });
 }
@@ -298,13 +334,25 @@ pub fn hauptknopf_mit(ui: &mut egui::Ui, f: &Farben, icon: Icon, text: &str) -> 
 /// und alle Felder einer Seite sind gleich breit.
 pub const FELDBREITE_MAX: f32 = thema::SPACE_8 * 10.0;
 /// Ab dieser Breite steht die Beschriftung links neben dem Feld, darunter
-/// darüber.
-const FORMULAR_NEBENEINANDER: f32 = thema::SPACE_8 * 8.0;
+/// darüber (`breakpoint.formular`, Aufgabe 18).
+const FORMULAR_NEBENEINANDER: f32 = thema::BREAKPOINT_FORMULAR;
 /// Breite der Beschriftungsspalte.
 const BESCHRIFTUNG: f32 = thema::SPACE_8 * 3.0;
 
 /// Abstand des Inhalts zum Fensterrand.
 pub const SEITENRAND: f32 = thema::SPACE_5;
+
+/// Ist das Fenster schmal (`breakpoint.schmal`)? Dann trägt die
+/// Seitenleiste nur Zeichen mit Hinweis (Aufgabe 18).
+pub fn schmal(ui: &egui::Ui) -> bool {
+    ui.ctx().content_rect().width() < thema::BREAKPOINT_SCHMAL
+}
+
+/// Ist für die Kopfzeile zu wenig Platz (`breakpoint.formular`)? Dann stehen
+/// Farbschema und Sprache in einem Menü statt als Segmentreihen.
+pub fn eng(ui: &egui::Ui) -> bool {
+    ui.ctx().content_rect().width() < thema::BREAKPOINT_FORMULAR
+}
 
 /// Eine Seite: senkrecht scrollbar, so breit wie das Fenster — die Karten
 /// füllen die Fläche, statt mit leerem Rand daneben zu hängen. Der Rand liegt
@@ -326,12 +374,135 @@ pub fn seite<R>(ui: &mut egui::Ui, inhalt: impl FnOnce(&mut egui::Ui) -> R) -> R
         .inner
 }
 
-/// Der Seitenrand für Seiten mit eigenem Scrollbereich (Protokoll).
+/// Der Seitenrand für Seiten mit eigenem Scrollbereich (Protokoll). Der
+/// Inhalt steht höchstens `size.inhalt-max` breit und mittig (Aufgabe 18).
 pub fn rand<R>(ui: &mut egui::Ui, inhalt: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(SEITENRAND as i8, 0))
-        .show(ui, inhalt)
+        .show(ui, |ui| spalte(ui, inhalt))
         .inner
+}
+
+/// Eine Spalte mit höchstens `size.inhalt-max` Breite, mittig im Platz, der
+/// übrig ist. Bei schmalem Fenster nimmt sie den ganzen Platz.
+fn spalte<R>(ui: &mut egui::Ui, inhalt: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let verfuegbar = ui.available_width();
+    let breite = verfuegbar.min(thema::SIZE_INHALT_MAX);
+    let links = ((verfuegbar - breite) / 2.0).floor();
+    if links < 1.0 {
+        return inhalt(ui);
+    }
+    let rect = egui::Rect::from_min_size(
+        ui.cursor().min + egui::vec2(links, 0.0),
+        egui::vec2(breite, ui.available_height()),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), inhalt)
+        .inner
+}
+
+/// Eine Leiste aus Steuerelementen (Filter, Knöpfe): bricht um, statt seitlich
+/// hinauszuragen, und hält einen einheitlichen Abstand (Aufgabe 18).
+pub fn leiste<R>(ui: &mut egui::Ui, inhalt: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = thema::SPACE_2;
+        inhalt(ui)
+    })
+    .inner
+}
+
+/// Ein Feld in einer Leiste: Beschriftung klein darüber, Steuerelement darunter.
+/// `None` lässt den Platz der Beschriftung frei, damit ein Häkchen auf einer
+/// Höhe mit den Auswahlen steht (Aufgabe 18). `breite` ist die Breite des
+/// Blocks — eine umbrechende Leiste entscheidet daran, ob das Feld noch in
+/// die Zeile passt (ein verschachteltes `ui.vertical` nähme sonst den ganzen
+/// Rest und bräche nie um).
+pub fn leistenfeld<R>(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    beschriftung: Option<&str>,
+    breite: f32,
+    inhalt: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let hoehe =
+        thema::FONT_SIZE_SM * thema::FONT_LINE_NORMAL + thema::SPACE_1 + thema::SIZE_CONTROL_MD;
+    ui.allocate_ui_with_layout(
+        egui::vec2(breite, hoehe),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_width(breite);
+            // Beschriftung und Feld stehen dicht beieinander — die Leiste
+            // soll so flach wie möglich bleiben.
+            ui.spacing_mut().item_spacing.y = thema::SPACE_1;
+            match beschriftung {
+                Some(titel) => {
+                    ui.label(text(f, titel, Ton::Leise).small());
+                }
+                None => {
+                    ui.add_space(thema::FONT_SIZE_SM * thema::FONT_LINE_NORMAL);
+                }
+            }
+            inhalt(ui)
+        },
+    )
+    .inner
+}
+
+/// Drückt das nächste Element an den rechten Rand der laufenden Zeile — in
+/// einer umbrechenden Leiste die letzte Aktion einer Zeile. Passt sie nicht
+/// mehr, rückt sie in die nächste Zeile.
+pub fn nach_rechts(ui: &mut egui::Ui, breite: f32) {
+    // In einer umbrechenden Leiste ist `available_width` die ganze Zeile,
+    // nicht der Rest — der Rest rechnet sich aus Cursor und Rand.
+    if ui.max_rect().right() - ui.cursor().min.x < breite {
+        // Passt nicht mehr: die Aktion beginnt eine neue Zeile und steht
+        // dort rechts.
+        ui.end_row();
+    }
+    let rest = ui.max_rect().right() - ui.cursor().min.x - breite;
+    if rest > 0.0 {
+        ui.add_space(rest);
+    }
+}
+
+/// Die Breite eines Knopfes mit Zeichen und Text — damit sich die letzte
+/// Aktion einer Leiste an den rechten Rand schieben lässt (`nach_rechts`).
+pub fn knopfbreite(ui: &egui::Ui, beschriftung: &str) -> f32 {
+    textbreite(ui, beschriftung, thema::FONT_SIZE_MD)
+        + thema::FONT_SIZE_MD
+        + thema::SPACE_2
+        + 2.0 * (thema::SIZE_CONTROL_PADDING + thema::SIZE_BORDER)
+}
+
+/// Die Breite einer Segmentreihe aus ihren Beschriftungen — dieselbe Rechnung
+/// wie in [`segmentauswahl`].
+pub fn segmentbreite(ui: &egui::Ui, namen: &[String]) -> f32 {
+    let mut breite = 0.0;
+    for name in namen {
+        breite += textbreite(ui, name, thema::FONT_SIZE_SM)
+            + 2.0 * thema::SPACE_3
+            + 2.0 * thema::SIZE_BORDER
+            - thema::SIZE_BORDER;
+    }
+    breite
+}
+
+/// Die Breite eines Häkchens mit Beschriftung.
+pub fn hakenbreite(ui: &egui::Ui, beschriftung: &str) -> f32 {
+    ui.spacing().icon_width
+        + ui.spacing().icon_spacing
+        + textbreite(ui, beschriftung, thema::FONT_SIZE_MD)
+}
+
+/// Wie breit ein Text in dieser Schrift ist.
+fn textbreite(ui: &egui::Ui, inhalt: &str, groesse: f32) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            inhalt.to_string(),
+            egui::FontId::proportional(groesse),
+            egui::Color32::WHITE,
+        )
+        .rect
+        .width()
 }
 
 /// Eine Formularzeile: Beschriftung, Bedienelement, Hinweis darunter. Breit
@@ -563,7 +734,9 @@ pub struct NavEintrag<'a> {
 
 /// Die Seitenleiste: Abschnittsname klein in Großbuchstaben, darunter eine
 /// Zeile je Ziel (Zeichen und Name). Gewählt ist eine ruhige Fläche mit einem
-/// Akzentbalken links. Gibt den Index des angeklickten Eintrags zurück.
+/// Akzentbalken links. Unter `breakpoint.schmal` stehen nur die Zeichen, der
+/// Name erscheint als Hinweis (Aufgabe 18). Gibt den Index des angeklickten
+/// Eintrags zurück.
 pub fn seitenleiste(
     ui: &mut egui::Ui,
     f: &Farben,
@@ -571,8 +744,14 @@ pub fn seitenleiste(
     eintraege: &[NavEintrag<'_>],
 ) -> Option<usize> {
     let mut wahl = None;
+    let nur_zeichen = schmal(ui);
+    let breite = if nur_zeichen {
+        thema::SIZE_SEITENLEISTE_SCHMAL
+    } else {
+        thema::SIZE_SEITENLEISTE
+    };
     egui::Panel::left("seitenleiste")
-        .exact_size(thema::SIZE_SEITENLEISTE)
+        .exact_size(breite)
         .resizable(false)
         .frame(
             egui::Frame::new()
@@ -582,9 +761,11 @@ pub fn seitenleiste(
         .show(ui, |ui| {
             // Die Zeilen stehen dicht an dicht wie in der Verwaltung.
             ui.spacing_mut().item_spacing.y = 0.0;
-            abschnitt(ui, f, titel);
+            if !nur_zeichen {
+                abschnitt(ui, f, titel);
+            }
             for (index, eintrag) in eintraege.iter().enumerate() {
-                if navzeile(ui, f, eintrag).clicked() {
+                if navzeile(ui, f, eintrag, nur_zeichen).clicked() {
                     wahl = Some(index);
                 }
             }
@@ -609,7 +790,12 @@ fn abschnitt(ui: &mut egui::Ui, f: &Farben, titel: &str) {
 
 /// Eine Zeile der Seitenleiste. Hand-Cursor und Name für den Screenreader
 /// kommen von hier (AGENTS.md §2.12).
-fn navzeile(ui: &mut egui::Ui, f: &Farben, eintrag: &NavEintrag<'_>) -> egui::Response {
+fn navzeile(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    eintrag: &NavEintrag<'_>,
+    nur_zeichen: bool,
+) -> egui::Response {
     let breite = ui.available_width();
     let (rect, antwort) =
         ui.allocate_exact_size(egui::vec2(breite, thema::SIZE_NAVZEILE), Sense::click());
@@ -638,27 +824,37 @@ fn navzeile(ui: &mut egui::Ui, f: &Farben, eintrag: &NavEintrag<'_>) -> egui::Re
                 f.accent_default,
             );
         }
+        // Schmal: nur das Zeichen, mittig. Sonst Zeichen und Name.
+        let links = if nur_zeichen {
+            rect.center().x - thema::FONT_SIZE_MD / 2.0
+        } else {
+            rect.left() + thema::SPACE_2
+        };
         let zeichen_rect = egui::Rect::from_min_size(
-            egui::pos2(
-                rect.left() + thema::SPACE_2,
-                rect.center().y - thema::FONT_SIZE_MD / 2.0,
-            ),
+            egui::pos2(links, rect.center().y - thema::FONT_SIZE_MD / 2.0),
             egui::vec2(thema::FONT_SIZE_MD, thema::FONT_SIZE_MD),
         );
         eintrag
             .icon
             .bild(thema::FONT_SIZE_MD, zeichenfarbe)
             .paint_at(ui, zeichen_rect);
-        ui.painter().text(
-            egui::pos2(zeichen_rect.right() + thema::SPACE_2, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            eintrag.name,
-            egui::FontId::proportional(thema::FONT_SIZE_MD),
-            schrift,
-        );
+        if !nur_zeichen {
+            ui.painter().text(
+                egui::pos2(zeichen_rect.right() + thema::SPACE_2, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                eintrag.name,
+                egui::FontId::proportional(thema::FONT_SIZE_MD),
+                schrift,
+            );
+        }
     }
     antwort.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, eintrag.name));
-    antwort.on_hover_cursor(egui::CursorIcon::PointingHand)
+    let antwort = antwort.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if nur_zeichen {
+        antwort.on_hover_text(eintrag.name)
+    } else {
+        antwort
+    }
 }
 
 /// Ein Eingabefeld im Maß der Verwaltung: so hoch wie ein Bedienelement, 8 px
@@ -870,6 +1066,30 @@ pub fn status(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str) -> eg
         },
     )
     .response
+}
+
+/// Ein Schild, dessen Text gekürzt wird, statt umzubrechen — für die
+/// Kopfzeile, in der nur eine Zeile Platz hat (Aufgabe 18).
+pub fn status_gekuerzt(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    ton: Ton,
+    beschriftung: &str,
+) -> egui::Response {
+    let hoehe = thema::FONT_SIZE_MD * thema::FONT_LINE_NORMAL;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), hoehe),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = thema::SPACE_1;
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(thema::SPACE_2, thema::SPACE_2), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, thema::ton(f, ton));
+            ui.add(egui::Label::new(text(f, beschriftung, ton)).truncate())
+        },
+    )
+    .inner
+    .on_hover_text(beschriftung)
 }
 
 /// Dasselbe Schild ohne Text (wenn der Platz fehlt) — der Text steht im

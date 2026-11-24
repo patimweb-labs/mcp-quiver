@@ -52,6 +52,8 @@ function waehle(wert: Seite): void {
         type="button"
         :class="['nav__eintrag', { 'is-aktiv': eintrag.id === seite }]"
         :aria-current="eintrag.id === seite ? 'page' : undefined"
+        :aria-label="eintrag.name"
+        :title="eintrag.name"
         @click="waehle(eintrag.id)"
       >
         <component :is="eintrag.icon" class="nav__zeichen" aria-hidden="true" />
@@ -69,6 +71,33 @@ function waehle(wert: Seite): void {
   overflow-y: auto;
   background: var(--wp-color-bg-panel);
   border-right: var(--wp-size-border) solid var(--wp-color-border-subtle);
+}
+
+/* Unter `breakpoint.schmal` trägt die Leiste nur die Zeichen; der Name steht
+   im Hinweis und als zugänglicher Name (Aufgabe 18, wie im Client-Fenster). */
+:root[data-breite="eng"] .seitenleiste,
+:root[data-breite="schmal"] .seitenleiste {
+  flex-basis: var(--wp-size-seitenleiste-schmal);
+}
+
+:root[data-breite="eng"] .nav__titel,
+:root[data-breite="eng"] .nav__name,
+:root[data-breite="schmal"] .nav__titel,
+:root[data-breite="schmal"] .nav__name {
+  display: none;
+}
+
+:root[data-breite="eng"] .nav__eintrag,
+:root[data-breite="schmal"] .nav__eintrag {
+  justify-content: center;
+  padding-inline: var(--wp-space-2);
+  border-left-width: 0;
+}
+
+:root[data-breite="eng"] .nav__eintrag.is-aktiv,
+:root[data-breite="schmal"] .nav__eintrag.is-aktiv {
+  box-shadow: inset var(--wp-size-akzentbalken) 0 0
+    var(--wp-color-accent-default);
 }
 
 .nav {

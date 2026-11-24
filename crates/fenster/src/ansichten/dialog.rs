@@ -16,8 +16,9 @@ use crate::texte::{t, tf};
 use crate::thema::{self, Ton};
 
 /// Breite der Dialoge: breit genug für Adresse und Schnipsel, schmal genug
-/// für ein kleines Fenster.
-const BREITE: f32 = thema::SPACE_8 * 9.0;
+/// für ein kleines Fenster. Derselbe Wert wie in der Verwaltung
+/// (`size.dialog`).
+const BREITE: f32 = thema::SIZE_DIALOG;
 
 /// Höchste Höhe der Feldliste – wie `.felder` in der Verwaltung
 /// (`calc(var(--wp-space-8) * 9)`). Mehr Felder scrollen.
@@ -991,6 +992,11 @@ fn aufruf_details(
             true,
         ),
         (
+            t(sprache, "protokoll.spalte.status"),
+            logik::status_text(sprache, aufruf.status),
+            false,
+        ),
+        (
             t(sprache, "protokoll.spalte.agent"),
             aufruf.agent.clone(),
             false,
@@ -1007,13 +1013,14 @@ fn aufruf_details(
         ),
     ];
     bausteine::fakten(ui, f, &zeilen);
-    ui.add_space(thema::SPACE_2);
     egui::ScrollArea::vertical()
         .id_salt("dialog-aufruf")
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
         .max_height(hoehe)
         .auto_shrink([false, true])
         .show(ui, |ui| {
+            // Drei Blöcke, jeder in Monoschrift, mit Rahmen und eigenem
+            // Knopf „Kopieren“ (Aufgabe 18).
             if !aufruf.argumente.is_empty() {
                 abschnitt(
                     ui,
@@ -1021,41 +1028,62 @@ fn aufruf_details(
                     sprache,
                     "protokoll.argumente",
                     &aufruf.argumente,
-                    true,
+                    false,
                 );
             }
             if let Some(fehler) = &aufruf.fehler {
-                abschnitt(ui, f, sprache, "protokoll.fehlertext", fehler, false);
+                abschnitt(ui, f, sprache, "protokoll.fehlertext", fehler, true);
             }
             if !aufruf.vorschau.is_empty() {
-                abschnitt(ui, f, sprache, "protokoll.vorschau", &aufruf.vorschau, true);
+                abschnitt(
+                    ui,
+                    f,
+                    sprache,
+                    "protokoll.vorschau",
+                    &aufruf.vorschau,
+                    false,
+                );
             }
         });
 }
 
-/// Eine Überschrift mit Inhalt und einem eigenen Kopier-Knopf daneben.
+/// Ein Abschnitt im Detail: Überschrift und Kopier-Knopf, darunter der Inhalt
+/// als Block in Monoschrift mit Rahmen. `fehler` färbt ihn als Fehlertext.
 fn abschnitt(
     ui: &mut egui::Ui,
     f: &crate::thema::Farben,
     sprache: crate::texte::Sprache,
     schluessel: &str,
     inhalt: &str,
-    mono: bool,
+    fehler: bool,
 ) {
-    ui.add_space(thema::SPACE_2);
-    ui.label(text(f, t(sprache, schluessel), Ton::Leise).small());
-    ui.horizontal_top(|ui| {
-        if bausteine::icon_knopf(ui, f, Icon::Kopieren, &t(sprache, "allg.kopieren"), false)
-            .clicked()
-        {
-            ui.ctx().copy_text(inhalt.to_string());
-        }
-        let mut wert = RichText::new(inhalt);
-        if mono {
-            wert = wert.monospace();
-        }
-        ui.add(egui::Label::new(wert).wrap());
-    });
+    ui.add_space(thema::SPACE_3);
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| {
+            ui.label(text(f, t(sprache, schluessel), Ton::Leise).small());
+        },
+        |ui| {
+            if bausteine::icon_knopf(ui, f, Icon::Kopieren, &t(sprache, "allg.kopieren"), false)
+                .clicked()
+            {
+                ui.ctx().copy_text(inhalt.to_string());
+            }
+        },
+    );
+    ui.add_space(thema::SPACE_1);
+    egui::Frame::new()
+        .fill(f.bg_input)
+        .stroke(egui::Stroke::new(thema::SIZE_BORDER, f.border_subtle))
+        .inner_margin(egui::Margin::same(thema::SPACE_2 as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let mut wert = RichText::new(inhalt).font(egui::FontId::monospace(thema::FONT_SIZE_SM));
+            if fehler {
+                wert = wert.color(f.status_error);
+            }
+            ui.add(egui::Label::new(wert).wrap());
+        });
 }
 
 /// Fokus beim ersten Bild des Dialogs ins erste Feld.

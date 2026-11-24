@@ -112,7 +112,7 @@ window (*Agents* → *Pair agent*). The kind decides the snippet: pi, Claude Cod
 OpenCode, GitHub Copilot and Hermes each bring their own ready-made text, and
 the token can be renewed at any time — the old one stops working immediately.
 
-![Pairing dialog](docs/bilder/fenster-dark-koppeln.png)
+![Pairing dialog](docs/bilder/fenster-dark-koppeln-800.png)
 
 On the admin side an entry can be switched off without deleting it (*Aktiv* in
 the edit dialog or the switch in the row). It stays in the library and in sets
@@ -128,7 +128,7 @@ anything else is shown as an error on the card. Credentials never pass through
 an agent. In the admin interface the command sits in the *Einrichtung
 (optional)* section and the list shows a *mit Einrichtung* badge.
 
-![Setup on the tools card](docs/bilder/fenster-dark-einrichten.png)
+![Setup on the tools card](docs/bilder/fenster-dark-einrichten-800.png)
 
 Some tools need **several similar credentials** that the user adds one by one —
 SSH connections with a name, host, port and user, for instance. Such entries
@@ -141,7 +141,7 @@ Secrets live in the encrypted vault file, the remaining values in the client con
 On start the tool receives all connections as JSON in `QUIVER_ZUGAENGE`; an
 entry without any connection still runs and reports “no connection” itself.
 
-![Connections on the tools card](docs/bilder/fenster-dark-zugaenge.png)
+![Connections on the tools card](docs/bilder/fenster-dark-zugaenge-800.png)
 
 Some fields carry a **help link** next to the input (admin: *Link text* and
 *Link address*, `${feld}` placeholders allowed — for example
@@ -150,7 +150,7 @@ placeholder can be filled from what stands in the dialog right now; otherwise
 it is greyed out and says which field is still missing. A click opens the
 address in the default browser — nothing else, no login, no listener.
 
-![Settings dialog with a help link](docs/bilder/fenster-dark-angaben.png)
+![Settings dialog with a help link](docs/bilder/fenster-dark-angaben-800.png)
 
 Fields carry a **kind** (admin: *Art* and *Titel*): text, password, number,
 switch (checkbox), address (checked for `http(s)://`) or a choice list with
@@ -203,11 +203,22 @@ Agents can read the protocol themselves through two read-only tools,
 `zustand.json`); error texts stay masked either way, and calls to these two
 tools never appear in the protocol themselves.
 
-![Protocol page](docs/bilder/fenster-dark-protokoll.png)
+![Protocol page](docs/bilder/fenster-dark-protokoll-800.png)
 
 Same layout as the admin interface: header, navigation on the left, content as
-cards, three themes from the same tokens. The screenshots are produced by the UI
-test (with a stand-in core, no server and no runtime):
+cards, three themes from the same tokens.
+
+**Window size.** Below 760 px the navigation shrinks to icons (the name sits in
+the tooltip), the content stops at 1100 px and stays centred, and filter and
+button bars wrap instead of running over the edge. Below 700 px a form puts its
+label above the field and the header moves theme and language into a menu; the
+protocol table then drops *Agent* and *Duration* (both stay in the detail
+dialog). The breakpoints are tokens (`breakpoint.*`), so the admin interface
+uses the same numbers.
+
+The screenshots are produced by the UI test (with a stand-in core, no server and
+no runtime) — every page and dialog at 560 × 460, 800 × 600 and 1200 × 820, as
+`fenster-<theme>-<page>-<width>.png`:
 
 ```bash
 QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
@@ -221,8 +232,8 @@ the two images differ only in font smoothing:
 ![Musterseite, egui](docs/bilder/muster-egui-dark.png)
 ![Musterseite, Vue](docs/bilder/muster-vue-dark.png)
 
-![Client window, dark](docs/bilder/fenster-dark-tools.png)
-![Client window, light](docs/bilder/fenster-light-tools.png)
+![Client window, dark](docs/bilder/fenster-dark-tools-1200.png)
+![Client window, light](docs/bilder/fenster-light-tools-1200.png)
 ![Admin library, dark](docs/bilder/admin-dark-bibliothek.png)
 
 ## License

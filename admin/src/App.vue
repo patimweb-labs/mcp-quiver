@@ -145,7 +145,12 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding-inline: var(--wp-space-5);
+  /* Höchstens `size.inhalt-max` breit und mittig; der Rand ist mindestens
+     `space-5` (Aufgabe 18). */
+  padding-inline: max(
+    var(--wp-space-5),
+    calc((100% - var(--wp-size-inhalt-max)) / 2)
+  );
   padding-bottom: var(--wp-space-6);
 }
 </style>
