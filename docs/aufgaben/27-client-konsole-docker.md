@@ -1,31 +1,34 @@
-# 27 – Client ohne Fenster: Konsole und Docker (Entwurf)
+# 27 – quiver-cli: Client für Docker (Entwurf)
 
-Nach 22 und 24. Für autonome Agenten und Server. Noch offen, was unten unter „Entscheiden“ steht.
+Nach 22 und 24. Für autonome Agenten. Noch offen, was unten unter „Entscheiden“ steht.
 
-## Aufbau
+## Grundsatz
 
-Entscheidung des Nutzers (2026-11-24): Der Fenster-Client wird **nicht** geteilt oder umgebaut. Es kommt ein **zusätzlicher, eigenständiger Konsolen-Client** dazu.
+Entscheidung des Nutzers (2026-11-24): **`quiver-cli` ist rein für Docker gedacht** und wird nicht dort installiert, wo der Fenster-Client läuft. Der Fenster-Client bleibt unverändert.
 
-- Neues Crate `crates/konsole`, Programm `quiver-cli`, vollwertig: Verbindung, Tools, Angaben und Zugänge, an/aus, Agenten, Protokoll, Export/Import. Keine Grafikbibliotheken.
-- Beide nutzen `crates/client` (den Kern, heute schon ohne egui) unverändert als Bibliothek. Logik, die heute nur im Fenster steckt und beide brauchen (Prüfung der Felder, Texte), wandert dorthin statt doppelt zu entstehen; das Fenster verhält sich danach genau gleich (Tests und Bilder unverändert).
-- Zwei Bedienarten: **interaktive Oberfläche im Terminal** (`quiver-cli`, gleiche Seiten und Begriffe wie das Fenster, Tastatur, schmale Terminals, ohne Farbe lesbar) und **einzelne Befehle** für Skripte.
-- **Eigenes Setup, eigenes Vorgehen:** Der Konsolen-Client ist unabhängig vom Fenster. Eigenes Profil und eigener Tresor (`quiver-cli`, mehrere Profile mit `--profil`), **eigenes Gerät** am Server, eigener Port (frei gewählt, im Setup gezeigt), eigene Agenten-Kopplung. Beide dürfen gleichzeitig laufen und fassen sich gegenseitig nicht an. Je Profil läuft nur eine Instanz.
-- Übernahme aus dem Fenster nur ausdrücklich über die verschlüsselte Sicherung; Anmeldung und Geräte-Token wandern nie mit.
-- **Installation:** ein einzelnes Programm je Plattform (signiertes Paket, Homebrew/winget/deb, Docker-Image), ohne grafische Umgebung. **Betrieb:** im Vordergrund, als Dienst (`quiver-cli dienst einrichten|status|entfernen`; systemd, launchd, Windows-Dienst; mit Rechten des Benutzers, nie Root) oder im Container. **Aktualisieren** und **Entfernen** (samt Abmelden am Server) als eigene Befehle.
-- **Eigene Anleitung** (en/de): vom leeren Rechner bis zum ersten Tool-Aufruf, je einmal für Arbeitsplatz, Server und Docker. Ein Test spielt sie in einem frischen Container durch.
-- `--headless` am Fenster-Programm bleibt vorerst bestehen.
+| | Fenster-Client | quiver-cli |
+|---|---|---|
+| Für | Menschen am Arbeitsplatz | autonome Agenten |
+| Ausgeliefert als | App je Plattform | **nur Docker-Image** |
+| Einrichtung | Fenster | geführt über die Konsole des Containers |
+| Konto | Entra-Benutzer | Dienstkonto |
+| Laufzeit | Tray, Autostart | Container (Neustart durch Docker/Compose/Kubernetes) |
 
-## Geführte Einrichtung
+- Neues Crate `crates/konsole`, Programm `quiver-cli`, ohne Grafikbibliotheken, auf dem Kern `crates/client`. Keine Pakete, kein Installer, kein Dienst, kein Autostart.
+- Außerhalb des Images startet es nicht (Kennzeichen im Image; für die Entwicklung ein ausdrücklicher Schalter in Debug-Builds). Das ist Schutz vor Versehen, keine Sicherheitsgrenze.
+- Eigenes Profil und eigener Tresor im Volume, **eigenes Gerät** am Server je Container. Zwei Container mit demselben Volume: der zweite startet nicht.
 
-`quiver-cli einrichten` führt im Terminal (de/en, auch über SSH und `docker run -it`):
+## Geführte Einrichtung in der Konsole
 
-1. Server-Adresse, Erreichbarkeit prüfen
-2. Anmelden: Adresse zeigen, im Browser auf **irgendeinem** Gerät bestätigen (eigener kurzer Code am quiver-Server, nur dort eingebbar, 10 min, gedrosselt; Bestätigungsseite nennt Gerät und Ort) – oder Dienstkonto (siehe unten)
-3. Tools zeigen; je Tool: nutzen oder am Gerät aus
-4. Angaben abfragen, mit Titel, Hilfe, Art und Prüfung wie im Fenster; Passwörter verdeckt; Zugangslisten anlegen
-5. Testen und Ergebnis zeigen; Agent koppeln
+`docker run -it --rm -v quiver:/profil … einrichten` (de/en), danach läuft derselbe Container ohne Rückfragen:
 
-Jeder Schritt ist wiederholbar und einzeln aufrufbar: `anmelden`, `tools`, `angaben <tool>`, `zugang <tool>`, `agent koppeln`, `status [--json]`, `protokoll`, `aus|an <tool>`, `export|import`. Ein Agent kann nichts davon aufrufen (nur am Terminal, nie über MCP).
+1. Server-Adresse, Erreichbarkeit und Zertifikat prüfen
+2. Dienstkonto einbinden (Einmal-Code aus der Verwaltung)
+3. Tools zeigen; je Tool nutzen oder aus
+4. Angaben abfragen, mit Titel, Hilfe, Art und Prüfung wie im Fenster; Passwörter verdeckt; Zugangslisten
+5. Testen und Ergebnis zeigen; Agent koppeln (Token als Datei)
+
+Jeder Schritt ist wiederholbar, auch im laufenden Container (`docker exec -it … quiver-cli angaben jira`): `tools`, `angaben`, `zugang`, `agent`, `status [--json]`, `protokoll`, `aus|an`, `einspielen`. Interaktiv als Oberfläche im Terminal (Tastatur, schmal, ohne Farbe lesbar). Ein Agent kann nichts davon aufrufen: kein MCP-Weg dorthin, und der Agent läuft in einem **anderen** Container ohne Zugriff auf Volume und Docker-Socket.
 
 ## Ohne Rückfragen (Docker, Automatisierung)
 
@@ -38,6 +41,7 @@ Jeder Schritt ist wiederholbar und einzeln aufrufbar: `anmelden`, `tools`, `anga
 ## Docker
 
 - Image mit `quiver-cli` **und** allen eigenen Tools, linux/amd64 und arm64, ohne Root, Dateisystem nur lesbar, Volume `/profil`, keine Fähigkeiten, SBOM.
+- Beispiel-`compose.yaml` (quiver-cli und ein Agent) und Kubernetes-Beispiel; ein Test spielt die Anleitung in frischen Containern durch.
 - Agenten erreichen den MCP-Endpunkt als **Sidecar im selben Netz-Namensraum** (`network_mode: service:agent`), er bleibt auf Loopback. Auf anderen Adressen nur mit TLS und ausdrücklichem Schalter.
 - Agent-Token als Secret-Datei, die der Client beim Koppeln schreibt (0600).
 
