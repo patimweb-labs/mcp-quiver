@@ -12,6 +12,24 @@ Wunsch, 2026-11-24. Beginnt, wenn Entra (20–26, 22) im Alltag läuft. **Vor** 
 6. **Unabhängige Prüfung:** nicht durch den, der es gebaut hat. Anschließend eigener Angriffstest auf einem Testserver.
 7. **Betrieb:** TLS und öffentliche Adresse, Ablauf des Zertifikats, Überwachung, Notfallanleitung (Root, alle Geräte sperren, Schlüssel tauschen), Datenschutz (was steht wie lange im Protokoll).
 
+## Security-Durchgang (Pflicht, eigener Bericht)
+
+Ausdrücklicher Wunsch des Nutzers. Gemeinsam durchgehen, Punkt für Punkt: Wie ist es geschützt, wo steht es im Code, welcher Test belegt es, was bleibt als Risiko? Ohne Nachweis gilt ein Punkt als offen.
+
+| Bereich | Fragen |
+|---|---|
+| Anmeldung | Entra, Root, Ersteinrichtung, Sitzungen, Geräte-Token, Entzug: Wie schnell wirkt er wirklich? |
+| Rechte | Rollen, Gruppen, Dienstkonten: Kann sich jemand selbst erhöhen? Sieht jemand Fremdes? |
+| Geheimnisse | Tresor, Server-Schlüssel, Zertifikat, Agent-Token, Secrets in Docker: Wo liegen sie, wer kann lesen, wie tauscht man sie? Auch: Sicherungen, Logs, Absturzberichte, Git-Verlauf |
+| Agenten | Was kann ein manipulierter Agent höchstens anrichten? Schreibschutz, Freigaben, Schadtext in Inhalten, Abfluss von Daten über ein zweites Tool |
+| Tools | Pfade, SSRF, Weiterleitungen, Befehle, fremde Antworten, Begrenzungen je Zugang |
+| Netz | TLS, Loopback, andere Prozesse und Webseiten, Reverse-Proxy |
+| Lieferkette | Abhängigkeiten, Signaturen, Build, Updates, Image |
+| Nachvollziehbarkeit | Prüfspur vollständig und nicht veränderbar? Datenschutz und Löschfristen |
+| Notfall | Gerät gestohlen, Konto übernommen, Schlüssel verloren, Server kompromittiert: Übung am Testserver |
+
+Ablauf: Bedrohungsmodell → Code-Durchsicht je Bereich durch zwei getrennte Prüfer (nicht der Entwickler) → Werkzeuge (`cargo audit/deny`, Geheimnis-Suche im gesamten Git-Verlauf, OWASP ASVS Stufe 2 für die Verwaltung) → Angriffstest am Testserver → Befunde beheben → Nachtest. Nur gegen eigene Testsysteme, nie gegen echte Dienste. Empfehlung: vor dem Einsatz außerhalb von neoimpulse zusätzlich ein externer Test.
+
 ## B. Oberfläche (Client und Verwaltung)
 
 1. **Jede Seite und jeder Dialog** in dark/light/mono, de/en, 560/800/1200/1600 px, 100/150/200 %, leer/lädt/voll/Fehler, sehr lange Namen, 1/50/500 Einträge. Bilder nebeneinander: egui und Vue **1:1 gleich**.
