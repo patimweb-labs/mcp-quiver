@@ -131,6 +131,12 @@ sich Geräte im Browser an, und die Gruppen kommen aus dem Token.
    sie gibt also erst Tools, wenn ein Admin in der Verwaltung einen Satz
    zuordnet. Titel und Sätze bleiben danach seine; Entra ersetzt nur die
    Mitglieder. Wer keine zugeordnete Gruppe hat, bekommt keine Tools.
+   Mit `QUIVER_ENTRA_GRUPPENNAMEN=an` holt der Server zusätzlich den
+   Anzeigenamen der Gruppe über Graph (Lesebereich `GroupMember.Read.All`,
+   die Anwendung braucht dafür die Zustimmung des Mandanten). Der Name ersetzt
+   den automatischen Titel, solange der Admin keinen eigenen gesetzt hat, und
+   steht in der Verwaltung klein unter dem Titel. Ohne den Schalter fragt der
+   Server Graph nie; Rechte laufen in beiden Fällen nur über die Objekt-Id.
 6. Root ernennt Admins; ein Entra-Benutzer muss sich einmal angemeldet haben,
    bevor `quiver-server admin-setzen --oid <Objekt-Id>` wirkt.
 
@@ -162,6 +168,8 @@ aufnehmen. Höchstens 200 Gruppen legt der Server auf diesem Weg an.
 | `QUIVER_ENTRA_SECRET_DATEI` | Datei mit dem Client-Geheimnis (Standard `<Daten>/entra-secret`); genau eins von Geheimnis und Schlüssel |
 | `QUIVER_ENTRA_SCHLUESSEL_DATEI` | Privater Schlüssel für `private_key_jwt` (Standard `<Daten>/entra-schluessel.pem`) |
 | `QUIVER_ENTRA_AUTHORITY` | Alternative Authority, nur Loopback (Tests) |
+| `QUIVER_ENTRA_GRUPPENNAMEN` | `an` holt die Gruppennamen über Graph; Standard `aus`, jeder andere Wert verhindert den Start |
+| `QUIVER_ENTRA_GRAPH` | Basis für Graph, nur Loopback (Tests); im Betrieb fest `https://graph.microsoft.com` |
 | `QUIVER_PROXIES` | CIDR-Liste, von der `X-Forwarded-For` geglaubt wird |
 | `QUIVER_ALTGERAETE` | `erlaubt` (Standard) oder `gesperrt` für Geräte ohne Benutzer |
 

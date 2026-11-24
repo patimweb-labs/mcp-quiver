@@ -189,6 +189,7 @@ async fn pruefen(
         // Rotation ohne neues Token: das alte bleibt gültig, bis es scheitert.
         None => verschluesselt,
     };
+    let access_token = tokens.access_token.clone();
 
     let identitaet_fuer_db = identitaet.clone();
     db(zustand, {
@@ -238,6 +239,8 @@ async fn pruefen(
     .map_err(|_| AnmeldeGrund::NeuAnmelden)?;
 
     zustand.melde_aenderung();
+    // Gruppennamen im Hintergrund (Aufgabe 30); ändert am Ergebnis nichts.
+    crate::graph::starte(zustand, &identitaet.gruppen, access_token);
     Ok(())
 }
 

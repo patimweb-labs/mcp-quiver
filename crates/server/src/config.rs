@@ -119,6 +119,11 @@ impl Ausweis {
     }
 }
 
+/// Der Host, bei dem Gruppennamen geholt werden (Aufgabe 30).
+pub const GRAPH_BASIS: &str = "https://graph.microsoft.com";
+/// Der eine Lesebereich für Gruppennamen; nur mit `QUIVER_ENTRA_GRUPPENNAMEN=an`.
+pub const GRAPH_SCOPE: &str = "https://graph.microsoft.com/GroupMember.Read.All";
+
 /// Entra-Konfiguration. Fehlt sie ganz, gilt der alte Weg mit Einmal-Codes.
 #[derive(Clone)]
 pub struct EntraKonfig {
@@ -133,6 +138,10 @@ pub struct EntraKonfig {
     pub issuer: String,
     /// `Authorization Code` + PKCE; die Rückkehr landet hier.
     pub redirect_uri: String,
+    /// Gruppennamen über Graph holen (Aufgabe 30)? Standard: nein.
+    pub gruppen_namen: bool,
+    /// Basis für Graph; im Betrieb fest, in Tests Loopback.
+    pub graph_basis: String,
 }
 
 impl EntraKonfig {
@@ -152,7 +161,23 @@ impl EntraKonfig {
             issuer: authority.clone(),
             authority,
             redirect_uri: redirect_uri.into(),
+            gruppen_namen: false,
+            graph_basis: String::from(GRAPH_BASIS),
         }
+    }
+
+    /// Die Bereiche für Anmeldung **und** Refresh (Aufgabe 30).
+    ///
+    /// `GroupMember.Read.All` kommt nur dazu, wenn der Betreiber die Namen
+    /// einschaltet: ohne Zustimmung des Mandanten scheiterte sonst jede
+    /// Anmeldung.
+    pub fn scopes(&self) -> String {
+        let mut scopes = String::from("openid profile email offline_access");
+        if self.gruppen_namen {
+            scopes.push(' ');
+            scopes.push_str(GRAPH_SCOPE);
+        }
+        scopes
     }
 }
 
@@ -166,6 +191,8 @@ impl std::fmt::Debug for EntraKonfig {
             .field("issuer", &self.issuer)
             .field("redirect_uri", &self.redirect_uri)
             .field("ausweis", &self.ausweis)
+            .field("gruppen_namen", &self.gruppen_namen)
+            .field("graph_basis", &self.graph_basis)
             .finish()
     }
 }
@@ -260,6 +287,11 @@ impl Konfig {
             );
         }
 
+        // Auch ohne Entra gelesen: ein falscher Wert ist immer ein Startfehler.
+        let gruppen_namen =
+            gruppen_namen_aus(std::env::var("QUIVER_ENTRA_GRUPPENNAMEN").ok().as_deref())?;
+        let graph_basis = graph_basis_aus(std::env::var("QUIVER_ENTRA_GRAPH").ok().as_deref())?;
+
         let entra = if vollstaendig {
             let tenant = tenant.trim().to_string();
             if !ist_guid(&tenant) {
@@ -317,8 +349,17 @@ impl Konfig {
                 issuer: authority.clone(),
                 authority,
                 redirect_uri: format!("{oeffentlich}/auth/callback"),
+                gruppen_namen,
+                graph_basis,
             })
         } else {
+            // Der Schalter ohne Entra wäre ein stiller Fehlschlag.
+            if gruppen_namen {
+                anyhow::bail!(
+                    "QUIVER_ENTRA_GRUPPENNAMEN=an braucht Entra (Tenant, Client-Id und Ausweis); \
+                     ohne Entra gibt es keine Gruppennamen zu holen."
+                );
+            }
             None
         };
 
@@ -364,6 +405,36 @@ impl Konfig {
     pub fn ist_https(&self) -> bool {
         self.oeffentlich.starts_with("https://")
     }
+}
+
+/// Den Schalter `QUIVER_ENTRA_GRUPPENNAMEN` lesen: Standard aus, sonst Startfehler.
+pub fn gruppen_namen_aus(wert: Option<&str>) -> anyhow::Result<bool> {
+    match wert.map(str::trim).filter(|wert| !wert.is_empty()) {
+        None => Ok(false),
+        Some(wert) => match wert.to_ascii_lowercase().as_str() {
+            "an" => Ok(true),
+            "aus" => Ok(false),
+            anderes => anyhow::bail!(
+                "QUIVER_ENTRA_GRUPPENNAMEN kennt nur an|aus, nicht {anderes}; \
+                 ohne Angabe gilt aus"
+            ),
+        },
+    }
+}
+
+/// Die Basis für Graph: im Betrieb der feste Host, in Tests Loopback.
+pub fn graph_basis_aus(wert: Option<&str>) -> anyhow::Result<String> {
+    let Some(wert) = wert.map(str::trim).filter(|wert| !wert.is_empty()) else {
+        return Ok(String::from(GRAPH_BASIS));
+    };
+    let basis = basis_url_pruefen(wert)?;
+    if basis != GRAPH_BASIS && !ist_loopback_url(&basis) {
+        anyhow::bail!(
+            "QUIVER_ENTRA_GRAPH ist nur für Tests auf Loopback erlaubt; \
+             im Betrieb gilt {GRAPH_BASIS}"
+        );
+    }
+    Ok(basis)
 }
 
 /// Die Basis-URL aus der Umgebung: gesetzt und geprüft, sonst
@@ -505,6 +576,54 @@ pub fn aufrufer_ip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schalter_fuer_gruppennamen() {
+        assert!(!gruppen_namen_aus(None).unwrap());
+        assert!(!gruppen_namen_aus(Some("")).unwrap());
+        assert!(!gruppen_namen_aus(Some(" aus ")).unwrap());
+        assert!(gruppen_namen_aus(Some("an")).unwrap());
+        assert!(gruppen_namen_aus(Some("AN")).unwrap());
+        for falsch in ["ja", "1", "true", "ein"] {
+            assert!(gruppen_namen_aus(Some(falsch)).is_err(), "{falsch}");
+        }
+    }
+
+    #[test]
+    fn graph_basis_nur_fester_host_oder_loopback() {
+        assert_eq!(graph_basis_aus(None).unwrap(), GRAPH_BASIS);
+        assert_eq!(graph_basis_aus(Some("")).unwrap(), GRAPH_BASIS);
+        assert_eq!(graph_basis_aus(Some(GRAPH_BASIS)).unwrap(), GRAPH_BASIS);
+        assert_eq!(
+            graph_basis_aus(Some("http://127.0.0.1:5123")).unwrap(),
+            "http://127.0.0.1:5123"
+        );
+        assert!(graph_basis_aus(Some("https://graph.example.test")).is_err());
+        assert!(graph_basis_aus(Some("http://10.0.0.5:5123")).is_err());
+    }
+
+    #[test]
+    fn scopes_haengen_am_schalter() {
+        let mut konfig = EntraKonfig::mit_geheimnis(
+            "11111111-2222-3333-4444-555555555555",
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "https://login.example.test/tenant/v2.0",
+            "https://quiver.example.test/auth/callback",
+            "kein-echtes-geheimnis-nur-test",
+        );
+        assert_eq!(
+            konfig.scopes(),
+            "openid profile email offline_access",
+            "ohne Schalter kein Graph-Bereich"
+        );
+        konfig.gruppen_namen = true;
+        assert!(konfig.scopes().contains(GRAPH_SCOPE));
+        assert!(konfig
+            .scopes()
+            .starts_with("openid profile email offline_access "));
+        // Im Debug steht nichts Geheimes.
+        assert!(!format!("{konfig:?}").contains("kein-echtes-geheimnis-nur-test"));
+    }
 
     #[test]
     fn basis_url_regeln() {

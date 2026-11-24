@@ -9,11 +9,13 @@ use std::sync::{Arc, Mutex};
 
 use quiver_domain::GeraetId;
 use rusqlite::Connection;
+use time::OffsetDateTime;
 use tokio::sync::{broadcast, Mutex as AsyncMutex, Semaphore};
 
 use crate::benutzer::ARGON2_GLEICHZEITIG;
 use crate::drossel::Drossel;
 use crate::einrichtung::Einrichtung;
+use crate::graph::Graph;
 use crate::krypto::Schluessel;
 use crate::oidc::Oidc;
 use crate::Konfig;
@@ -28,6 +30,12 @@ pub(crate) struct Zustand {
     verbunden: Mutex<HashMap<GeraetId, usize>>,
     pub(crate) konfig: Arc<Konfig>,
     pub(crate) oidc: Option<Arc<Oidc>>,
+    /// Nur gesetzt, wenn Gruppennamen geholt werden sollen (Aufgabe 30).
+    pub(crate) graph: Option<Arc<Graph>>,
+    /// Bis wann nach einem 403 nicht mehr gefragt wird.
+    graph_pause: Mutex<Option<OffsetDateTime>>,
+    /// Wann zuletzt ein Graph-Fehler im Log stand.
+    graph_log: Mutex<Option<OffsetDateTime>>,
     pub(crate) schluessel: Schluessel,
     pub(crate) drossel: Drossel,
     /// Argon2-Hash für unbekannte E-Mails, beim Start erzeugt (Aufgabe 26.4).
@@ -47,6 +55,7 @@ impl Zustand {
         konfig: Konfig,
         schluessel: Schluessel,
         oidc: Option<Arc<Oidc>>,
+        graph: Option<Arc<Graph>>,
         dummy: String,
     ) -> Self {
         let (geaendert, _) = broadcast::channel(64);
@@ -58,6 +67,9 @@ impl Zustand {
             verbunden: Mutex::new(HashMap::new()),
             konfig: Arc::new(konfig),
             oidc,
+            graph,
+            graph_pause: Mutex::new(None),
+            graph_log: Mutex::new(None),
             schluessel,
             drossel: Drossel::neu(),
             dummy,
@@ -99,6 +111,27 @@ impl Zustand {
             .entry(oid.to_string())
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone()
+    }
+
+    /// Nach einem 403 einen Tag nicht mehr fragen (Aufgabe 30).
+    pub(crate) fn graph_pausiert(&self, jetzt: OffsetDateTime) -> bool {
+        crate::sperre(&self.graph_pause).is_some_and(|bis| jetzt < bis)
+    }
+
+    pub(crate) fn graph_pausieren(&self, bis: OffsetDateTime) {
+        *crate::sperre(&self.graph_pause) = Some(bis);
+    }
+
+    /// Darf jetzt ein Graph-Fehler ins Log? Höchstens einmal je Stunde.
+    pub(crate) fn graph_log_faellig(&self, jetzt: OffsetDateTime) -> bool {
+        let mut zuletzt = crate::sperre(&self.graph_log);
+        if zuletzt
+            .is_some_and(|zeit| jetzt - zeit < time::Duration::hours(crate::graph::LOG_STUNDEN))
+        {
+            return false;
+        }
+        *zuletzt = Some(jetzt);
+        true
     }
 }
 

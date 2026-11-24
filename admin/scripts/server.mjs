@@ -156,12 +156,20 @@ export function sitzungscookie(antwort) {
   return "";
 }
 
-/** Eine Umgebung für den Entra-Nachbau (alle drei Werte oder keiner). */
-export function entraUmgebung(nachbau, geheimnisDatei) {
+/**
+ * Eine Umgebung für den Entra-Nachbau (alle drei Werte oder keiner).
+ *
+ * Mit `gruppenNamen` kommt der Schalter aus Aufgabe 30 dazu; Graph ist dann
+ * der Nachbau auf Loopback, der die Namen zu den Ids kennt.
+ */
+export function entraUmgebung(nachbau, geheimnisDatei, { gruppenNamen = false } = {}) {
   return {
     QUIVER_ENTRA_TENANT: nachbau.tenant,
     QUIVER_ENTRA_CLIENT_ID: nachbau.clientId,
     QUIVER_ENTRA_SECRET_DATEI: geheimnisDatei,
     QUIVER_ENTRA_AUTHORITY: nachbau.basis,
+    ...(gruppenNamen
+      ? { QUIVER_ENTRA_GRUPPENNAMEN: "an", QUIVER_ENTRA_GRAPH: nachbau.basis }
+      : {}),
   };
 }

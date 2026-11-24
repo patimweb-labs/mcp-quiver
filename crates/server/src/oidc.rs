@@ -88,10 +88,31 @@ impl TokenFehler {
 }
 
 /// Die Antwort des Token-Endpunkts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` zeigt **keinen** Tokeninhalt (Aufgabe 30): weder ID-Token noch
+/// Refresh- noch Zugriffstoken dürfen in einer Ausgabe landen.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Tokens {
     pub id_token: String,
     pub refresh_token: Option<String>,
+    /// Nur mit `QUIVER_ENTRA_GRUPPENNAMEN=an` und nur im Speicher dieses Laufs.
+    pub access_token: Option<String>,
+}
+
+impl std::fmt::Debug for Tokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tokens")
+            .field("id_token", &"<verborgen>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<verborgen>"),
+            )
+            .field(
+                "access_token",
+                &self.access_token.as_ref().map(|_| "<verborgen>"),
+            )
+            .finish()
+    }
 }
 
 struct Cache {
@@ -189,7 +210,7 @@ impl Oidc {
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", &self.konfig.redirect_uri)
             .append_pair("response_mode", "query")
-            .append_pair("scope", "openid profile email offline_access")
+            .append_pair("scope", &self.konfig.scopes())
             .append_pair("state", state)
             .append_pair("nonce", nonce)
             .append_pair("code_challenge", challenge)
@@ -255,10 +276,7 @@ impl Oidc {
             (String::from("client_id"), self.konfig.client_id.clone()),
             (String::from("grant_type"), String::from("refresh_token")),
             (String::from("refresh_token"), refresh.to_string()),
-            (
-                String::from("scope"),
-                String::from("openid profile email offline_access"),
-            ),
+            (String::from("scope"), self.konfig.scopes()),
         ]);
         formular.extend(
             self.ausweis_felder(&d, jetzt)
@@ -421,9 +439,15 @@ fn tokens_aus(wert: &Value) -> anyhow::Result<Tokens> {
         .get("refresh_token")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let access_token = wert
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|wert| !wert.is_empty())
+        .map(str::to_string);
     Ok(Tokens {
         id_token,
         refresh_token,
+        access_token,
     })
 }
 
@@ -924,6 +948,25 @@ mod tests {
             "jwks_uri": "http://127.0.0.1:9999/keys"
         });
         assert!(discovery_pruefen(&loopback, "http://127.0.0.1:9999").is_ok());
+    }
+
+    /// Aufgabe 30: kein Tokeninhalt in einer Ausgabe.
+    #[test]
+    fn debug_zeigt_keine_token() {
+        let tokens = Tokens {
+            id_token: String::from("id-token-geheim"),
+            refresh_token: Some(String::from("refresh-token-geheim")),
+            access_token: Some(String::from("zugriffstoken-geheim")),
+        };
+        let text = format!("{tokens:?}");
+        for geheim in [
+            "id-token-geheim",
+            "refresh-token-geheim",
+            "zugriffstoken-geheim",
+        ] {
+            assert!(!text.contains(geheim), "{text}");
+        }
+        assert!(text.contains("verborgen"));
     }
 
     #[test]

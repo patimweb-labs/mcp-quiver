@@ -33,7 +33,9 @@ pub const UNBEGRENZT: &str = "unbegrenzt";
 /// Die Schemaversion, die diese Fassung schreibt.
 ///
 /// 2 = Aufgabe 23: `entra_gruppen` merkt sich gelöschte Gruppen.
-pub const SCHEMA_VERSION: i64 = 2;
+/// 3 = Aufgabe 30: `entra_gruppen` merkt sich den Namen aus Entra und wann er
+///     geholt wurde.
+pub const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -123,7 +125,9 @@ CREATE TABLE IF NOT EXISTS entra_gruppen (
     id            TEXT PRIMARY KEY,
     anzeigename   TEXT,
     zuletzt       TEXT NOT NULL,
-    geloescht_am  TEXT
+    geloescht_am  TEXT,
+    name_entra    TEXT,
+    name_entra_am TEXT
 );
 "#;
 
@@ -195,9 +199,19 @@ fn migrieren(conn: &Connection) -> anyhow::Result<()> {
             }
         }
     }
-    // Aufgabe 23: alte `entra_gruppen` kennen das Löschmerkmal nicht.
-    if !spalte_existiert(conn, "entra_gruppen", "geloescht_am")? {
-        conn.execute("ALTER TABLE entra_gruppen ADD COLUMN geloescht_am TEXT", [])?;
+    // Aufgabe 23 und 30: alte `entra_gruppen` kennen die neuen Spalten nicht.
+    // Jede Stufe ist wiederholbar und einzeln nachholbar.
+    for (spalte, typ) in [
+        ("geloescht_am", "TEXT"),
+        ("name_entra", "TEXT"),
+        ("name_entra_am", "TEXT"),
+    ] {
+        if !spalte_existiert(conn, "entra_gruppen", spalte)? {
+            conn.execute(
+                &format!("ALTER TABLE entra_gruppen ADD COLUMN {spalte} {typ}"),
+                [],
+            )?;
+        }
     }
     // Alte Geräte kennen nur eine Gruppenliste; sie wird die manuelle Liste.
     if manuell_neu {
@@ -1312,6 +1326,10 @@ pub struct EntraGruppeZeile {
     pub gruppe: Option<GruppeId>,
     /// Vom Admin gelöscht: bleibt gelöscht, bis er sie wieder aufnimmt.
     pub geloescht: bool,
+    /// Anzeigename aus Entra (Aufgabe 30), nur Anzeige.
+    pub name_entra: Option<String>,
+    /// Wann er geholt wurde (RFC 3339).
+    pub name_entra_am: Option<String>,
 }
 
 /// Den Titel einer automatisch angelegten Gruppe: „Entra-Gruppe <erste 8>“.
@@ -1339,6 +1357,23 @@ fn entra_geloescht_am(conn: &Connection, id: &str) -> anyhow::Result<Option<Stri
         )
         .optional()?
         .flatten())
+}
+
+/// Der zuletzt aus Entra geholte Name dieser Id, falls es einen gibt.
+fn entra_name(conn: &Connection, id: &str) -> anyhow::Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT name_entra FROM entra_gruppen WHERE id = ?1",
+            params![id],
+            |zeile| zeile.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// Der Titel einer neuen Gruppe: der Name aus Entra, sonst der automatische.
+fn titel_fuer(conn: &Connection, id: &str) -> anyhow::Result<String> {
+    Ok(entra_name(conn, id)?.unwrap_or_else(|| entra_titel(id)))
 }
 
 /// Gruppen, die diese Entra-Id tragen.
@@ -1393,7 +1428,7 @@ pub fn entra_gruppen_merken(
         }
         let gruppe = Gruppe {
             id: GruppeId::neu(id.clone()),
-            titel: entra_titel(&id),
+            titel: titel_fuer(conn, &id)?,
             saetze: Vec::new(),
             entra: vec![id.clone()],
         };
@@ -1428,19 +1463,23 @@ pub fn entra_gruppen_merken_und_spur(
 
 pub fn entra_gruppen_liste(conn: &Connection) -> anyhow::Result<Vec<EntraGruppeZeile>> {
     let gruppen: Vec<Gruppe> = liste(conn, GRUPPEN)?;
-    let mut stmt = conn
-        .prepare("SELECT id, anzeigename, zuletzt, geloescht_am FROM entra_gruppen ORDER BY id")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, anzeigename, zuletzt, geloescht_am, name_entra, name_entra_am \
+         FROM entra_gruppen ORDER BY id",
+    )?;
     let zeilen = stmt.query_map([], |zeile| {
         Ok((
             zeile.get::<_, String>(0)?,
             zeile.get::<_, Option<String>>(1)?,
             zeile.get::<_, String>(2)?,
             zeile.get::<_, Option<String>>(3)?,
+            zeile.get::<_, Option<String>>(4)?,
+            zeile.get::<_, Option<String>>(5)?,
         ))
     })?;
     let mut aus = Vec::new();
     for zeile in zeilen {
-        let (id, gespeicherter_name, zuletzt, geloescht_am) = zeile?;
+        let (id, gespeicherter_name, zuletzt, geloescht_am, name_entra, name_entra_am) = zeile?;
         let gruppe = gruppe_mit_entra(&gruppen, &id);
         aus.push(EntraGruppeZeile {
             anzeigename: gruppe.map(|g| g.titel.clone()).or(gespeicherter_name),
@@ -1448,9 +1487,71 @@ pub fn entra_gruppen_liste(conn: &Connection) -> anyhow::Result<Vec<EntraGruppeZ
             geloescht: geloescht_am.is_some(),
             id,
             zuletzt,
+            name_entra,
+            name_entra_am,
         });
     }
     Ok(aus)
+}
+
+/// Welche dieser Ids brauchen einen (neuen) Namen aus Entra (Aufgabe 30)?
+///
+/// Fehlt der Name oder ist er älter als [`crate::graph::NAME_STUNDEN`], kommt
+/// die Id in die Liste – die ältesten zuerst.
+pub fn entra_namen_fehlen(
+    conn: &Connection,
+    ids: &[String],
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<Vec<String>> {
+    let grenze = hilfen::als_text(jetzt - time::Duration::hours(crate::graph::NAME_STUNDEN));
+    let mut stmt = conn.prepare(
+        "SELECT id FROM entra_gruppen \
+         WHERE name_entra IS NULL OR name_entra_am IS NULL OR name_entra_am < ?1 \
+         ORDER BY COALESCE(name_entra_am, ''), id",
+    )?;
+    let faellig = stmt
+        .query_map(params![grenze], |zeile| zeile.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let gesucht: std::collections::HashSet<String> =
+        ids.iter().map(|id| id.to_ascii_lowercase()).collect();
+    Ok(faellig
+        .into_iter()
+        .filter(|id| gesucht.contains(&id.to_ascii_lowercase()))
+        .collect())
+}
+
+/// Einen aus Entra geholten Namen übernehmen (Aufgabe 30).
+///
+/// Der Name wird immer gemerkt. Der Titel der quiver-Gruppe folgt **nur**,
+/// solange er der automatische ist oder dem zuletzt übernommenen Namen
+/// entspricht; einen Titel des Admins überschreibt der Server nie.
+/// `Ok(true)` heißt: der Titel hat sich geändert (für die Prüfspur).
+pub fn entra_name_uebernehmen(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<bool> {
+    let id = id.to_ascii_lowercase();
+    let bisher = entra_name(conn, &id)?;
+    conn.execute(
+        "UPDATE entra_gruppen SET name_entra = ?2, name_entra_am = ?3 WHERE id = ?1",
+        params![id, name, hilfen::als_text(jetzt)],
+    )?;
+    let gruppen: Vec<Gruppe> = liste(conn, GRUPPEN)?;
+    let Some(mut gruppe) = gruppe_mit_entra(&gruppen, &id).cloned() else {
+        return Ok(false);
+    };
+    let automatisch = gruppe.titel == entra_titel(&id)
+        || bisher
+            .as_deref()
+            .is_some_and(|bisher| gruppe.titel == bisher);
+    if !automatisch || gruppe.titel == name {
+        return Ok(false);
+    }
+    gruppe.titel = name.to_string();
+    setze(conn, GRUPPEN, gruppe.id.als_str(), &gruppe)?;
+    Ok(true)
 }
 
 /// Eine gelöschte Entra-Gruppe wieder aufnehmen (oder eine neue anlegen): die
@@ -1473,7 +1574,7 @@ pub fn entra_gruppe_aufnehmen(
             }
             Gruppe {
                 id: GruppeId::neu(id.clone()),
-                titel: entra_titel(&id),
+                titel: titel_fuer(conn, &id)?,
                 saetze: Vec::new(),
                 entra: vec![id.clone()],
             }
@@ -1692,7 +1793,9 @@ mod tests {
         assert_eq!(alt.manuell, vec![GruppeId::neu("team")]);
         assert_eq!(alt.oid, None);
         assert!(
-            ordner.join("quiver.db.vor-2").exists(),
+            ordner
+                .join(format!("quiver.db.vor-{SCHEMA_VERSION}"))
+                .exists(),
             "Sicherung liegt da"
         );
         // Zweiter Start migriert nicht noch einmal.
@@ -1870,7 +1973,9 @@ mod tests {
         assert_eq!(liste[0].id, "alt");
         assert!(!liste[0].geloescht);
         assert!(
-            ordner.join("quiver.db.vor-2").exists(),
+            ordner
+                .join(format!("quiver.db.vor-{SCHEMA_VERSION}"))
+                .exists(),
             "Sicherung liegt da"
         );
         let _ = std::fs::remove_dir_all(&ordner);
@@ -1900,5 +2005,132 @@ mod tests {
         )
         .unwrap();
         assert_eq!(wirksam, vec![GruppeId::neu("a"), GruppeId::neu("b")]);
+    }
+
+    #[test]
+    fn name_aus_entra_setzt_nur_den_automatischen_titel() {
+        let conn = gedaechtnis();
+        let id = String::from("12345678-1234-1234-1234-123456789012");
+        entra_gruppen_merken(&conn, std::slice::from_ref(&id), jetzt()).unwrap();
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap()[0].titel,
+            "Entra-Gruppe 12345678"
+        );
+
+        // Der automatische Titel folgt dem Namen aus Entra.
+        assert!(entra_name_uebernehmen(&conn, &id, "Team Alpha", jetzt()).unwrap());
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap()[0].titel,
+            "Team Alpha"
+        );
+        let zeile = &entra_gruppen_liste(&conn).unwrap()[0];
+        assert_eq!(zeile.name_entra.as_deref(), Some("Team Alpha"));
+        assert!(zeile.name_entra_am.is_some());
+
+        // Ein weiterer Name folgt, solange der Titel der übernommene ist.
+        assert!(entra_name_uebernehmen(&conn, &id, "Team Beta", jetzt()).unwrap());
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap()[0].titel,
+            "Team Beta"
+        );
+
+        // Ein Titel des Admins bleibt – der neue Name wird nur gemerkt.
+        let mut gruppe = liste::<Gruppe>(&conn, GRUPPEN).unwrap()[0].clone();
+        gruppe.titel = String::from("Mein Team");
+        setze(&conn, GRUPPEN, gruppe.id.als_str(), &gruppe).unwrap();
+        assert!(!entra_name_uebernehmen(&conn, &id, "Team Gamma", jetzt()).unwrap());
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap()[0].titel,
+            "Mein Team"
+        );
+        assert_eq!(
+            entra_gruppen_liste(&conn).unwrap()[0].name_entra.as_deref(),
+            Some("Team Gamma")
+        );
+        // Auch der nächste Name überschreibt ihn nicht.
+        assert!(!entra_name_uebernehmen(&conn, &id, "Team Delta", jetzt()).unwrap());
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap()[0].titel,
+            "Mein Team"
+        );
+    }
+
+    #[test]
+    fn neue_gruppe_bekommt_den_schon_bekannten_namen() {
+        let conn = gedaechtnis();
+        let id = String::from("abcdefab-1234-1234-1234-123456789012");
+        // Die Id wurde gesehen (Zeile ohne Gruppe), der Name kam zuerst an.
+        entra_zeile_merken(&conn, &id, jetzt()).unwrap();
+        entra_name_uebernehmen(&conn, &id, "Team Zuerst", jetzt()).unwrap();
+        let neu = entra_gruppen_merken(&conn, std::slice::from_ref(&id), jetzt()).unwrap();
+        assert_eq!(neu.len(), 1);
+        assert_eq!(neu[0].titel, "Team Zuerst");
+    }
+
+    #[test]
+    fn namen_fehlen_erst_nach_vierundzwanzig_stunden() {
+        let conn = gedaechtnis();
+        let id = String::from("12345678-1234-1234-1234-123456789012");
+        entra_gruppen_merken(&conn, std::slice::from_ref(&id), jetzt()).unwrap();
+        assert_eq!(
+            entra_namen_fehlen(&conn, std::slice::from_ref(&id), jetzt()).unwrap(),
+            vec![id.clone()]
+        );
+
+        entra_name_uebernehmen(&conn, &id, "Team Alpha", jetzt()).unwrap();
+        assert!(
+            entra_namen_fehlen(&conn, std::slice::from_ref(&id), jetzt())
+                .unwrap()
+                .is_empty(),
+            "frischer Name wird nicht neu geholt"
+        );
+        assert_eq!(
+            entra_namen_fehlen(
+                &conn,
+                std::slice::from_ref(&id),
+                jetzt() + time::Duration::hours(25)
+            )
+            .unwrap(),
+            vec![id.clone()],
+            "nach 24 Stunden wieder fällig"
+        );
+        // Eine fremde Id wird nicht abgefragt.
+        assert!(entra_namen_fehlen(
+            &conn,
+            &[String::from("ffffffff-0000-0000-0000-000000000001")],
+            jetzt()
+        )
+        .unwrap()
+        .is_empty());
+    }
+
+    #[test]
+    fn alte_entra_gruppen_tabelle_bekommt_die_namensspalten() {
+        let ordner = ordner("entra-migration-30");
+        let pfad = ordner.join("quiver.db");
+        {
+            let conn = Connection::open(&pfad).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE entra_gruppen (id TEXT PRIMARY KEY, anzeigename TEXT,
+                    zuletzt TEXT NOT NULL, geloescht_am TEXT);
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entra_gruppen (id, anzeigename, zuletzt) VALUES ('alt', NULL, 'x')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = oeffnen(&pfad).unwrap();
+        let liste = entra_gruppen_liste(&conn).unwrap();
+        assert_eq!(liste.len(), 1, "alte Zeile bleibt");
+        assert!(liste[0].name_entra.is_none());
+        assert!(liste[0].name_entra_am.is_none());
+        assert!(
+            ordner.join("quiver.db.vor-3").exists(),
+            "Sicherung liegt da"
+        );
+        let _ = std::fs::remove_dir_all(&ordner);
     }
 }

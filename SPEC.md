@@ -227,6 +227,25 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
     (Id gemerkt), bis er sie wieder aufnimmt. Mitgliedschaften pflegt nur
     Entra: Anmeldung und jede Nachprüfung ersetzen sie, auch das Entfernen,
     und wirken sofort auf verbundene Geräte.
+12. **Namen der Entra-Gruppen (Aufgabe 30):** Rechte laufen weiter **nur** über
+    die Objekt-Id; der Name ist Anzeige. Nur mit `QUIVER_ENTRA_GRUPPENNAMEN=an`
+    (Standard `aus`, jeder andere Wert ist ein Startfehler) kommt
+    `https://graph.microsoft.com/GroupMember.Read.All` zu den Bereichen von
+    Anmeldung **und** Refresh – ohne Zustimmung des Mandanten scheiterte sonst
+    jede Anmeldung. Für die Gruppen aus dem ID-Token, deren Name fehlt oder
+    älter als 24 h ist, holt der Server im Hintergrund `displayName`
+    (`GET /v1.0/groups/{id}`; höchstens 20 je Lauf, 4 gleichzeitig, 5 s je
+    Anfrage, 64 KB, keine Weiterleitungen, Host fest – Loopback nur in Tests
+    über `QUIVER_ENTRA_GRAPH`) mit dem Zugriffstoken **dieses** Benutzers. Das
+    Zugriffstoken lebt nur in diesem Lauf: nie in der Datenbank, im Log, in
+    `Debug` oder in der Prüfspur. Anmeldung und Nachprüfen warten nie darauf,
+    ein Fehler ändert nichts (Log höchstens stündlich), ein 403 pausiert einen
+    Tag. Der Titel der quiver-Gruppe folgt dem Namen nur, solange er der
+    automatische („Entra-Gruppe xxxxxxxx“) oder der zuletzt übernommene ist;
+    einen Titel des Admins überschreibt der Server nie, und jede Übernahme
+    steht in der Prüfspur. Die Verwaltung zeigt den Titel, klein darunter
+    „Entra: <Name>“, wenn beide abweichen; die Id steht nur im Hinweis und in
+    den Einzelheiten.
 
 **Festlegung:** Zugangsdaten werden nie als Umgebungsvariable oder Datei
 abgelegt, die ein Agent lesen könnte. Fehler an ein Gerät tragen einen
@@ -253,7 +272,10 @@ Identity-Provider-Abhängigkeit: ohne Entra
 gilt der letzte Stand höchstens 24 h. Ein Gruppen-Überlauf im Token wird
 abgelehnt statt als „keine Gruppen“ gelesen. Ein selbst signiertes Zertifikat
 muss der Betreiber vor dem Ablauf erneuern; der Server warnt 30 Tage vorher,
-aber erneuern kann er es nicht von selbst. Die Seiten des Servers sind
+aber erneuern kann er es nicht von selbst. Ein zweiter Leserecht-Grad
+(Graph) ist eine zusätzliche Zustimmung des Mandanten; ohne sie bleibt der
+Schalter aus, und in der Verwaltung steht dann nur der automatische Titel. Die
+Seiten des Servers sind
 schmucklos (kein Inline-Skript, keine Inline-Stile), damit die CSP ohne
 Ausnahme gilt; sie tragen dieselben Tokens wie Verwaltung und Client, aber
 nicht deren Bausteine. Die Ersteinrichtung ist ein Weg, der nur in den ersten

@@ -11,6 +11,8 @@ const TENANT = "11111111-2222-3333-4444-555555555555";
 const CLIENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 /** Die Entra-Gruppe, die der Nachbau in `groups` behauptet. */
 export const GRUPPE = "12345678-1234-1234-1234-123456789012";
+/** Der Anzeigename, den der Nachbau für diese Gruppe liefert (Aufgabe 30). */
+export const GRUPPE_NAME = "Team Alpha";
 /** Das Geheimnis des Nachbaus (nur Testdaten, steht in einer Datei mit 0600). */
 export const GEHEIMNIS = "kein-echtes-geheimnis-nur-test";
 
@@ -83,6 +85,15 @@ export async function entraNachbau({
       });
       return;
     }
+    // Graph: der Anzeigename zu einer Objekt-Id (Aufgabe 30).
+    if (adresse.pathname === `/v1.0/groups/${GRUPPE}`) {
+      if (!anfrage.headers.authorization?.startsWith("Bearer ")) {
+        json(401, { error: "unauthenticated" });
+        return;
+      }
+      json(200, { id: GRUPPE, displayName: GRUPPE_NAME });
+      return;
+    }
     if (adresse.pathname === "/keys") {
       json(200, {
         keys: [{ kty: "RSA", kid, use: "sig", alg: "RS256", n: jwk.n, e: jwk.e }],
@@ -120,6 +131,7 @@ export async function entraNachbau({
         json(200, {
           id_token: idToken(code.nonce),
           refresh_token: `refresh-${code.nonce.slice(0, 6)}`,
+          access_token: `zugriff-${code.nonce.slice(0, 6)}`,
           token_type: "Bearer",
           expires_in: 3600,
         });
@@ -129,6 +141,7 @@ export async function entraNachbau({
         json(200, {
           id_token: idToken(""),
           refresh_token: `refresh-${Math.random().toString(36).slice(2, 8)}`,
+          access_token: `zugriff-${Math.random().toString(36).slice(2, 8)}`,
           token_type: "Bearer",
           expires_in: 3600,
         });

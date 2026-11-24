@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
-import { entraNachbau, GEHEIMNIS } from "./mock-entra.mjs";
+import { entraNachbau, GEHEIMNIS, GRUPPE_NAME } from "./mock-entra.mjs";
 import {
   anfrage,
   entraUmgebung,
@@ -129,7 +129,7 @@ async function main() {
   const nachbau = await entraNachbau({ objektId: BENUTZER_OID });
   const server = await serverStarten({
     dist: DIST,
-    umgebung: entraUmgebung(nachbau, geheimnisDatei),
+    umgebung: entraUmgebung(nachbau, geheimnisDatei, { gruppenNamen: true }),
   });
   const ziel = await lauscher();
   let browser;
@@ -313,7 +313,35 @@ async function main() {
       throw new Error(`Anzeigename: ${gruppenname.status} ${gruppenname.text}`);
     }
 
-    // 11. Seite Benutzer: Zeile, Suche, Filter, Root nicht änderbar.
+    // 11. Seite Gruppen: der Admin-Titel steht, klein darunter der Name aus
+    //     Entra (Aufgabe 30); die Objekt-Id nur im Hinweis, nie als Text.
+    //     Der Name kommt aus dem Hintergrund; erst warten, dann laden.
+    await wartenAuf(
+      async () => {
+        const stand = await anfrage(server.basis, "/api/v1/admin/entra-gruppen", {
+          cookie: sitzungswert,
+        });
+        return stand.json?.some(
+          (eintrag) =>
+            eintrag.id === nachbau.gruppe && eintrag.name_entra === GRUPPE_NAME,
+        );
+      },
+      { was: "Name aus Entra am Server", ms: SCHRITT_MS },
+    );
+    await seite.goto(`${server.basis}/#/gruppen`, {
+      waitUntil: "domcontentloaded",
+    });
+    await seite.getByRole("heading", { level: 1, name: "Gruppen" }).waitFor();
+    await seite.getByRole("heading", { level: 3, name: "Team" }).waitFor();
+    await seite
+      .getByText(`Entra: ${GRUPPE_NAME}`, { exact: true })
+      .waitFor();
+    if ((await seite.getByText(nachbau.gruppe, { exact: true }).count()) > 0) {
+      throw new Error("die Objekt-Id steht als Text auf der Seite");
+    }
+    console.log("ok: Gruppe zeigt Titel und Namen aus Entra");
+
+    // 12. Seite Benutzer: Zeile, Suche, Filter, Root nicht änderbar.
     await seite.goto(`${server.basis}/#/benutzer`, {
       waitUntil: "domcontentloaded",
     });
