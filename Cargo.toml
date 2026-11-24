@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/bibliothek",
+    "crates/protocol",
+    "crates/server",
+    "crates/client",
+    "crates/oberflaeche",
+    "crates/fenster",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Patrick Weppelmann"]
+repository = "https://github.com/patimweb-labs/mcp-quiver"
+
+[workspace.dependencies]
+quiver-domain = { path = "crates/domain" }
+quiver-bibliothek = { path = "crates/bibliothek" }
+quiver-protocol = { path = "crates/protocol" }
+quiver-client = { path = "crates/client" }
+quiver-oberflaeche = { path = "crates/oberflaeche" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process", "fs", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+hex = "0.4"

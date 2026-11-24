@@ -1,0 +1,13 @@
+{
+  "name": "io.github.someone/nuget",
+  "description": "Pakettyp, den quiver nicht starten kann",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "nuget",
+      "identifier": "Someone.Nuget",
+      "version": "1.0.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

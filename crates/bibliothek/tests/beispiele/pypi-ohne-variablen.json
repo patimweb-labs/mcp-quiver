@@ -1,0 +1,13 @@
+{
+  "name": "io.github.someone/notes",
+  "description": "Notizen durchsuchen",
+  "version": "0.4.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "notes-mcp",
+      "version": "0.4.1",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

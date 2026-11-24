@@ -1,0 +1,27 @@
+{
+  "name": "io.github.someone/docs",
+  "description": "Doku durchsuchen",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@someone/docs-mcp",
+      "version": "1.0.0",
+      "transport": { "type": "sse" }
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://example.com/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer-Token",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

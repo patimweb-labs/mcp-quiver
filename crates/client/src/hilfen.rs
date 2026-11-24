@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Patrick Weppelmann
+
+//! Kleinkram: Abbruch, Token, Hashes.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
+
+/// Ein Abbruchsignal, das sich teilen und abwarten lässt.
+///
+/// `tokio_util::sync::CancellationToken` wäre kürzer, ist aber keine
+/// Abhängigkeit dieses Crates. Deshalb: Flag plus [`Notify`], und beim Warten
+/// wird erst die Anmeldung erzeugt, dann das Flag geprüft – sonst geht ein
+/// Abbruch zwischen Prüfung und Anmeldung verloren.
+#[derive(Clone, Debug)]
+pub struct Abbruch {
+    innen: Arc<Innen>,
+}
+
+#[derive(Debug)]
+struct Innen {
+    zu: AtomicBool,
+    meldung: Notify,
+}
+
+impl Abbruch {
+    pub fn neu() -> Self {
+        Self {
+            innen: Arc::new(Innen {
+                zu: AtomicBool::new(false),
+                meldung: Notify::new(),
+            }),
+        }
+    }
+
+    pub fn abbrechen(&self) {
+        if !self.innen.zu.swap(true, Ordering::SeqCst) {
+            self.innen.meldung.notify_waiters();
+        }
+    }
+
+    pub fn ist_abgebrochen(&self) -> bool {
+        self.innen.zu.load(Ordering::SeqCst)
+    }
+
+    pub async fn warten(&self) {
+        loop {
+            let warten = self.innen.meldung.notified();
+            tokio::pin!(warten);
+            warten.as_mut().enable();
+            if self.ist_abgebrochen() {
+                return;
+            }
+            warten.await;
+        }
+    }
+}
+
+/// Zufällige Bytes.
+fn zufall(anzahl: usize) -> Vec<u8> {
+    use rand::RngCore;
+    let mut puffer = vec![0u8; anzahl];
+    rand::rng().fill_bytes(&mut puffer);
+    puffer
+}
+
+/// Agent-Token: 32 zufällige Byte, hexadezimal.
+pub fn token_erzeugen() -> String {
+    hex::encode(zufall(32))
+}
+
+/// Kurze Kennung (acht Byte, hexadezimal).
+pub fn kennung_erzeugen() -> String {
+    hex::encode(zufall(8))
+}
+
+/// Was von einem Token gespeichert wird.
+pub fn hash(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+/// Vergleich in konstanter Zeit (die Länge darf durchsickern).
+pub fn gleich_konstant(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |rest, (x, y)| rest | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hashes_sind_stabil() {
+        assert_eq!(hash("abc").len(), 64);
+        assert!(gleich_konstant(&hash("abc"), &hash("abc")));
+        assert!(!gleich_konstant(&hash("abc"), &hash("abd")));
+        assert!(!gleich_konstant("kurz", "laenger"));
+    }
+
+    #[test]
+    fn token_sind_verschieden() {
+        assert_ne!(token_erzeugen(), token_erzeugen());
+        assert_eq!(token_erzeugen().len(), 64);
+        assert_eq!(kennung_erzeugen().len(), 16);
+    }
+
+    #[tokio::test]
+    async fn abbruch_weckt_wartende() {
+        let abbruch = Abbruch::neu();
+        let warten = abbruch.clone();
+        let aufgabe = tokio::spawn(async move { warten.warten().await });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        abbruch.abbrechen();
+        tokio::time::timeout(std::time::Duration::from_secs(1), aufgabe)
+            .await
+            .expect("Abbruch weckt")
+            .expect("Aufgabe läuft");
+        assert!(abbruch.ist_abgebrochen());
+    }
+
+    #[tokio::test]
+    async fn abbruch_vor_dem_warten_kommt_an() {
+        let abbruch = Abbruch::neu();
+        abbruch.abbrechen();
+        tokio::time::timeout(std::time::Duration::from_secs(1), abbruch.warten())
+            .await
+            .expect("sofort fertig");
+    }
+}

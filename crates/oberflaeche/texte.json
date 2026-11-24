@@ -1,0 +1,878 @@
+{
+  "app.titel": {
+    "de": "mcp-quiver",
+    "en": "mcp-quiver"
+  },
+  "app.einstellungen": {
+    "de": "Einstellungen",
+    "en": "Settings"
+  },
+  "nav.tools": {
+    "de": "Tools",
+    "en": "Tools"
+  },
+  "nav.agenten": {
+    "de": "Agenten",
+    "en": "Agents"
+  },
+  "nav.verbindung": {
+    "de": "Verbindung",
+    "en": "Connection"
+  },
+  "verbindung.server": {
+    "de": "Server-Adresse",
+    "en": "Server address"
+  },
+  "verbindung.code": {
+    "de": "Einmal-Code",
+    "en": "One-time code"
+  },
+  "verbindung.einbinden": {
+    "de": "Gerät einbinden",
+    "en": "Connect device"
+  },
+  "verbindung.verbunden": {
+    "de": "Verbunden mit {}",
+    "en": "Connected to {}"
+  },
+  "verbindung.getrennt": {
+    "de": "Nicht verbunden",
+    "en": "Not connected"
+  },
+  "verbindung.trennen": {
+    "de": "Gerät abmelden",
+    "en": "Disconnect device"
+  },
+  "tools.leer": {
+    "de": "Noch keine Tools",
+    "en": "No tools yet"
+  },
+  "tools.leer_text": {
+    "de": "Sobald ein Admin dir Tools zuweist, erscheinen sie hier.",
+    "en": "Tools assigned to you by an admin will show up here."
+  },
+  "tools.laeuft": {
+    "de": "Läuft · {} Tools",
+    "en": "Running · {} tools"
+  },
+  "tools.startet": {
+    "de": "Startet …",
+    "en": "Starting …"
+  },
+  "tools.wartet": {
+    "de": "Braucht Angaben",
+    "en": "Needs input"
+  },
+  "tools.fehler": {
+    "de": "Fehler",
+    "en": "Error"
+  },
+  "tools.werte_titel": {
+    "de": "Angaben für {}",
+    "en": "Settings for {}"
+  },
+  "tools.speichern": {
+    "de": "Speichern",
+    "en": "Save"
+  },
+  "agenten.leer": {
+    "de": "Noch kein Agent gekoppelt",
+    "en": "No agent paired yet"
+  },
+  "agenten.koppeln": {
+    "de": "Agent koppeln",
+    "en": "Pair agent"
+  },
+  "agenten.name": {
+    "de": "Name des Agenten",
+    "en": "Agent name"
+  },
+  "agenten.endpunkt": {
+    "de": "Endpunkt",
+    "en": "Endpoint"
+  },
+  "agenten.token": {
+    "de": "Token",
+    "en": "Token"
+  },
+  "agenten.entfernen": {
+    "de": "Entfernen",
+    "en": "Remove"
+  },
+  "agenten.hinweis": {
+    "de": "Das Token wird nur einmal angezeigt.",
+    "en": "The token is shown only once."
+  },
+  "allg.kopieren": {
+    "de": "Kopieren",
+    "en": "Copy"
+  },
+  "allg.kopiert": {
+    "de": "Kopiert",
+    "en": "Copied"
+  },
+  "allg.abbrechen": {
+    "de": "Abbrechen",
+    "en": "Cancel"
+  },
+  "thema.dark": {
+    "de": "Dunkel",
+    "en": "Dark"
+  },
+  "thema.light": {
+    "de": "Hell",
+    "en": "Light"
+  },
+  "thema.mono": {
+    "de": "Mono",
+    "en": "Mono"
+  },
+  "nav.titel": {
+    "de": "Gerät",
+    "en": "Device"
+  },
+  "verbindung.sub": {
+    "de": "Server, Einmal-Code und der Stand dieses Geräts.",
+    "en": "Server, one-time code and the state of this device."
+  },
+  "verbindung.einbinden.sub": {
+    "de": "Der Einmal-Code kommt aus der Admin-Oberfläche und gilt eine Stunde.",
+    "en": "The one-time code comes from the admin UI and is valid for one hour."
+  },
+  "verbindung.server_hinweis": {
+    "de": "z. B. http://quiver.example:8080",
+    "en": "e.g. http://quiver.example:8080"
+  },
+  "verbindung.code_hinweis": {
+    "de": "Der Code, den der Admin dir zeigt.",
+    "en": "The code the admin shows you."
+  },
+  "verbindung.status_titel": {
+    "de": "Status",
+    "en": "Status"
+  },
+  "verbindung.geraet": {
+    "de": "Gerät",
+    "en": "Device"
+  },
+  "verbindung.kein_server": {
+    "de": "Kein Server eingebunden",
+    "en": "No server connected"
+  },
+  "verbindung.verbindet": {
+    "de": "Verbinde mit {} …",
+    "en": "Connecting to {} …"
+  },
+  "verbindung.getrennt_von": {
+    "de": "Getrennt von {}",
+    "en": "Disconnected from {}"
+  },
+  "verbindung.getrennt_hinweis": {
+    "de": "Die Tools laufen weiter, bis die Verbindung wieder steht.",
+    "en": "The tools keep running until the connection is back."
+  },
+  "verbindung.abgelehnt": {
+    "de": "Der Server kennt dieses Gerät nicht mehr (entfernt?). Alle Tools sind gestoppt – bitte mit einem neuen Code einbinden.",
+    "en": "The server no longer knows this device (removed?). All tools are stopped – please connect again with a new code."
+  },
+  "verbindung.trennen_hinweis": {
+    "de": "Danach laufen auf diesem Gerät keine Tools mehr.",
+    "en": "After that no tools run on this device any more."
+  },
+  "verbindung.fussnote": {
+    "de": "Einmal-Codes legt ein Admin in der Verwaltung an; sie gelten eine Stunde.",
+    "en": "An admin creates one-time codes in the admin UI; they are valid for one hour."
+  },
+  "tools.sub": {
+    "de": "Was dieses Gerät deinen Agenten bereitstellt.",
+    "en": "What this device provides to your agents."
+  },
+  "tools.wartet_mit": {
+    "de": "Braucht Angaben: {}",
+    "en": "Needs input: {}"
+  },
+  "tools.anzeigen": {
+    "de": "{} Tools anzeigen",
+    "en": "Show {} tools"
+  },
+  "tools.verbergen": {
+    "de": "Tools ausblenden",
+    "en": "Hide tools"
+  },
+  "tools.bearbeiten": {
+    "de": "Angaben bearbeiten",
+    "en": "Edit settings"
+  },
+  "tools.fehlt": {
+    "de": "Fehlt: {}",
+    "en": "Missing: {}"
+  },
+  "tools.werte_sub": {
+    "de": "Gesetzte Geheimnisse bleiben leer — dann ändern sie sich nicht.",
+    "en": "Secrets already set stay empty — they will not change."
+  },
+  "tools.pflicht": {
+    "de": "Pflichtfeld",
+    "en": "required"
+  },
+  "tools.link_erst": {
+    "de": "Erst {} eintragen",
+    "en": "Enter {} first"
+  },
+  "agenten.sub": {
+    "de": "Wer den Endpunkt dieses Geräts benutzen darf.",
+    "en": "Who may use this device's endpoint."
+  },
+  "agenten.endpunkt_titel": {
+    "de": "Endpunkt",
+    "en": "Endpoint"
+  },
+  "agenten.endpunkt_sub": {
+    "de": "Alle laufenden Tools unter einer Adresse.",
+    "en": "All running tools behind one address."
+  },
+  "agenten.titel": {
+    "de": "Agenten",
+    "en": "Agents"
+  },
+  "agenten.titel_sub": {
+    "de": "Jeder Agent hat ein eigenes Token.",
+    "en": "Every agent has its own token."
+  },
+  "agenten.verbunden": {
+    "de": "verbunden",
+    "en": "connected"
+  },
+  "agenten.leer_text": {
+    "de": "Ein Agent verbindet sich mit dem Endpunkt und dem Token aus „Agent koppeln“.",
+    "en": "An agent connects with the endpoint and the token from “Pair agent”."
+  },
+  "agenten.koppeln_text": {
+    "de": "Die Art bestimmt den Namen und den fertigen Schnipsel. Jeden Agenten gibt es nur einmal.",
+    "en": "The kind decides the name and the ready-made snippet. Every agent exists only once."
+  },
+  "agenten.token_titel": {
+    "de": "Agent {} gekoppelt",
+    "en": "Agent {} paired"
+  },
+  "agenten.entfernen_titel": {
+    "de": "Agent entfernen",
+    "en": "Remove agent"
+  },
+  "agenten.entfernen_text": {
+    "de": "{} verliert sofort den Zugang. Das Gerät muss sich neu koppeln.",
+    "en": "{} loses access immediately. The device has to pair again."
+  },
+  "allg.schliessen": {
+    "de": "Schließen",
+    "en": "Close"
+  },
+  "agenten.koppeln_jetzt": {
+    "de": "Koppeln",
+    "en": "Pair"
+  },
+  "agenten.art_titel": {
+    "de": "Art",
+    "en": "Kind"
+  },
+  "agenten.art_andere": {
+    "de": "Andere",
+    "en": "Other"
+  },
+  "agenten.schon_gekoppelt": {
+    "de": "schon gekoppelt",
+    "en": "already paired"
+  },
+  "agenten.name_doppelt": {
+    "de": "Agent {} ist schon gekoppelt.",
+    "en": "Agent {} is already paired."
+  },
+  "agenten.token_erneuern": {
+    "de": "Token erneuern",
+    "en": "Renew token"
+  },
+  "agenten.token_erneuern_titel": {
+    "de": "Token erneuern",
+    "en": "Renew token"
+  },
+  "agenten.token_erneuern_text": {
+    "de": "{} bekommt ein neues Token. Sitzungen mit dem alten werden sofort abgewiesen.",
+    "en": "{} gets a new token. Sessions using the old one are rejected immediately."
+  },
+  "agenten.ort.shell": {
+    "de": "In der Shell ausführen:",
+    "en": "Run in the shell:"
+  },
+  "agenten.ort.opencode": {
+    "de": "In opencode.json eintragen:",
+    "en": "Add to opencode.json:"
+  },
+  "agenten.ort.copilot": {
+    "de": "In .vscode/mcp.json oder der Benutzer-mcp.json eintragen:",
+    "en": "Add to .vscode/mcp.json or the user mcp.json:"
+  },
+  "agenten.ort.hermes": {
+    "de": "Im Terminal ausführen – die Rückfrage nach Anmeldung mit y beantworten:",
+    "en": "Run in a terminal – answer y when asked about authentication:"
+  },
+  "agenten.ort.hermes_token": {
+    "de": "Bei „API key / Bearer token“ einfügen (Hermes legt es in ~/.hermes/.env ab):",
+    "en": "Paste at “API key / Bearer token” (Hermes stores it in ~/.hermes/.env):"
+  },
+  "agenten.ort.hermes_test": {
+    "de": "Danach prüfen:",
+    "en": "Then verify:"
+  },
+  "agenten.ort.andere": {
+    "de": "In der Konfiguration des Agenten eintragen (JSON):",
+    "en": "Add to the agent's configuration (JSON):"
+  },
+  "tray.verbunden": {
+    "de": "Verbunden",
+    "en": "Connected"
+  },
+  "tray.tools": {
+    "de": "{} Tools",
+    "en": "{} tools"
+  },
+  "tray.agent_einer": {
+    "de": "1 Agent",
+    "en": "1 agent"
+  },
+  "tray.agenten": {
+    "de": "{} Agenten",
+    "en": "{} agents"
+  },
+  "tray.nicht_verbunden": {
+    "de": "Nicht verbunden",
+    "en": "Not connected"
+  },
+  "tray.verbindet": {
+    "de": "Verbinde …",
+    "en": "Connecting …"
+  },
+  "tray.getrennt": {
+    "de": "Getrennt · läuft weiter",
+    "en": "Disconnected · still running"
+  },
+  "tray.fenster": {
+    "de": "Fenster öffnen",
+    "en": "Open window"
+  },
+  "tray.autostart": {
+    "de": "Beim Anmelden starten",
+    "en": "Start at login"
+  },
+  "tray.beenden": {
+    "de": "Beenden",
+    "en": "Quit"
+  },
+  "autostart.titel": {
+    "de": "Hintergrundbetrieb",
+    "en": "Background operation"
+  },
+  "autostart.sub": {
+    "de": "Das Fenster zu schließen beendet quiver nicht – der Kern und der MCP-Endpunkt laufen weiter, das Tray-Symbol bleibt.",
+    "en": "Closing the window does not quit quiver — the core and the MCP endpoint keep running and the tray icon stays."
+  },
+  "autostart.haken": {
+    "de": "Beim Anmelden im Hintergrund starten",
+    "en": "Start in the background at login"
+  },
+  "autostart.hinweis": {
+    "de": "Der Eintrag liegt im System; der Haken zeigt, was dort steht. „Beenden“ steht im Tray-Menü.",
+    "en": "The entry lives in the system; the checkmark shows what is there. “Quit” is in the tray menu."
+  },
+  "anmeldung.noetig": {
+    "de": "Anmeldung nötig",
+    "en": "Sign-in required"
+  },
+  "anmeldung.anmelden": {
+    "de": "Anmelden",
+    "en": "Sign in"
+  },
+  "anmeldung.laeuft": {
+    "de": "Anmeldung im Browser läuft …",
+    "en": "Signing in via browser …"
+  },
+  "anmeldung.angemeldet": {
+    "de": "Angemeldet als {}",
+    "en": "Signed in as {}"
+  },
+  "anmeldung.angemeldet_ohne_konto": {
+    "de": "Angemeldet",
+    "en": "Signed in"
+  },
+  "anmeldung.abmelden": {
+    "de": "Abmelden",
+    "en": "Sign out"
+  },
+  "anmeldung.erneut": {
+    "de": "Erneut versuchen",
+    "en": "Try again"
+  },
+  "anmeldung.beenden_titel": {
+    "de": "Anmeldung beenden",
+    "en": "End sign-in"
+  },
+  "anmeldung.beenden_text": {
+    "de": "{} wird abgemeldet. Der Eintrag wird danach neu gestartet.",
+    "en": "{} will be signed out. The entry restarts afterwards."
+  },
+  "einrichtung.bereit": {
+    "de": "Einrichtung im Browser",
+    "en": "Setup in the browser"
+  },
+  "einrichtung.einrichten": {
+    "de": "Einrichten",
+    "en": "Set up"
+  },
+  "einrichtung.laeuft": {
+    "de": "Einrichtung im Browser geöffnet …",
+    "en": "Setup opened in the browser …"
+  },
+  "einrichtung.erneut": {
+    "de": "Erneut versuchen",
+    "en": "Try again"
+  },
+  "zugaenge.kopf": {
+    "de": "{} ({})",
+    "en": "{} ({})"
+  },
+  "zugaenge.hinzufuegen": {
+    "de": "{} hinzufügen",
+    "en": "Add {}"
+  },
+  "zugaenge.bearbeiten": {
+    "de": "Bearbeiten",
+    "en": "Edit"
+  },
+  "zugaenge.loeschen": {
+    "de": "Löschen",
+    "en": "Delete"
+  },
+  "zugaenge.entfernen_titel": {
+    "de": "{} löschen",
+    "en": "Delete {}"
+  },
+  "zugaenge.entfernen_text": {
+    "de": "„{}“ wird mit allen gespeicherten Geheimnissen entfernt. Das lässt sich nicht rückgängig machen.",
+    "en": "“{}” is removed together with all stored secrets. This cannot be undone."
+  },
+  "zugaenge.anlegen_titel": {
+    "de": "{} anlegen",
+    "en": "Add {}"
+  },
+  "zugaenge.bearbeiten_titel": {
+    "de": "{} bearbeiten",
+    "en": "Edit {}"
+  },
+  "zugaenge.sub": {
+    "de": "Name, Werte und Geheimnisse bleiben auf diesem Gerät. Ein Agent sieht sie nie.",
+    "en": "Name, values and secrets stay on this device. An agent never sees them."
+  },
+  "zugaenge.name": {
+    "de": "Name",
+    "en": "Name"
+  },
+  "zugaenge.name_hinweis": {
+    "de": "Buchstaben (A–Z, a–z), 0–9, - und _, 1–40 Zeichen; Groß-/Kleinschreibung zählt nicht. Beim Anlegen frei, danach fest.",
+    "en": "Letters (A–Z, a–z), 0–9, - and _, 1–40 characters; case does not matter. Free when adding, fixed afterwards."
+  },
+  "zugaenge.name_fehlt": {
+    "de": "Name fehlt.",
+    "en": "Name is missing."
+  },
+  "zugaenge.name_ungueltig": {
+    "de": "Nur Buchstaben (A–Z, a–z), 0–9, - und _, höchstens 40 Zeichen.",
+    "en": "Only letters (A–Z, a–z), 0–9, - and _, at most 40 characters."
+  },
+  "zugaenge.name_doppelt": {
+    "de": "Diesen Namen gibt es schon.",
+    "en": "This name already exists."
+  },
+  "zugaenge.leer": {
+    "de": "Noch nichts angelegt.",
+    "en": "Nothing added yet."
+  },
+  "zugaenge.geheim_gesetzt": {
+    "de": "Gesetzt – leer lassen behält es.",
+    "en": "Set – leave empty to keep it."
+  },
+  "zugaenge.geheim_loeschen": {
+    "de": "Geheimnis löschen",
+    "en": "Remove secret"
+  },
+  "einstellungen.sichern": {
+    "de": "Sichern",
+    "en": "Save"
+  },
+  "einstellungen.exportieren": {
+    "de": "Exportieren",
+    "en": "Export"
+  },
+  "einstellungen.importieren": {
+    "de": "Importieren",
+    "en": "Import"
+  },
+  "einstellungen.export_titel": {
+    "de": "Einstellungen sichern",
+    "en": "Back up settings"
+  },
+  "einstellungen.export_text": {
+    "de": "Werte und Zugänge aller Tools in eine Datei. Ohne Geheimnisse bleibt sie offen lesbar.",
+    "en": "Values and access lists of all tools in one file. Without secrets it stays readable."
+  },
+  "einstellungen.import_titel": {
+    "de": "Einstellungen einspielen",
+    "en": "Restore settings"
+  },
+  "einstellungen.import_text": {
+    "de": "Die Vorschau zeigt, was neu ist, was sich ändert und was übersprungen wird. Was nur hier steht, bleibt.",
+    "en": "The preview shows what is new, what changes and what is skipped. What exists only here stays."
+  },
+  "einstellungen.datei": {
+    "de": "Datei: {}",
+    "en": "File: {}"
+  },
+  "einstellungen.mit_geheimnissen_schalter": {
+    "de": "Geheimnisse mitnehmen",
+    "en": "Include secrets"
+  },
+  "einstellungen.passwort": {
+    "de": "Passwort",
+    "en": "Password"
+  },
+  "einstellungen.passwort_wiederholen": {
+    "de": "Passwort wiederholen",
+    "en": "Repeat password"
+  },
+  "einstellungen.passwort_hinweis": {
+    "de": "Mindestens 8 Zeichen. Ohne dieses Passwort lässt sich die Sicherung nicht mehr öffnen.",
+    "en": "At least 8 characters. Without this password the backup cannot be opened again."
+  },
+  "einstellungen.passwort_datei": {
+    "de": "Diese Sicherung enthält Geheimnisse. Dafür wird das Passwort von damals gebraucht.",
+    "en": "This backup contains secrets. It needs the password from back then."
+  },
+  "einstellungen.passwort_fehlt": {
+    "de": "Passwort fehlt.",
+    "en": "Password is missing."
+  },
+  "einstellungen.passwort_kurz": {
+    "de": "Mindestens 8 Zeichen.",
+    "en": "At least 8 characters."
+  },
+  "einstellungen.passwort_ungleich": {
+    "de": "Die Passwörter stimmen nicht überein.",
+    "en": "The passwords do not match."
+  },
+  "einstellungen.uebernehmen": {
+    "de": "Übernehmen",
+    "en": "Apply"
+  },
+  "einstellungen.vorschau_summe": {
+    "de": "{} übernommen · {} übersprungen",
+    "en": "{} applied · {} skipped"
+  },
+  "einstellungen.vorschau_leer": {
+    "de": "Die Datei enthält keine Einträge.",
+    "en": "The file contains no entries."
+  },
+  "einstellungen.vorschau_neu": {
+    "de": "neu",
+    "en": "new"
+  },
+  "einstellungen.vorschau_aendert": {
+    "de": "ändert",
+    "en": "changes"
+  },
+  "einstellungen.vorschau_uebersprungen": {
+    "de": "übersprungen – auf diesem Gerät nicht vorhanden",
+    "en": "skipped – not on this device"
+  },
+  "einstellungen.neue_werte": {
+    "de": "{} neu",
+    "en": "{} new"
+  },
+  "einstellungen.geaenderte_werte": {
+    "de": "{} geändert",
+    "en": "{} changed"
+  },
+  "einstellungen.zugaenge_anzahl": {
+    "de": "{} Zugänge",
+    "en": "{} access entries"
+  },
+  "einstellungen.exportiert": {
+    "de": "{} Einträge exportiert",
+    "en": "{} entries exported"
+  },
+  "einstellungen.exportiert_einer": {
+    "de": "1 Eintrag exportiert",
+    "en": "1 entry exported"
+  },
+  "einstellungen.importiert": {
+    "de": "{} Einträge importiert",
+    "en": "{} entries imported"
+  },
+  "einstellungen.importiert_einer": {
+    "de": "1 Eintrag importiert",
+    "en": "1 entry imported"
+  },
+  "einstellungen.mit_geheimnissen": {
+    "de": "(mit Geheimnissen)",
+    "en": "(with secrets)"
+  },
+  "einstellungen.uebersprungen": {
+    "de": "{} übersprungen",
+    "en": "{} skipped"
+  },
+  "tools.es_fehlt": {
+    "de": "Es fehlt: {}",
+    "en": "Missing: {}"
+  },
+  "tools.ungueltige_zahl": {
+    "de": "Ungültige Zahl: {}",
+    "en": "Invalid number: {}"
+  },
+  "tools.ungueltige_adresse": {
+    "de": "Ungültige Adresse: {}",
+    "en": "Invalid address: {}"
+  },
+  "tools.auswaehlen": {
+    "de": "Auswählen …",
+    "en": "Select …"
+  },
+  "nav.protokoll": {
+    "de": "Protokoll",
+    "en": "Log"
+  },
+  "protokoll.sub": {
+    "de": "Aufrufe der Agenten und Ausgaben der Tools.",
+    "en": "Agent calls and tool output."
+  },
+  "protokoll.reiter.aufrufe": {
+    "de": "Aufrufe",
+    "en": "Calls"
+  },
+  "protokoll.reiter.logs": {
+    "de": "Tool-Logs",
+    "en": "Tool logs"
+  },
+  "protokoll.filter.eintrag": {
+    "de": "Eintrag",
+    "en": "Entry"
+  },
+  "protokoll.filter.tool": {
+    "de": "Tool",
+    "en": "Tool"
+  },
+  "protokoll.filter.agent": {
+    "de": "Agent",
+    "en": "Agent"
+  },
+  "protokoll.filter.zeitraum": {
+    "de": "Zeitraum",
+    "en": "Period"
+  },
+  "protokoll.filter.alle": {
+    "de": "Alle",
+    "en": "All"
+  },
+  "protokoll.filter.nur_fehler": {
+    "de": "nur Fehler",
+    "en": "errors only"
+  },
+  "protokoll.zeitraum.stunde": {
+    "de": "Letzte Stunde",
+    "en": "Last hour"
+  },
+  "protokoll.zeitraum.heute": {
+    "de": "Heute",
+    "en": "Today"
+  },
+  "protokoll.zeitraum.tage": {
+    "de": "7 Tage",
+    "en": "7 days"
+  },
+  "protokoll.spalte.zeit": {
+    "de": "Zeit",
+    "en": "Time"
+  },
+  "protokoll.spalte.agent": {
+    "de": "Agent",
+    "en": "Agent"
+  },
+  "protokoll.spalte.eintrag": {
+    "de": "Eintrag",
+    "en": "Entry"
+  },
+  "protokoll.spalte.tool": {
+    "de": "Tool",
+    "en": "Tool"
+  },
+  "protokoll.spalte.dauer": {
+    "de": "Dauer",
+    "en": "Duration"
+  },
+  "protokoll.spalte.status": {
+    "de": "Status",
+    "en": "Status"
+  },
+  "protokoll.status.ok": {
+    "de": "OK",
+    "en": "OK"
+  },
+  "protokoll.status.fehler": {
+    "de": "Fehler",
+    "en": "Error"
+  },
+  "protokoll.status.abgelehnt": {
+    "de": "Abgelehnt",
+    "en": "Rejected"
+  },
+  "protokoll.dauer": {
+    "de": "{} ms",
+    "en": "{} ms"
+  },
+  "protokoll.leer": {
+    "de": "Noch keine Aufrufe in diesem Zeitraum",
+    "en": "No calls in this period"
+  },
+  "protokoll.leer_text": {
+    "de": "Prüfen Sie die Filter oder wählen Sie einen größeren Zeitraum.",
+    "en": "Check the filters or choose a longer period."
+  },
+  "protokoll.leeren": {
+    "de": "Protokoll leeren",
+    "en": "Clear log"
+  },
+  "protokoll.leeren_titel": {
+    "de": "Protokoll leeren",
+    "en": "Clear log"
+  },
+  "protokoll.leeren_text": {
+    "de": "Aufrufe und Tool-Logs werden aus dem Speicher und von der Platte gelöscht. Das lässt sich nicht rückgängig machen.",
+    "en": "Calls and tool logs are deleted from memory and from disk. This cannot be undone."
+  },
+  "protokoll.geleert": {
+    "de": "Protokoll geleert",
+    "en": "Log cleared"
+  },
+  "protokoll.detail_titel": {
+    "de": "Aufruf",
+    "en": "Call"
+  },
+  "protokoll.argumente": {
+    "de": "Argumente",
+    "en": "Arguments"
+  },
+  "protokoll.fehlertext": {
+    "de": "Fehlertext",
+    "en": "Error text"
+  },
+  "protokoll.vorschau": {
+    "de": "Vorschau der Antwort",
+    "en": "Response preview"
+  },
+  "protokoll.antwort_groesse": {
+    "de": "Antwort",
+    "en": "Response"
+  },
+  "protokoll.zeichen": {
+    "de": "{} Zeichen",
+    "en": "{} characters"
+  },
+  "protokoll.log.eintrag": {
+    "de": "Eintrag",
+    "en": "Entry"
+  },
+  "protokoll.log.suche": {
+    "de": "Filter",
+    "en": "Filter"
+  },
+  "protokoll.log.suche_hinweis": {
+    "de": "Nur Zeilen mit diesem Text",
+    "en": "Only lines containing this text"
+  },
+  "protokoll.log.leer": {
+    "de": "Keine Zeilen",
+    "en": "No lines"
+  },
+  "protokoll.log.leer_text": {
+    "de": "Der Eintrag hat nichts auf stderr geschrieben (oder noch nicht gestartet).",
+    "en": "The entry has written nothing to stderr (or has not started yet)."
+  },
+  "agenten.protokoll_titel": {
+    "de": "Protokoll",
+    "en": "Log"
+  },
+  "agenten.protokoll_sub": {
+    "de": "Was Agenten von den Aufrufen und Tool-Logs sehen dürfen.",
+    "en": "What agents may see of the calls and tool logs."
+  },
+  "agenten.protokoll_haken": {
+    "de": "Agenten dürfen Inhalte im Protokoll sehen",
+    "en": "Agents may see log contents"
+  },
+  "kopf.ansicht": {
+    "de": "Ansicht",
+    "en": "View"
+  },
+  "kopf.farbschema": {
+    "de": "Farbschema",
+    "en": "Colour scheme"
+  },
+  "kopf.sprache": {
+    "de": "Sprache",
+    "en": "Language"
+  },
+  "protokoll.spalte.stufe": {
+    "de": "Stufe",
+    "en": "Level"
+  },
+  "protokoll.stufe.info": {
+    "de": "INFO",
+    "en": "INFO"
+  },
+  "protokoll.stufe.warnung": {
+    "de": "WARN",
+    "en": "WARN"
+  },
+  "protokoll.stufe.fehler": {
+    "de": "FEHLER",
+    "en": "ERROR"
+  },
+  "tools.aktiv": {
+    "de": "Auf diesem Gerät aktiv",
+    "en": "Active on this device"
+  },
+  "tools.abgeschaltet": {
+    "de": "Abgeschaltet",
+    "en": "Switched off"
+  },
+  "tools.abgeschaltet_hinweis": {
+    "de": "Auf diesem Gerät abgeschaltet – einschalten, um es wieder zu starten.",
+    "en": "Switched off on this device – switch it on to start it again."
+  },
+  "tools.gesperrt_hinweis": {
+    "de": "Auf diesem Gerät abgeschaltet – zum Anmelden oder Einrichten erst einschalten.",
+    "en": "Switched off on this device – switch it on before signing in or setting it up."
+  },
+  "tools.nur_aktive": {
+    "de": "Nur aktive",
+    "en": "Only active"
+  },
+  "tools.unbekannt": {
+    "de": "Unbekannt",
+    "en": "Unknown"
+  },
+  "einstellungen.vorschau_aus": {
+    "de": "wird hier abgeschaltet",
+    "en": "switched off here"
+  },
+  "tools.leer_aus": {
+    "de": "Alle abgeschaltet",
+    "en": "All switched off"
+  }
+}

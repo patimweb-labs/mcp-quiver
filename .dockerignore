@@ -1,0 +1,6 @@
+.git
+target
+**/node_modules
+admin/dist
+daten
+docs/bilder

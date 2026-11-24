@@ -1,0 +1,23 @@
+{
+  "name": "io.github.someone/Postgres_MCP",
+  "description": "Datenbank-Tools",
+  "version": "3.0.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/someone/db-mcp",
+      "version": "3.0.0",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "--readonly" }],
+      "environmentVariables": [
+        { "name": "DB_HOST", "isRequired": true },
+        {
+          "name": "DB_PASSWORD",
+          "description": "Passwort der Datenbank",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

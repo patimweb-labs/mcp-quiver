@@ -1,0 +1,36 @@
+{
+  "name": "io.github.someone/registry-x",
+  "description": "Was die Registry sagt",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@someone/registry-x",
+      "version": "1.0.0",
+      "transport": { "type": "stdio" }
+    }
+  ],
+  "_meta": {
+    "io.github.patimweb-labs.quiver/eintrag": {
+      "id": "quiver-eigen",
+      "version": "9.9.9",
+      "titel": "Eigener Eintrag",
+      "beschreibung": "Gewinnt gegen packages",
+      "herkunft": "eigen",
+      "laufzeit": {
+        "art": "remote",
+        "url": "https://quiver.example/mcp",
+        "kopfzeilen": { "Authorization": "${Authorization}" }
+      },
+      "felder": [
+        {
+          "name": "Authorization",
+          "beschreibung": "Token",
+          "quelle": "geheim",
+          "pflicht": true,
+          "standard": null
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <!-- mcp-quiver, Tray: einfarbig nach der Mono-Variante des Logos.
+       Pfeil in der Mitte, Schlüssel links, Zahnrad rechts, darunter das
+       Wappen mit der Raute. Schwarz mit Deckkraft = macOS-Template. -->
+  <!-- Pfeil -->
+  <path d="M12 12.6V2.9"/>
+  <path d="M9.5 5.4 12 2.9l2.5 2.5"/>
+  <!-- Schlüssel: Griff und offenes Maul -->
+  <path d="M9.2 12.2 6.6 7.2"/>
+  <path d="M4.35 3.76A1.9 1.9 0 1 0 6.25 3.76"/>
+  <!-- Zahnrad: Griff, Nabe, sechs Zähne -->
+  <path d="M14.8 12.2 17.4 7.2"/>
+  <circle cx="18.6" cy="5.2" r="1.35"/>
+  <path d="M18.6 2.3v.9M18.6 7.2v.9M21.1 3.75l-.78.45M16.88 6.2l-.78.45M21.1 6.65l-.78-.45M16.88 4.2l-.78-.45"/>
+  <!-- Wappen -->
+  <path d="M5 12.6 12 15l7-2.4-1 6-6 3.2-6-3.2z"/>
+  <!-- Raute -->
+  <path d="M12 16.4l1.4 1.5-1.4 1.5-1.4-1.5z" fill="#000" stroke-width="1"/>
+</svg>

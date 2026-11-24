@@ -1,0 +1,24 @@
+[package]
+name = "quiver-oberflaeche"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "mcp-quiver: Bausatz für das Client-Fenster — Themes aus Tokens, Texte, Schriften, Bausteine"
+
+[dependencies]
+egui = { version = "0.37", default-features = false, features = ["default_fonts", "monochrome_emoji_fonts"] }
+egui_extras = { version = "0.37", default-features = false, features = ["image", "svg"] }
+# Nur PNG: das Logo im Kopf.
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
+# `image` gehört zu `egui_kittest` (es liefert die Bilder); hier steht es, damit
+# der Muster-Test den 8-px-Rand des Prüfgerüsts abschneiden kann.
+image = "0.25"
