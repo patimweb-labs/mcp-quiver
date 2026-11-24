@@ -5,3 +5,4 @@ admin/dist/
 .env
 demo/
 target-pi/
+.DS_Store

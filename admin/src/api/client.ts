@@ -22,6 +22,7 @@ import type {
   Eintrag,
   EintragId,
   Einrichten,
+  EntraAusweis,
   EntraGruppe,
   GeraetAendern,
   GeraetStand,
@@ -280,6 +281,22 @@ export class Client {
     });
   }
 
+  // ------------------------------------------------- Entra-Ausweis
+
+  /**
+   * `GET /admin/entra-schluessel`: Geheimnis, Zertifikat oder keins, mit
+   * Ablauf und Warnung (Aufgabe 23). Ältere Server kennen den Weg nicht
+   * (404); dann gibt es `null`.
+   */
+  async entraAusweis(): Promise<EntraAusweis | null> {
+    try {
+      return await anfrage<EntraAusweis>(`${API_BASIS}/admin/entra-schluessel`);
+    } catch (fehler) {
+      if (fehler instanceof ApiFehler && fehler.status === 404) return null;
+      throw fehler;
+    }
+  }
+
   // ------------------------------------------------------------- Gruppen
 
   gruppen(): Promise<Gruppe[]> {
@@ -297,6 +314,19 @@ export class Client {
     return anfrage<void>(`${API_BASIS}/admin/gruppen/${pfad(id)}`, {
       methode: "DELETE",
     });
+  }
+
+  /** Gesehene und gelöschte Entra-Gruppen (Aufgabe 23). */
+  entraGruppen(): Promise<EntraGruppe[]> {
+    return anfrage<EntraGruppe[]>(`${API_BASIS}/admin/entra-gruppen`);
+  }
+
+  /** Eine gelöschte Entra-Gruppe wieder aufnehmen (ohne Sätze). */
+  entraGruppeAufnehmen(id: string): Promise<EntraGruppe> {
+    return anfrage<EntraGruppe>(
+      `${API_BASIS}/admin/entra-gruppen/${pfad(id)}`,
+      { methode: "PUT", rumpf: { aufnehmen: true } },
+    );
   }
 
   // -------------------------------------------------------------- Geräte
@@ -358,10 +388,6 @@ export class Client {
   }
 
   // --------------------------------------------------------- Entra-Gruppen
-
-  entraGruppen(): Promise<EntraGruppe[]> {
-    return anfrage<EntraGruppe[]>(`${API_BASIS}/admin/entra-gruppen`);
-  }
 
   /** Anzeigename einer gesehenen Entra-Gruppe (die Id bleibt der Schlüssel). */
   entraGruppeSetzen(id: string, anzeigename: string | null): Promise<EntraGruppe> {

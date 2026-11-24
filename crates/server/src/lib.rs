@@ -31,6 +31,7 @@ pub mod benutzer;
 mod config;
 mod drossel;
 mod einrichtung;
+pub mod entra_schluessel;
 mod fehler;
 mod geraet;
 mod hilfen;
@@ -57,7 +58,8 @@ use tower_http::trace::TraceLayer;
 
 use zustand::Zustand;
 
-pub use config::{EntraKonfig, Konfig, Uhr};
+pub use config::{Ausweis, EntraKonfig, Konfig, Uhr};
+pub use entra_schluessel::{EntraSchluessel, ZertifikatStand};
 pub use fehler::{Ergebnis, FehlerAntwort};
 pub use krypto::Schluessel;
 
@@ -188,6 +190,7 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
             put(benutzer::benutzer_setzen).delete(benutzer::benutzer_loeschen),
         )
         .route("/benutzer/{oid}/pruefen", post(benutzer::benutzer_pruefen))
+        .route("/entra-schluessel", get(benutzer::entra_ausweis))
         .route("/entra-gruppen", get(benutzer::entra_gruppen))
         .route("/entra-gruppen/{id}", put(benutzer::entra_gruppe_setzen))
         .route("/pruefspur", get(benutzer::pruefspur))

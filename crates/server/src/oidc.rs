@@ -20,7 +20,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 use url::Url;
 
-use crate::config::{ist_guid, EntraKonfig};
+use crate::config::{ist_guid, Ausweis, EntraKonfig};
 
 /// Obergrenze für jede JSON-Antwort von Entra (Discovery, JWKS, Token).
 pub const MAX_ANTWORT: usize = 64 * 1024;
@@ -32,6 +32,8 @@ pub const TOLERANZ_SEKUNDEN: i64 = 60;
 pub const JWKS_SPERRE: Duration = Duration::from_secs(60);
 /// So lange gilt eine Discovery; danach wird sie neu geholt (Aufgabe 26, 6).
 pub const DISCOVERY_STUNDEN: i64 = 24;
+/// `client_assertion_type` für `private_key_jwt` (RFC 7523).
+pub const CLIENT_ASSERTION_TYP: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 /// Was im ID-Token stehen muss.
 #[derive(Debug, Clone)]
@@ -204,16 +206,22 @@ impl Oidc {
         jetzt: OffsetDateTime,
     ) -> anyhow::Result<(Identitaet, Tokens)> {
         let d = self.discovery(jetzt).await?;
-        let form = [
-            ("client_id", self.konfig.client_id.as_str()),
-            ("client_secret", self.konfig.secret.as_str()),
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", self.konfig.redirect_uri.as_str()),
-            ("code_verifier", verifier),
-        ];
+        let mut formular = std::collections::HashMap::from([
+            (String::from("client_id"), self.konfig.client_id.clone()),
+            (
+                String::from("grant_type"),
+                String::from("authorization_code"),
+            ),
+            (String::from("code"), code.to_string()),
+            (
+                String::from("redirect_uri"),
+                self.konfig.redirect_uri.clone(),
+            ),
+            (String::from("code_verifier"), verifier.to_string()),
+        ]);
+        formular.extend(self.ausweis_felder(&d, jetzt)?);
         let antwort = self
-            .formular(&d.token_endpoint, &form)
+            .formular(&d.token_endpoint, &formular)
             .await
             .map_err(|fehler| anyhow::anyhow!("{fehler:?}"))?;
         let tokens = tokens_aus(&antwort)?;
@@ -243,14 +251,20 @@ impl Oidc {
             .discovery(jetzt)
             .await
             .map_err(|fehler| TokenFehler::Netz(format!("Discovery nicht erreichbar: {fehler}")))?;
-        let form = [
-            ("client_id", self.konfig.client_id.as_str()),
-            ("client_secret", self.konfig.secret.as_str()),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh),
-            ("scope", "openid profile email offline_access"),
-        ];
-        let antwort = self.formular(&d.token_endpoint, &form).await?;
+        let mut formular = std::collections::HashMap::from([
+            (String::from("client_id"), self.konfig.client_id.clone()),
+            (String::from("grant_type"), String::from("refresh_token")),
+            (String::from("refresh_token"), refresh.to_string()),
+            (
+                String::from("scope"),
+                String::from("openid profile email offline_access"),
+            ),
+        ]);
+        formular.extend(
+            self.ausweis_felder(&d, jetzt)
+                .map_err(|fehler| TokenFehler::Netz(format!("{fehler:#}")))?,
+        );
+        let antwort = self.formular(&d.token_endpoint, &formular).await?;
         let tokens =
             tokens_aus(&antwort).map_err(|fehler| TokenFehler::Netz(format!("{fehler:#}")))?;
         let identitaet = self
@@ -334,14 +348,48 @@ impl Oidc {
         Ok(set)
     }
 
+    /// Die Felder des Ausweises: Geheimnis **oder** Client-Assertion.
+    ///
+    /// Die Assertion entsteht je Anfrage neu (`jti`, `nbf`, `exp`); `aud` ist
+    /// der Token-Endpunkt aus der Discovery (Aufgabe 23).
+    fn ausweis_felder(
+        &self,
+        discovery: &Discovery,
+        jetzt: OffsetDateTime,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let mut felder = std::collections::HashMap::new();
+        match &self.konfig.ausweis {
+            Ausweis::Geheimnis(geheimnis) => {
+                felder.insert(String::from("client_secret"), geheimnis.clone());
+            }
+            Ausweis::Schluessel(halter) => {
+                let schluessel = halter.jetzt();
+                let assertion = schluessel.assertion(
+                    &self.konfig.client_id,
+                    &discovery.token_endpoint,
+                    jetzt,
+                )?;
+                felder.insert(
+                    String::from("client_assertion_type"),
+                    String::from(CLIENT_ASSERTION_TYP),
+                );
+                felder.insert(String::from("client_assertion"), assertion);
+            }
+        }
+        Ok(felder)
+    }
+
     /// Formular an den Token-Endpunkt; HTTP-Fehler werden zu
     /// [`TokenFehler::Oauth`], damit `invalid_grant` erkennbar bleibt.
-    async fn formular(&self, url: &str, felder: &[(&str, &str)]) -> Result<Value, TokenFehler> {
-        let karte: std::collections::HashMap<&str, &str> = felder.iter().copied().collect();
+    async fn formular(
+        &self,
+        url: &str,
+        karte: &std::collections::HashMap<String, String>,
+    ) -> Result<Value, TokenFehler> {
         let antwort = self
             .client
             .post(url)
-            .form(&karte)
+            .form(karte)
             .send()
             .await
             .map_err(|fehler| {
@@ -534,9 +582,9 @@ mod tests {
     use base64::Engine;
     use jsonwebtoken::jwk::{CommonParameters, Jwk};
     use jsonwebtoken::{encode, EncodingKey, Header};
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::traits::PublicKeyParts;
-    use rsa::RsaPrivateKey;
+    use rsa_alt::pkcs1::EncodeRsaPrivateKey;
+    use rsa_alt::traits::PublicKeyParts;
+    use rsa_alt::RsaPrivateKey;
     use serde_json::json;
 
     const TENANT: &str = "11111111-2222-3333-4444-555555555555";
@@ -562,7 +610,7 @@ mod tests {
 
         fn pem(&self) -> Vec<u8> {
             self.privat
-                .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+                .to_pkcs1_pem(rsa_alt::pkcs1::LineEnding::LF)
                 .expect("PEM")
                 .as_bytes()
                 .to_vec()
@@ -612,15 +660,13 @@ mod tests {
     }
 
     fn oidc() -> Oidc {
-        let mut konfig = EntraKonfig {
-            tenant: TENANT.into(),
-            client_id: CLIENT.into(),
-            secret: "kein-echtes-geheimnis".into(),
-            authority: "https://login.example.test/tenant/v2.0".into(),
-            issuer: "https://login.example.test/tenant/v2.0".into(),
-            redirect_uri: "https://quiver.example.test/auth/callback".into(),
-        };
-        konfig.secret.push_str("-nur-test");
+        let konfig = EntraKonfig::mit_geheimnis(
+            TENANT,
+            CLIENT,
+            "https://login.example.test/tenant/v2.0",
+            "https://quiver.example.test/auth/callback",
+            "kein-echtes-geheimnis-nur-test",
+        );
         Oidc::neu(konfig).unwrap()
     }
 

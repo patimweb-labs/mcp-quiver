@@ -177,11 +177,49 @@ export interface Satz {
   eintraege: SatzEintrag[];
 }
 
-/** Eine Gruppe bekommt Sätze. */
+/**
+ * Eine Gruppe bekommt Sätze. Trägt sie `entra`-Ids, stammt sie aus Entra ID
+ * (Aufgabe 23): Titel und Sätze gehören dem Admin, die Mitglieder kommen aus
+ * dem ID-Token. Die Kennung ist dann die Objekt-Id der Entra-Gruppe.
+ */
 export interface Gruppe {
   id: GruppeId;
   titel: string;
   saetze: SatzId[];
+  /** Entra-Objekt-Ids, die auf diese Gruppe abgebildet werden. */
+  entra: string[];
+}
+
+/**
+ * `GET /api/v1/admin/entra-schluessel`: womit weist sich der Server bei Entra
+ * aus, und läuft das Zertifikat bald ab? (Aufgabe 23)
+ */
+export interface EntraAusweis {
+  /** `keine`, `geheimnis` oder `schluessel`. */
+  art: "keine" | "geheimnis" | "schluessel";
+  /** RFC 3339; nur bei einem Zertifikat. */
+  ablauf?: string | null;
+  /** Negative Zahl, wenn das Zertifikat schon abgelaufen ist. */
+  tage_uebrig?: number | null;
+  /** Ab 30 Tagen vor dem Ablauf `true`. */
+  warnung: boolean;
+  fingerabdruck?: string | null;
+  /** Fertiger Warntext des Servers. */
+  hinweis?: string | null;
+}
+
+/**
+ * Eine in Anmeldungen gesehene Entra-Gruppe (Aufgabe 23). Der Server legt
+ * für jede Id einmal eine quiver-Gruppe an; gelöschte bleiben gemerkt und
+ * lassen sich wieder aufnehmen.
+ */
+export interface EntraGruppe {
+  id: string;
+  anzeigename: string | null;
+  zuletzt: string;
+  /** Kennung der quiver-Gruppe, falls es sie gibt. */
+  gruppe: GruppeId | null;
+  geloescht: boolean;
 }
 
 /** Der Besitzer eines Geräts, wie ihn der Server nennt (Aufgabe 21). */

@@ -133,11 +133,15 @@ describe("Entra-Gruppen mit Anzeigename", () => {
       id: GRUPPE_A,
       anzeigename: "Entwicklung",
       zuletzt: "2026-11-24T10:00:00Z",
+      gruppe: null,
+      geloescht: false,
     },
     {
       id: GRUPPE_B,
       anzeigename: "  ",
       zuletzt: "2026-11-24T10:00:00Z",
+      gruppe: null,
+      geloescht: false,
     },
   ];
 

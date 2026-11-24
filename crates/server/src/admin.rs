@@ -269,9 +269,19 @@ pub(crate) async fn gruppe_loeschen(
     State(zustand): State<Arc<Zustand>>,
     Path(id): Path<String>,
 ) -> Ergebnis<StatusCode> {
+    let jetzt = zustand.uhr.jetzt();
     let kennung = id.clone();
     let weg = db(&zustand, move |conn| {
-        speicher::loesche(conn, speicher::GRUPPEN, &kennung)
+        let gruppe: Option<Gruppe> = speicher::hole(conn, speicher::GRUPPEN, &kennung)?;
+        let weg = speicher::loesche(conn, speicher::GRUPPEN, &kennung)?;
+        if let (true, Some(gruppe)) = (weg, gruppe) {
+            // Eine automatisch angelegte Gruppe bleibt gelöscht: die Id wird
+            // gemerkt, bis der Admin sie wieder aufnimmt (Aufgabe 23).
+            if !gruppe.entra.is_empty() {
+                speicher::entra_gruppe_loeschen_merken(conn, &gruppe.entra, jetzt)?;
+            }
+        }
+        Ok(weg)
     })
     .await?;
     if !weg {

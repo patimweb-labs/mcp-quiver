@@ -180,8 +180,8 @@ describe("stand_ton", () => {
 
 describe("Gruppen und Revision", () => {
   const gruppen: Gruppe[] = [
-    { id: "team", titel: "Team", saetze: [] },
-    { id: "ops", titel: "Betrieb", saetze: [] },
+    { id: "team", titel: "Team", saetze: [], entra: [] },
+    { id: "ops", titel: "Betrieb", saetze: [], entra: [] },
   ];
 
   it("löst Kennungen in Titel auf, unbekannte bleiben Kennung", () => {
