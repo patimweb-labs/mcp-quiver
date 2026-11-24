@@ -22,6 +22,7 @@ function eintrag(teil: Partial<PruefspurEintrag> = {}): PruefspurEintrag {
     art: "anmeldung",
     akteur: "anna@example.test",
     text: "Entra",
+    anzahl: 1,
     ...teil,
   };
 }

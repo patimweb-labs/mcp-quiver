@@ -34,6 +34,10 @@ pub(crate) struct Zustand {
     pub(crate) db: Mutex<Connection>,
     /// „Etwas hat sich geändert" – jede Schreiboperation löst aus.
     pub(crate) geaendert: broadcast::Sender<()>,
+    /// „Der Server fährt herunter" – offene Ereignis-Ströme enden sofort.
+    ende: broadcast::Sender<()>,
+    /// Wann die Prüfspur zuletzt aufgeräumt wurde (höchstens stündlich).
+    pruefspur_zuletzt: Mutex<Option<OffsetDateTime>>,
     /// Offene Ereignis-Ströme je Gerät; solange einer offen ist, gilt es als verbunden.
     verbunden: Mutex<HashMap<GeraetId, usize>>,
     pub(crate) konfig: Arc<Konfig>,
@@ -67,11 +71,14 @@ impl Zustand {
         dummy: String,
     ) -> Self {
         let (geaendert, _) = broadcast::channel(64);
+        let (ende, _) = broadcast::channel(1);
         let uhr = konfig.uhr.clone();
-        let einrichtung = Einrichtung::neu(&konfig.oeffentlich);
+        let einrichtung = Einrichtung::neu(&konfig.oeffentlich, konfig.einrichtung_mit_code());
         Self {
             db: Mutex::new(conn),
             geaendert,
+            ende,
+            pruefspur_zuletzt: Mutex::new(None),
             verbunden: Mutex::new(HashMap::new()),
             konfig: Arc::new(konfig),
             oidc,
@@ -91,6 +98,26 @@ impl Zustand {
     /// Alle Ströme über eine Änderung in Kenntnis setzen.
     pub(crate) fn melde_aenderung(&self) {
         let _ = self.geaendert.send(());
+    }
+
+    /// Alle offenen Ereignis-Ströme beenden (Herunterfahren).
+    pub(crate) fn beenden(&self) {
+        let _ = self.ende.send(());
+    }
+
+    /// Ein Abonnement auf das Ende des Servers.
+    pub(crate) fn ende_abo(&self) -> broadcast::Receiver<()> {
+        self.ende.subscribe()
+    }
+
+    /// Ist das Aufräumen der Prüfspur fällig? Höchstens einmal je Stunde.
+    pub(crate) fn pruefspur_aufraeumen_faellig(&self, jetzt: OffsetDateTime) -> bool {
+        let mut zuletzt = crate::sperre(&self.pruefspur_zuletzt);
+        if zuletzt.is_some_and(|zeit| jetzt - zeit < time::Duration::hours(1)) {
+            return false;
+        }
+        *zuletzt = Some(jetzt);
+        true
     }
 
     pub(crate) fn strom_auf(&self, id: &GeraetId) -> bool {

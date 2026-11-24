@@ -203,6 +203,8 @@ pub struct Konfig {
     pub daten: PathBuf,
     /// Gebaute Admin-Oberfläche; fehlt sie, gibt es nur die API.
     pub admin_dist: Option<PathBuf>,
+    /// Adresse, auf der der Server lauscht (`QUIVER_ADRESSE`).
+    pub adresse: SocketAddr,
     /// Basis-URL, unter der der Server erreichbar ist (ohne Schrägstrich).
     pub oeffentlich: String,
     /// `None` heißt: Einmal-Codes statt Entra (MVP ohne Azure).
@@ -211,6 +213,9 @@ pub struct Konfig {
     pub proxies: Vec<Netz>,
     /// Dürfen Geräte ohne Entra-Benutzer weiterlaufen?
     pub altgeraete_erlaubt: bool,
+    /// `QUIVER_EINRICHTUNG=ohne-code`: die Ersteinrichtung kommt ohne Code aus.
+    /// Nur zusammen mit einer Loopback-Basis-URL erlaubt.
+    pub einrichtung_ohne_code: bool,
     pub uhr: Uhr,
     /// Die Laufzeit seit dem Start (Fenster der Ersteinrichtung).
     pub laufzeit: Laufzeit,
@@ -219,6 +224,9 @@ pub struct Konfig {
     /// Steht hier und nicht als fester Wert in der Schicht, damit ein Test ihn
     /// kurz stellen kann – 30 Sekunden wären im Test eine Ewigkeit.
     pub rumpf_zeit: Duration,
+    /// So viele Anmeldevorgänge dürfen gleichzeitig offen sein
+    /// ([`crate::anmeldung::OFFENE_VORGAENGE_MAX`]). Im Test kleiner.
+    pub offene_vorgaenge_max: usize,
 }
 
 impl Konfig {
@@ -227,33 +235,69 @@ impl Konfig {
         Self {
             daten: daten.into(),
             admin_dist: None,
+            // Die Vorgabe von `Konfig::neu` ist Loopback: Tests und die
+            // Entwicklung laufen so, ohne dass ein Code nötig wäre.
+            adresse: SocketAddr::from(([127, 0, 0, 1], 8740)),
             oeffentlich: String::from("http://127.0.0.1:8740"),
             entra: None,
             proxies: Vec::new(),
             altgeraete_erlaubt: true,
+            einrichtung_ohne_code: false,
             uhr: Uhr::default(),
             laufzeit: Laufzeit::neu(),
             rumpf_zeit: crate::RUMPF_ZEIT,
+            offene_vorgaenge_max: crate::anmeldung::OFFENE_VORGAENGE_MAX,
         }
+    }
+
+    /// Lauscht der Server ausschließlich auf Loopback?
+    pub fn lauscht_nur_loopback(&self) -> bool {
+        self.adresse.ip().is_loopback()
+    }
+
+    /// Braucht die Ersteinrichtung den Einmal-Code aus dem Log?
+    ///
+    /// Ja, sobald der Server **nicht nur auf Loopback** lauscht – unabhängig
+    /// von der Basis-URL, also auch im Container. Auch eine öffentliche
+    /// Basis-URL bei Loopback-Bindung verlangt den Code (davor steht dann ein
+    /// Proxy). Ausnahme ist nur die ausdrückliche Angabe
+    /// `QUIVER_EINRICHTUNG=ohne-code` **und** eine Loopback-Basis-URL.
+    pub fn einrichtung_mit_code(&self) -> bool {
+        let ausnahme = self.einrichtung_ohne_code
+            && self.lauscht_nur_loopback()
+            && ist_loopback_url(&self.oeffentlich);
+        if ausnahme {
+            return false;
+        }
+        !self.lauscht_nur_loopback() || !ist_loopback_url(&self.oeffentlich)
     }
 
     /// Alles aus der Umgebung lesen und prüfen.
     ///
     /// Ohne `QUIVER_OEFFENTLICH` gilt `http://localhost:<Port>` (Aufgabe 26,
-    /// Punkt 9): der Server, der ohne weitere Konfiguration startet, ist über
-    /// Loopback erreichbar – und damit ohne Einmal-Code einrichtbar.
+    /// Punkt 9). Ob die Ersteinrichtung einen Code braucht, hängt an der
+    /// Lauschadresse und nicht an der Basis-URL (Härtung, Punkt 2).
     pub fn aus_umgebung(daten: PathBuf) -> anyhow::Result<Self> {
-        Self::aus_umgebung_mit_port(daten, 8740)
+        Self::aus_umgebung_mit_adresse(daten, SocketAddr::from(([127, 0, 0, 1], 8740)))
     }
 
-    /// Wie [`Konfig::aus_umgebung`], mit dem Port aus `QUIVER_ADRESSE`.
-    pub fn aus_umgebung_mit_port(daten: PathBuf, port: u16) -> anyhow::Result<Self> {
+    /// Wie [`Konfig::aus_umgebung`], mit der Lauschadresse aus `QUIVER_ADRESSE`.
+    pub fn aus_umgebung_mit_adresse(daten: PathBuf, adresse: SocketAddr) -> anyhow::Result<Self> {
+        let port = adresse.port();
         let roh = std::env::var("QUIVER_OEFFENTLICH").ok();
         if roh.as_deref().is_none_or(|wert| wert.trim().is_empty()) {
-            tracing::info!(
-                "QUIVER_OEFFENTLICH fehlt; es gilt {} (nur lokal erreichbar)",
-                oeffentlich_aus(None, port)?
-            );
+            let vorgabe = oeffentlich_aus(None, port)?;
+            if adresse.ip().is_loopback() {
+                tracing::info!(
+                    "QUIVER_OEFFENTLICH fehlt; es gilt {vorgabe} (nur lokal erreichbar, \
+                     der Server lauscht nur auf Loopback)"
+                );
+            } else {
+                tracing::info!(
+                    "QUIVER_OEFFENTLICH fehlt; es gilt {vorgabe} – der Server lauscht aber auf \
+                     {adresse} und ist damit auch von außen erreichbar"
+                );
+            }
         }
         let oeffentlich = oeffentlich_aus(roh.as_deref(), port)?;
 
@@ -379,27 +423,34 @@ impl Konfig {
             _ => Vec::new(),
         };
 
-        let altgeraete_erlaubt = match std::env::var("QUIVER_ALTGERAETE") {
-            Ok(wert) => match wert.trim().to_ascii_lowercase().as_str() {
-                "" | "erlaubt" => true,
-                "gesperrt" => false,
-                anderes => {
-                    anyhow::bail!("QUIVER_ALTGERAETE kennt nur erlaubt|gesperrt, nicht {anderes}")
-                }
-            },
-            Err(_) => true,
-        };
+        // Mit eingerichtetem Entra sind Geräte ohne Benutzer (aus der Zeit der
+        // Einmal-Codes) standardmäßig gesperrt – es gibt heute keine mehr im
+        // Einsatz. Ohne Entra sind **alle** Geräte solche Geräte; dort bleibt
+        // der alte Weg offen. Eine ausdrückliche Angabe gewinnt immer.
+        let altgeraete_erlaubt = altgeraete_aus(
+            std::env::var("QUIVER_ALTGERAETE").ok().as_deref(),
+            entra.is_some(),
+        )?;
+
+        let einrichtung_ohne_code = einrichtung_aus(
+            std::env::var("QUIVER_EINRICHTUNG").ok().as_deref(),
+            &oeffentlich,
+            adresse,
+        )?;
 
         Ok(Self {
             daten,
             admin_dist: None,
+            adresse,
             oeffentlich,
             entra,
             proxies,
             altgeraete_erlaubt,
+            einrichtung_ohne_code,
             uhr: Uhr::default(),
             laufzeit: Laufzeit::neu(),
             rumpf_zeit: crate::RUMPF_ZEIT,
+            offene_vorgaenge_max: crate::anmeldung::OFFENE_VORGAENGE_MAX,
         })
     }
 
@@ -558,26 +609,96 @@ impl Netz {
     }
 }
 
-/// Die IP des Aufrufers: nur von vertrauten Proxies wird `X-Forwarded-For` gelesen.
+/// Dürfen Geräte ohne Entra-Benutzer weiterlaufen?
 ///
-/// Ohne Peer-Adresse (z. B. bei `tower::oneshot`) gibt es keine IP; dann wird
-/// auch kein Kopf geglaubt.
+/// Mit eingerichtetem Entra ist die Antwort ohne Angabe **nein** (`gesperrt`):
+/// solche Geräte stammen aus der Zeit der Einmal-Codes, und es gibt heute keine
+/// mehr im Einsatz. Ohne Entra sind alle Geräte solche Geräte, dort bleibt der
+/// alte Weg offen. Eine ausdrückliche Angabe gewinnt immer.
+pub fn altgeraete_aus(wert: Option<&str>, entra_da: bool) -> anyhow::Result<bool> {
+    match wert.map(str::trim).filter(|wert| !wert.is_empty()) {
+        None => Ok(!entra_da),
+        Some(wert) => match wert.to_ascii_lowercase().as_str() {
+            "erlaubt" => Ok(true),
+            "gesperrt" => Ok(false),
+            anderes => {
+                anyhow::bail!("QUIVER_ALTGERAETE kennt nur erlaubt|gesperrt, nicht {anderes}")
+            }
+        },
+    }
+}
+
+/// Den Schalter `QUIVER_EINRICHTUNG` lesen.
+///
+/// `mit-code` (Vorgabe) verlangt den Code, sobald der Server nicht nur auf
+/// Loopback lauscht. `ohne-code` ist nur mit Loopback-Basis-URL erlaubt und
+/// wird beim Start deutlich gemeldet; alles andere ist ein Startfehler, damit
+/// niemand versehentlich ohne Code im Netz steht.
+pub fn einrichtung_aus(
+    wert: Option<&str>,
+    oeffentlich: &str,
+    adresse: SocketAddr,
+) -> anyhow::Result<bool> {
+    match wert.map(str::trim).filter(|wert| !wert.is_empty()) {
+        None | Some("mit-code") => Ok(false),
+        Some("ohne-code") => {
+            if !ist_loopback_url(oeffentlich) {
+                anyhow::bail!(
+                    "QUIVER_EINRICHTUNG=ohne-code ist nur mit einer Loopback-Basis-URL \
+                     erlaubt ({oeffentlich} ist keine); sonst ist der Code Pflicht"
+                );
+            }
+            tracing::warn!(
+                "QUIVER_EINRICHTUNG=ohne-code: die Ersteinrichtung braucht keinen Code. \
+                 Das ist nur zulässig, weil der Server auf Loopback lauscht ({adresse}) und \
+                 die Basis-URL {oeffentlich} lokal ist. Wer den Port von außen erreicht, \
+                 kann den Root anlegen – bitte nur auf 127.0.0.1 veröffentlichen."
+            );
+            Ok(true)
+        }
+        Some(anderes) => {
+            anyhow::bail!("QUIVER_EINRICHTUNG kennt nur mit-code|ohne-code, nicht {anderes}")
+        }
+    }
+}
+
+/// Die IP des Aufrufers.
+///
+/// Die Gültigkeit hängt an der Kette, nicht am ersten Eintrag: der Kopf wird
+/// **von rechts** gelesen, und genommen wird die erste Adresse, die in
+/// **keinem** vertrauten Netz liegt – der entfernteste Absender, den der letzte
+/// vertraute Proxy gesehen hat. Adressen davor sind nicht belegt und werden
+/// übergangen.
+///
+/// Alle Kopfzeilen dieses Namens werden in ihrer Reihenfolge zu einer Kette
+/// zusammengefasst: ein Proxy darf eine zweite Zeile anhängen, statt die erste
+/// zu erweitern (`headers.get` würde nur die erste sehen).
 pub fn aufrufer_ip(
     peer: Option<SocketAddr>,
-    x_forwarded_for: Option<&str>,
+    x_forwarded_for: &[&str],
     proxies: &[Netz],
 ) -> Option<IpAddr> {
     let peer = peer?;
-    if proxies.iter().any(|netz| netz.enthaelt(peer.ip())) {
-        if let Some(kopf) = x_forwarded_for {
-            if let Some(erste) = kopf.split(',').next() {
-                if let Ok(ip) = erste.trim().parse::<IpAddr>() {
-                    return Some(ip);
-                }
+    if !proxies.iter().any(|netz| netz.enthaelt(peer.ip())) {
+        // Der letzte Absender ist kein vertrauter Proxy: seinen Kopf glauben
+        // wir nicht.
+        return Some(peer.ip());
+    }
+    let mut kette: Vec<IpAddr> = Vec::new();
+    for kopf in x_forwarded_for {
+        for teil in kopf.split(',') {
+            if let Ok(ip) = teil.trim().parse::<IpAddr>() {
+                kette.push(ip);
             }
         }
     }
-    Some(peer.ip())
+    kette
+        .iter()
+        .rev()
+        .find(|ip| !proxies.iter().any(|netz| netz.enthaelt(**ip)))
+        .copied()
+        .or_else(|| kette.first().copied())
+        .or(Some(peer.ip()))
 }
 
 #[cfg(test)]
@@ -672,16 +793,78 @@ mod tests {
 
         let peer: SocketAddr = "10.0.0.5:1234".parse().unwrap();
         let alle = vec![Netz::lesen("10.0.0.0/8").unwrap()];
+        // Von rechts: die erste Adresse, die in keinem vertrauten Netz liegt.
         assert_eq!(
-            aufrufer_ip(Some(peer), Some("203.0.113.9, 10.0.0.5"), &alle),
+            aufrufer_ip(Some(peer), &["203.0.113.9, 10.0.0.5"], &alle),
             Some("203.0.113.9".parse().unwrap())
+        );
+        // Der Client schreibt links, was er will: geglaubt wird von rechts.
+        assert_eq!(
+            aufrufer_ip(Some(peer), &["1.1.1.1, 203.0.113.9, 10.0.0.5"], &alle),
+            Some("203.0.113.9".parse().unwrap()),
+            "die linke Adresse ist nicht belegt"
+        );
+        // Zwei Kopfzeilen: eine hängt hinten an, statt die erste zu erweitern.
+        assert_eq!(
+            aufrufer_ip(Some(peer), &["1.1.1.1", "203.0.113.9"], &alle),
+            Some("203.0.113.9".parse().unwrap()),
+            "beide Zeilen in Reihenfolge zusammengefasst"
+        );
+        // Nur vertraute Adressen in der Kette: der Peer bleibt.
+        assert_eq!(
+            aufrufer_ip(Some(peer), &["10.0.0.7"], &alle),
+            Some("10.0.0.7".parse().unwrap())
         );
         // Nicht vertrauter Proxy: der Kopf wird ignoriert.
         assert_eq!(
-            aufrufer_ip(Some(peer), Some("203.0.113.9"), &[]),
+            aufrufer_ip(Some(peer), &["203.0.113.9"], &[]),
             Some("10.0.0.5".parse().unwrap())
         );
-        assert_eq!(aufrufer_ip(None, Some("203.0.113.9"), &alle), None);
+        assert_eq!(aufrufer_ip(None, &["203.0.113.9"], &alle), None);
+    }
+
+    /// Härtung Punkt 10: mit Entra sind Altgeräte ohne Angabe gesperrt.
+    #[test]
+    fn altgeraete_haengen_an_entra() {
+        assert!(!altgeraete_aus(None, true).unwrap(), "mit Entra: gesperrt");
+        assert!(altgeraete_aus(None, false).unwrap(), "ohne Entra: offen");
+        assert!(altgeraete_aus(Some("erlaubt"), true).unwrap());
+        assert!(!altgeraete_aus(Some("gesperrt"), false).unwrap());
+        assert!(!altgeraete_aus(Some(""), true).unwrap());
+        assert!(altgeraete_aus(Some("vielleicht"), true).is_err());
+    }
+
+    #[test]
+    fn einrichtung_braucht_den_code_ausser_auf_loopback() {
+        let loopback: SocketAddr = "127.0.0.1:8740".parse().unwrap();
+        let offen: SocketAddr = "0.0.0.0:8740".parse().unwrap();
+        // Loopback-Bindung und Loopback-URL: kein Code nötig.
+        let mut konfig = Konfig::neu(".");
+        assert!(!konfig.einrichtung_mit_code());
+        // Sobald der Server nicht nur auf Loopback lauscht: Code, auch bei
+        // Loopback-Basis-URL (so läuft der Container).
+        konfig.adresse = offen;
+        assert!(konfig.einrichtung_mit_code());
+        // Öffentliche Basis-URL bei Loopback-Bindung: ebenfalls Code.
+        let mut konfig = Konfig::neu(".");
+        konfig.oeffentlich = String::from("https://quiver.example.test");
+        assert!(konfig.einrichtung_mit_code());
+        // Ausnahme nur ausdrücklich und nur auf Loopback.
+        assert!(einrichtung_aus(Some("ohne-code"), "http://localhost:8740", loopback).unwrap());
+        assert!(
+            einrichtung_aus(Some("ohne-code"), "https://quiver.example.test", loopback).is_err()
+        );
+        assert!(!einrichtung_aus(Some("mit-code"), "http://localhost:8740", loopback).unwrap());
+        assert!(!einrichtung_aus(None, "http://localhost:8740", loopback).unwrap());
+        assert!(einrichtung_aus(Some("vielleicht"), "http://localhost:8740", loopback).is_err());
+        let mut konfig = Konfig::neu(".");
+        konfig.einrichtung_ohne_code = true;
+        assert!(!konfig.einrichtung_mit_code(), "ohne-code auf Loopback");
+        konfig.adresse = offen;
+        assert!(
+            konfig.einrichtung_mit_code(),
+            "ohne-code gilt nicht, sobald der Server im Netz lauscht"
+        );
     }
 
     #[test]

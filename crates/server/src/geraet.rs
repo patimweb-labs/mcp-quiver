@@ -174,11 +174,16 @@ pub(crate) async fn soll(
 }
 
 /// Letzte Meldung des Clients speichern.
+///
+/// Die Meldung wird vor dem Speichern gekürzt (Härtung, Punkt 13): höchstens
+/// 200 Einträge, Texte auf 500 Zeichen, Client-Fassung auf 64 Zeichen. Der
+/// Rumpf selbst ist bereits auf 64 KB begrenzt.
 pub(crate) async fn meldung(
     State(zustand): State<Arc<Zustand>>,
     Extension(id): Extension<GeraetId>,
-    Koerper(meldung): Koerper<Meldung>,
+    Koerper(mut meldung): Koerper<Meldung>,
 ) -> Ergebnis<StatusCode> {
+    crate::grenzen::meldung_kuerzen(&mut meldung);
     let gesehen = hilfen::als_text(hilfen::jetzt());
     let kennung = id.clone();
     db(&zustand, move |conn| {
@@ -189,6 +194,20 @@ pub(crate) async fn meldung(
     })
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Erst abonnieren, dann rechnen.
+///
+/// Diese Reihenfolge ist der Kern von Punkt 8: wird die Revision vor dem
+/// Abonnement berechnet, geht eine Änderung zwischen beiden Schritten
+/// verloren – das Gerät bliebe bis zur nächsten Nachfrage auf dem alten Stand.
+fn abonnieren_dann_rechnen<T>(
+    kanal: &tokio::sync::broadcast::Sender<()>,
+    rechnen: impl FnOnce() -> T,
+) -> (tokio::sync::broadcast::Receiver<()>, T) {
+    let empfaenger = kanal.subscribe();
+    let wert = rechnen();
+    (empfaenger, wert)
 }
 
 /// Ereignis-Strom: sofort die aktuelle Revision, danach nur bei Änderung.
@@ -209,8 +228,11 @@ pub(crate) async fn ereignisse(
             ),
         ));
     };
-    let start = soll_fuer(&zustand, &id).await?.revision;
-    let empfaenger = zustand.geaendert.subscribe();
+    // Erst abonnieren, dann die Revision rechnen (siehe
+    // [`abonnieren_dann_rechnen`]); sonst fällt eine Änderung dazwischen aus.
+    let (empfaenger, start) = abonnieren_dann_rechnen(&zustand.geaendert, || zustand.clone());
+    let start = soll_fuer(&start, &id).await?.revision;
+    let ende = zustand.ende_abo();
 
     let weitere = futures_util::stream::unfold(
         (
@@ -219,11 +241,22 @@ pub(crate) async fn ereignisse(
             id.clone(),
             start.clone(),
             waechter,
+            ende,
         ),
-        |(mut empfaenger, zustand, id, letzte, waechter)| async move {
+        |(mut empfaenger, zustand, id, letzte, waechter, mut ende)| async move {
             loop {
                 // Jede Änderung (auch ein Rückstand) ist ein Anlass, neu zu rechnen.
-                empfaenger.next().await.as_ref()?;
+                let ereignis = tokio::select! {
+                    // Der Server fährt herunter: der Strom endet sofort.
+                    _ = ende.recv() => None,
+                    eintrag = empfaenger.next() => Some(eintrag),
+                };
+                match ereignis {
+                    None | Some(None) => return None,
+                    // Ein Rückstand ist kein Ende: neu rechnen genügt.
+                    Some(Some(Err(_))) => continue,
+                    Some(Some(Ok(()))) => {}
+                }
                 // Entfernt oder gesperrt: der Strom endet. Der Client verbindet
                 // neu, bekommt 401/403 und stoppt alle Tools.
                 if !crate::auth::geraet_erlaubt(&zustand, &id).await {
@@ -235,7 +268,8 @@ pub(crate) async fn ereignisse(
                         let ereignis = Event::default()
                             .event(EREIGNIS_SOLL)
                             .data(soll.revision.clone());
-                        let zustand_strom = (empfaenger, zustand, id, soll.revision, waechter);
+                        let zustand_strom =
+                            (empfaenger, zustand, id, soll.revision, waechter, ende);
                         return Some((Ok::<_, Infallible>(ereignis), zustand_strom));
                     }
                     Ok(_) => {}
@@ -252,4 +286,38 @@ pub(crate) async fn ereignisse(
     });
     Ok(Sse::new(erste.chain(weitere))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Der Haken zwischen den Schritten: eine Änderung, die genau zwischen
+    /// „abonnieren“ und „rechnen“ eintrifft, darf nicht verloren gehen.
+    #[test]
+    fn ereignis_zwischen_abonnieren_und_rechnen_geht_nicht_verloren() {
+        let (sender, _) = tokio::sync::broadcast::channel(8);
+        let (mut empfaenger, gesehen) = abonnieren_dann_rechnen(&sender, || {
+            // Genau hier passiert die Änderung – nach dem Abonnieren.
+            sender.send(()).expect("Empfänger ist da");
+            42
+        });
+        assert_eq!(gesehen, 42);
+        assert!(
+            empfaenger.try_recv().is_ok(),
+            "das Ereignis ist im Abonnement angekommen"
+        );
+    }
+
+    /// Zum Vergleich: rechnen **vor** dem Abonnieren verliert das Ereignis.
+    #[test]
+    fn die_alte_reihenfolge_wuerde_das_ereignis_verlieren() {
+        let (sender, _) = tokio::sync::broadcast::channel(8);
+        // Ein anderer Empfänger hält den Kanal offen; das neue Abonnement
+        // bekommt trotzdem nichts von dem, was vorher gesendet wurde.
+        let _frueher = sender.subscribe();
+        assert!(sender.send(()).is_ok());
+        let mut empfaenger = sender.subscribe();
+        assert!(empfaenger.try_recv().is_err(), "nichts mehr da");
+    }
 }

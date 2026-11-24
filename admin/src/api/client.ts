@@ -12,6 +12,8 @@
 // und zeigt wieder die Anmeldung. Dafür meldet sich dieses Modul bei einem
 // Beobachter an – die Ansichten müssen 401 nicht selbst behandeln.
 
+import { etag } from "../logik/etag";
+
 import type {
   Anmeldearten,
   AuthStand,
@@ -88,6 +90,8 @@ export function kopfzeilen(
 interface Anfrage {
   methode?: Methode;
   rumpf?: unknown;
+  /** Zusätzliche Köpfe, etwa `If-Match` beim Speichern. */
+  koepfe?: Record<string, string>;
   /**
    * `true` für Wege, bei denen ein 401 ein gewöhnlicher Fehler ist (Anmelden,
    * Einrichten, Abmelden): dort gibt es keine Sitzung, die ablaufen könnte.
@@ -117,7 +121,7 @@ async function anfrage<T>(pfad: string, optionen: Anfrage = {}): Promise<T> {
   try {
     antwort = await fetch(pfad, {
       method: methode,
-      headers: kopfzeilen(methode, rumpf !== undefined),
+      headers: { ...kopfzeilen(methode, rumpf !== undefined), ...optionen.koepfe },
       body: rumpf,
       // Nur die eigene Herkunft bekommt das Sitzungscookie; kein CORS.
       credentials: "same-origin",
@@ -227,8 +231,30 @@ export const MICROSOFT_ANMELDUNG = `${AUTH_BASIS}/admin/start`;
 
 // ------------------------------------------------------------- Verwaltung
 
+/**
+ * Die ETags der geladenen Stände, je Art und Kennung.
+ *
+ * Sie entstehen beim Laden aus dem Inhalt (dieselbe Rechnung wie im Server,
+ * `logik/etag.ts`) und gehen beim Speichern als `If-Match` mit. Weicht der
+ * Stand inzwischen ab, antwortet der Server mit 409 und die Ansicht lädt neu.
+ */
+class Staende {
+  private karte = new Map<string, string>();
+
+  merken(art: string, id: string, wert: unknown): void {
+    this.karte.set(`${art}:${id}`, etag(wert));
+  }
+
+  /** Kopf für eine Änderung; leer, wenn der Stand unbekannt ist (neu). */
+  kopf(art: string, id: string): Record<string, string> {
+    const wert = this.karte.get(`${art}:${id}`);
+    return wert ? { "If-Match": wert } : {};
+  }
+}
+
 /** Der Client der Verwaltung; die Sitzung steckt im Cookie. */
 export class Client {
+  private staende = new Staende();
   // ------------------------------------------------------------ Überblick
 
   ueberblick(): Promise<Ueberblick> {
@@ -237,15 +263,25 @@ export class Client {
 
   // ------------------------------------------------------------ Einträge
 
-  eintraege(): Promise<Eintrag[]> {
-    return anfrage<Eintrag[]>(`${API_BASIS}/admin/eintraege`);
+  async eintraege(): Promise<Eintrag[]> {
+    const liste = await anfrage<Eintrag[]>(`${API_BASIS}/admin/eintraege`);
+    for (const eintrag of liste) {
+      this.staende.merken("eintrag", eintrag.id, eintrag);
+    }
+    return liste;
   }
 
-  eintragSetzen(eintrag: Eintrag): Promise<Eintrag> {
-    return anfrage<Eintrag>(`${API_BASIS}/admin/eintraege/${pfad(eintrag.id)}`, {
-      methode: "PUT",
-      rumpf: eintrag,
-    });
+  async eintragSetzen(eintrag: Eintrag): Promise<Eintrag> {
+    const gespeichert = await anfrage<Eintrag>(
+      `${API_BASIS}/admin/eintraege/${pfad(eintrag.id)}`,
+      {
+        methode: "PUT",
+        rumpf: eintrag,
+        koepfe: this.staende.kopf("eintrag", eintrag.id),
+      },
+    );
+    this.staende.merken("eintrag", gespeichert.id, gespeichert);
+    return gespeichert;
   }
 
   eintragLoeschen(id: EintragId): Promise<void> {
@@ -264,15 +300,25 @@ export class Client {
 
   // --------------------------------------------------------------- Sätze
 
-  saetze(): Promise<Satz[]> {
-    return anfrage<Satz[]>(`${API_BASIS}/admin/saetze`);
+  async saetze(): Promise<Satz[]> {
+    const liste = await anfrage<Satz[]>(`${API_BASIS}/admin/saetze`);
+    for (const satz of liste) {
+      this.staende.merken("satz", satz.id, satz);
+    }
+    return liste;
   }
 
-  satzSetzen(satz: Satz): Promise<Satz> {
-    return anfrage<Satz>(`${API_BASIS}/admin/saetze/${pfad(satz.id)}`, {
-      methode: "PUT",
-      rumpf: satz,
-    });
+  async satzSetzen(satz: Satz): Promise<Satz> {
+    const gespeichert = await anfrage<Satz>(
+      `${API_BASIS}/admin/saetze/${pfad(satz.id)}`,
+      {
+        methode: "PUT",
+        rumpf: satz,
+        koepfe: this.staende.kopf("satz", satz.id),
+      },
+    );
+    this.staende.merken("satz", gespeichert.id, gespeichert);
+    return gespeichert;
   }
 
   satzLoeschen(id: SatzId): Promise<void> {
@@ -299,15 +345,25 @@ export class Client {
 
   // ------------------------------------------------------------- Gruppen
 
-  gruppen(): Promise<Gruppe[]> {
-    return anfrage<Gruppe[]>(`${API_BASIS}/admin/gruppen`);
+  async gruppen(): Promise<Gruppe[]> {
+    const liste = await anfrage<Gruppe[]>(`${API_BASIS}/admin/gruppen`);
+    for (const gruppe of liste) {
+      this.staende.merken("gruppe", gruppe.id, gruppe);
+    }
+    return liste;
   }
 
-  gruppeSetzen(gruppe: Gruppe): Promise<Gruppe> {
-    return anfrage<Gruppe>(`${API_BASIS}/admin/gruppen/${pfad(gruppe.id)}`, {
-      methode: "PUT",
-      rumpf: gruppe,
-    });
+  async gruppeSetzen(gruppe: Gruppe): Promise<Gruppe> {
+    const gespeichert = await anfrage<Gruppe>(
+      `${API_BASIS}/admin/gruppen/${pfad(gruppe.id)}`,
+      {
+        methode: "PUT",
+        rumpf: gruppe,
+        koepfe: this.staende.kopf("gruppe", gruppe.id),
+      },
+    );
+    this.staende.merken("gruppe", gespeichert.id, gespeichert);
+    return gespeichert;
   }
 
   gruppeLoeschen(id: GruppeId): Promise<void> {
@@ -331,15 +387,30 @@ export class Client {
 
   // -------------------------------------------------------------- Geräte
 
-  geraete(): Promise<GeraetStand[]> {
-    return anfrage<GeraetStand[]>(`${API_BASIS}/admin/geraete`);
+  async geraete(): Promise<GeraetStand[]> {
+    const liste = await anfrage<GeraetStand[]>(`${API_BASIS}/admin/geraete`);
+    // Der Vergleichswert ist der Gerätestand (Name, Gruppen, Sperre), nicht die
+    // Anzeige drumherum (Revision, Verbindung ändern sich laufend).
+    for (const stand of liste) {
+      this.staende.merken("geraet", stand.geraet.id, stand.geraet);
+    }
+    return liste;
   }
 
-  geraetSetzen(id: string, aenderung: GeraetAendern): Promise<GeraetStand> {
-    return anfrage<GeraetStand>(`${API_BASIS}/admin/geraete/${pfad(id)}`, {
-      methode: "PUT",
-      rumpf: aenderung,
-    });
+  async geraetSetzen(
+    id: string,
+    aenderung: GeraetAendern,
+  ): Promise<GeraetStand> {
+    const stand = await anfrage<GeraetStand>(
+      `${API_BASIS}/admin/geraete/${pfad(id)}`,
+      {
+        methode: "PUT",
+        rumpf: aenderung,
+        koepfe: this.staende.kopf("geraet", id),
+      },
+    );
+    this.staende.merken("geraet", stand.geraet.id, stand.geraet);
+    return stand;
   }
 
   geraetLoeschen(id: string): Promise<void> {

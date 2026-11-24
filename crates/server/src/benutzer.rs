@@ -87,6 +87,7 @@ pub(crate) async fn root_anmelden(
     req: Request,
 ) -> Ergebnis<Response> {
     let ip = sitzung::aufrufer(&req, &zustand);
+    let unterscheidbar = sitzung::ip_unterscheidbar(&req, &zustand);
     let (teile, rumpf) = req.into_parts();
     sitzung::aenderung_pruefen(&teile.headers, &zustand.konfig.oeffentlich)?;
     let bytes = axum::body::to_bytes(rumpf, 64 * 1024)
@@ -108,7 +109,21 @@ pub(crate) async fn root_anmelden(
     let jetzt = zustand.uhr.jetzt();
     let ip_schluessel = ip_schluessel(ip);
     let konto = konto_schluessel(&email);
-    warteschlange(&zustand, &ip_schluessel, &konto, jetzt)?;
+    // Regel (Härtung, Punkt 5): von einer Adresse, von der in den letzten 30
+    // Tagen eine Root-Anmeldung gelang, gilt nur die IP-Drossel. So sperrt die
+    // Konto-Drossel den Besitzer nicht aus, wenn jemand anders dessen Konto
+    // durchprobiert. Für fremde Adressen gilt zusätzlich die Konto-Drossel.
+    let ip_bekannt = {
+        let schluessel = ip_schluessel.clone();
+        db(&zustand, move |conn| {
+            speicher::root_ip_bekannt(conn, &schluessel, jetzt)
+        })
+        .await?
+    };
+    // Ist die Adresse nicht unterscheidbar (etwa hinter der Docker-Brücke),
+    // darf die Konto-Drossel höchstens 60 Sekunden sperren.
+    let konto_hoechstens = (!unterscheidbar).then_some(60i64);
+    warteschlange(&zustand, &ip_schluessel, &konto, jetzt, !ip_bekannt)?;
 
     let root = db(&zustand, {
         let email = email.clone();
@@ -146,23 +161,22 @@ pub(crate) async fn root_anmelden(
     };
     let passt = tokio::task::spawn_blocking(move || passwort_pruefen(&passwort, &hash))
         .await
-        .map_err(|fehler| {
-            FehlerAntwort::intern(format!("Passwortprüfung gescheitert: {fehler}"))
-        })?;
+        .map_err(|fehler| FehlerAntwort::intern_mit_kennung(&fehler))?;
     drop(permit);
 
     // Unbekannte E-Mail und falsches Passwort: gleiche Antwort, gleiche Dauer.
     let passt = passt && vorhanden;
     if !passt {
         zustand.drossel.fehlschlag(&ip_schluessel, jetzt);
-        zustand.drossel.fehlschlag(&konto, jetzt);
-        let akteur = if vorhanden {
-            email.clone()
-        } else {
-            "unbekannt".to_string()
-        };
+        if !ip_bekannt {
+            zustand
+                .drossel
+                .fehlschlag_bis(&konto, jetzt, konto_hoechstens);
+        }
+        // Fehlversuche stehen je Adresse und Stunde als ein Eintrag mit Zähler.
+        let akteur = ip_schluessel.clone();
         db(&zustand, move |conn| {
-            speicher::pruefspur_schreiben(conn, jetzt, "fehlschlag", &akteur, "Root-Anmeldung")?;
+            speicher::pruefspur_fehlschlag(conn, jetzt, &akteur, "Root-Anmeldung")?;
             Ok(())
         })
         .await?;
@@ -172,13 +186,21 @@ pub(crate) async fn root_anmelden(
     }
 
     zustand.drossel.erfolg(&ip_schluessel);
-    zustand.drossel.erfolg(&konto);
+    if !ip_bekannt {
+        zustand.drossel.erfolg(&konto);
+    }
 
     let kennung = speicher::ROOT_OID.to_string();
-    let token = db(&zustand, move |conn| {
-        let token = sitzung::sitzung_anlegen(conn, &kennung, jetzt)?;
-        speicher::pruefspur_schreiben(conn, jetzt, "anmeldung", &email, "Root über Passwort")?;
-        Ok(token)
+    let token = db(&zustand, {
+        let ip = ip_schluessel.clone();
+        let email = email.clone();
+        move |conn| {
+            let token = sitzung::sitzung_anlegen(conn, &kennung, jetzt)?;
+            // Die Adresse merken: von hier kam ein Root durch.
+            speicher::root_ip_merken(conn, &ip, jetzt)?;
+            speicher::pruefspur_schreiben(conn, jetzt, "anmeldung", &email, "Root über Passwort")?;
+            Ok(token)
+        }
     })
     .await?;
 
@@ -193,8 +215,21 @@ pub(crate) async fn root_anmelden(
 }
 
 /// Prüft beide Drosseln und antwortet mit 429, wenn eine noch sperrt.
-fn warteschlange(zustand: &Zustand, ip: &str, konto: &str, jetzt: OffsetDateTime) -> Ergebnis<()> {
-    let warten = [ip, konto]
+///
+/// `konto_gilt` ist `false`, wenn die Adresse schon einmal einen Root
+/// durchgelassen hat: dann zählt nur die IP-Drossel (Punkt 5).
+fn warteschlange(
+    zustand: &Zustand,
+    ip: &str,
+    konto: &str,
+    jetzt: OffsetDateTime,
+    konto_gilt: bool,
+) -> Ergebnis<()> {
+    let mut schluessel = vec![ip];
+    if konto_gilt {
+        schluessel.push(konto);
+    }
+    let warten = schluessel
         .iter()
         .filter_map(|schluessel| zustand.drossel.wartezeit(schluessel, jetzt))
         .max();
@@ -656,6 +691,7 @@ pub(crate) async fn pruefspur(
                 art: zeile.art,
                 akteur: zeile.akteur,
                 text: zeile.text,
+                anzahl: zeile.anzahl,
             })
             .collect())
     })

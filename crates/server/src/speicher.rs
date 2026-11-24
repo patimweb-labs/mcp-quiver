@@ -35,7 +35,9 @@ pub const UNBEGRENZT: &str = "unbegrenzt";
 /// 2 = Aufgabe 23: `entra_gruppen` merkt sich gelöschte Gruppen.
 /// 3 = Aufgabe 30: `entra_gruppen` merkt sich den Namen aus Entra und wann er
 ///     geholt wurde.
-pub const SCHEMA_VERSION: i64 = 3;
+/// 4 = Härtung: Alter und letzte Nutzung des Geräte-Tokens, Zähler in der
+///     Prüfspur, gemerkte Root-Anmeldeadressen, Indizes für Ablauf und Zeit.
+pub const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -49,7 +51,9 @@ CREATE TABLE IF NOT EXISTS geraete (
     meldung_json    TEXT,
     oid             TEXT,
     tid             TEXT,
-    manuell_json    TEXT NOT NULL DEFAULT '[]'
+    manuell_json    TEXT NOT NULL DEFAULT '[]',
+    token_erstellt  TEXT,
+    token_zuletzt   TEXT
 );
 CREATE TABLE IF NOT EXISTS codes (
     code        TEXT PRIMARY KEY,
@@ -83,7 +87,14 @@ CREATE TABLE IF NOT EXISTS pruefspur (
     zeit          TEXT NOT NULL,
     art           TEXT NOT NULL,
     akteur        TEXT NOT NULL,
-    text          TEXT NOT NULL
+    text          TEXT NOT NULL,
+    anzahl        INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS pruefspur_zeit ON pruefspur (zeit);
+CREATE INDEX IF NOT EXISTS pruefspur_art_akteur ON pruefspur (art, akteur, zeit);
+CREATE TABLE IF NOT EXISTS root_ips (
+    ip            TEXT PRIMARY KEY,
+    zuletzt       TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS oidc_zustand (
     state_hash    TEXT PRIMARY KEY,
@@ -97,6 +108,7 @@ CREATE TABLE IF NOT EXISTS oidc_zustand (
     name          TEXT NOT NULL,
     gueltig_bis   TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS oidc_zustand_gueltig ON oidc_zustand (gueltig_bis);
 CREATE TABLE IF NOT EXISTS bestaetigungen (
     token_hash    TEXT PRIMARY KEY,
     cookie_hash   TEXT NOT NULL,
@@ -112,6 +124,7 @@ CREATE TABLE IF NOT EXISTS bestaetigungen (
     geraetezustand TEXT NOT NULL,
     gueltig_bis   TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS bestaetigungen_gueltig ON bestaetigungen (gueltig_bis);
 CREATE TABLE IF NOT EXISTS geraete_codes (
     code_hash     TEXT PRIMARY KEY,
     oid           TEXT NOT NULL,
@@ -131,7 +144,7 @@ CREATE TABLE IF NOT EXISTS entra_gruppen (
 );
 "#;
 
-/// Datenbank öffnen, sichern (nur bei einer Datei), migrieren, Schema prüfen.
+/// Datenbank öffnen, sichern (nur bei einer Datei), migrieren, prüfen.
 pub fn oeffnen(pfad: &Path) -> anyhow::Result<Connection> {
     let ist_datei = pfad.to_string_lossy() != ":memory:";
     let version = if ist_datei && pfad.exists() {
@@ -145,12 +158,10 @@ pub fn oeffnen(pfad: &Path) -> anyhow::Result<Connection> {
             pfad.file_name().unwrap_or_default().to_string_lossy(),
             SCHEMA_VERSION
         ));
-        std::fs::copy(pfad, &sicherung).with_context(|| {
-            format!(
-                "Sicherung der Datenbank nach {} vor der Migration",
-                sicherung.display()
-            )
-        })?;
+        // Über die Sicherungsschnittstelle von SQLite und nicht über eine
+        // Dateikopie: so ist der Inhalt des WAL mit im Bild und die Kopie ist
+        // in sich stimmig, auch während geschrieben wird.
+        sichern(pfad, &sicherung)?;
         // Die Sicherung enthält dieselben Daten wie die Datenbank: nur der
         // Eigentümer darf sie lesen. Und es bleiben die letzten drei.
         crate::rechte::datei_schuetzen(&sicherung);
@@ -177,7 +188,35 @@ pub fn oeffnen(pfad: &Path) -> anyhow::Result<Connection> {
         }
     }
     migrieren(&conn)?;
+    // Nach der Migration muss die Datenbank in Ordnung sein; sonst lieber
+    // nicht weiterarbeiten (die Sicherung von vorhin liegt ja daneben).
+    integritaet_pruefen(&conn)?;
     Ok(conn)
+}
+
+/// Die Datenbank über die Sicherungsschnittstelle kopieren (mit WAL).
+fn sichern(quelle: &Path, ziel: &Path) -> anyhow::Result<()> {
+    let von = Connection::open(quelle)
+        .with_context(|| format!("Datenbank {} für die Sicherung öffnen", quelle.display()))?;
+    let mut nach = Connection::open(ziel)
+        .with_context(|| format!("Sicherung {} vor der Migration anlegen", ziel.display()))?;
+    let sicherung = rusqlite::backup::Backup::new(&von, &mut nach)
+        .with_context(|| format!("Sicherung nach {} beginnen", ziel.display()))?;
+    sicherung
+        .run_to_completion(100, std::time::Duration::from_millis(20), None)
+        .with_context(|| format!("Sicherung nach {} schreiben", ziel.display()))?;
+    drop(sicherung);
+    // Die Kopie muss für sich stimmig sein, bevor die Migration sie ersetzt.
+    integritaet_pruefen(&nach)
+}
+
+/// `PRAGMA integrity_check` – meldet nur „ok“ als Erfolg.
+fn integritaet_pruefen(conn: &Connection) -> anyhow::Result<()> {
+    let befund: String = conn.query_row("PRAGMA integrity_check", [], |zeile| zeile.get(0))?;
+    if befund != "ok" {
+        anyhow::bail!("integrity_check meldet: {befund}");
+    }
+    Ok(())
 }
 
 fn zeige_version(pfad: &Path) -> anyhow::Result<i64> {
@@ -256,6 +295,26 @@ fn migrieren(conn: &Connection) -> anyhow::Result<()> {
                 )?;
             }
         }
+    }
+    // Härtung (Paket 2): Alter und letzte Nutzung des Geräte-Tokens. Was schon
+    // da ist, beginnt bei Null – gerechnet ab dieser Migration.
+    let jetzt_text = hilfen::als_text(hilfen::jetzt());
+    for spalte in ["token_erstellt", "token_zuletzt"] {
+        if !spalte_existiert(conn, GERAETE, spalte)? {
+            conn.execute(&format!("ALTER TABLE geraete ADD COLUMN {spalte} TEXT"), [])?;
+        }
+        // Was schon da ist, beginnt bei Null – gerechnet ab dieser Migration.
+        conn.execute(
+            &format!("UPDATE geraete SET {spalte} = ?1 WHERE {spalte} IS NULL"),
+            params![jetzt_text],
+        )?;
+    }
+    // Die Prüfspur zählt gleiche Fehlversuche je Stunde zusammen.
+    if !spalte_existiert(conn, "pruefspur", "anzahl")? {
+        conn.execute(
+            "ALTER TABLE pruefspur ADD COLUMN anzahl INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
@@ -364,6 +423,17 @@ pub fn unbekannte_eintraege(conn: &Connection, satz: &Satz) -> anyhow::Result<Ve
         .collect())
 }
 
+/// Verweise einer Gruppe auf Sätze, die es nicht gibt.
+pub fn unbekannte_saetze(conn: &Connection, gruppe: &Gruppe) -> anyhow::Result<Vec<String>> {
+    let saetze: Vec<Satz> = liste(conn, SAETZE)?;
+    Ok(gruppe
+        .saetze
+        .iter()
+        .map(|id| id.als_str().to_string())
+        .filter(|id| !saetze.iter().any(|satz| satz.id.als_str() == id))
+        .collect())
+}
+
 /// Ein Gerät mit allem, was dazu in der Datenbank steht.
 #[derive(Debug, Clone)]
 pub struct GeraetZeile {
@@ -375,9 +445,14 @@ pub struct GeraetZeile {
     pub tid: Option<String>,
     /// Nur die am Gerät gesetzten Gruppen (ohne die aus Entra).
     pub manuell: Vec<GruppeId>,
+    /// Wann das Geräte-Token entstand (RFC 3339).
+    pub token_erstellt: Option<String>,
+    /// Wann das Geräte-Token zuletzt benutzt wurde (RFC 3339).
+    pub token_zuletzt: Option<String>,
 }
 
-const GERAET_SPALTEN: &str = "json, zuletzt_gesehen, meldung_json, oid, tid, manuell_json";
+const GERAET_SPALTEN: &str =
+    "json, zuletzt_gesehen, meldung_json, oid, tid, manuell_json, token_erstellt, token_zuletzt";
 
 fn zeile_aus(zeile: &rusqlite::Row<'_>) -> rusqlite::Result<GeraetZeile> {
     let json: String = zeile.get(0)?;
@@ -406,6 +481,8 @@ fn zeile_aus(zeile: &rusqlite::Row<'_>) -> rusqlite::Result<GeraetZeile> {
         oid: zeile.get(3)?,
         tid: zeile.get(4)?,
         manuell,
+        token_erstellt: zeile.get(6)?,
+        token_zuletzt: zeile.get(7)?,
     })
 }
 
@@ -442,10 +519,20 @@ pub fn lege_geraet_an(
 ) -> anyhow::Result<()> {
     let json = serde_json::to_string(geraet)?;
     let manuell = serde_json::to_string(manuell_gruppen.unwrap_or(&geraet.gruppen))?;
+    let jetzt = hilfen::als_text(hilfen::jetzt());
     conn.execute(
-        "INSERT INTO geraete (id, json, token_hash, oid, tid, manuell_json) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![geraet.id.als_str(), json, token_hash, oid, tid, manuell],
+        "INSERT INTO geraete (id, json, token_hash, oid, tid, manuell_json, token_erstellt, \
+         token_zuletzt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            geraet.id.als_str(),
+            json,
+            token_hash,
+            oid,
+            tid,
+            manuell,
+            jetzt,
+            jetzt
+        ],
     )?;
     Ok(())
 }
@@ -469,10 +556,13 @@ pub fn erneuere_geraet(
 ) -> anyhow::Result<bool> {
     let json = serde_json::to_string(geraet)?;
     let manuell = serde_json::to_string(&geraet.gruppen)?;
+    // Ein neues Token: Alter und letzte Nutzung beginnen von vorn.
+    let jetzt = hilfen::als_text(hilfen::jetzt());
     Ok(conn.execute(
-        "UPDATE geraete SET token_hash = ?2, oid = ?3, tid = ?4, json = ?5, manuell_json = ?6 \
+        "UPDATE geraete SET token_hash = ?2, oid = ?3, tid = ?4, json = ?5, manuell_json = ?6, \
+         token_erstellt = ?7, token_zuletzt = ?7 \
          WHERE id = ?1",
-        params![id, token_hash, oid, tid, json, manuell],
+        params![id, token_hash, oid, tid, json, manuell, jetzt],
     )? > 0)
 }
 
@@ -512,6 +602,71 @@ pub fn setze_gesehen(conn: &Connection, id: &str, gesehen: &str) -> anyhow::Resu
         params![id, gesehen],
     )?;
     Ok(())
+}
+
+/// Letzte Nutzung des Geräte-Tokens nachziehen.
+///
+/// Höchstens einmal je Stunde geschrieben: der Wert dient der Altersgrenze und
+/// muss dafür nicht auf die Sekunde stimmen; jede Anfrage zu schreiben wäre
+/// nur Last auf der einen Verbindung.
+pub fn geraet_token_nutzen(
+    conn: &Connection,
+    id: &str,
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<()> {
+    let vorhanden: Option<String> = conn
+        .query_row(
+            "SELECT token_zuletzt FROM geraete WHERE id = ?1",
+            params![id],
+            |zeile| zeile.get(0),
+        )
+        .optional()?
+        .flatten();
+    if vorhanden
+        .as_deref()
+        .and_then(hilfen::zeit_lesen)
+        .is_some_and(|zuletzt| jetzt - zuletzt < time::Duration::hours(1))
+    {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE geraete SET token_zuletzt = ?2 WHERE id = ?1",
+        params![id, hilfen::als_text(jetzt)],
+    )?;
+    Ok(())
+}
+
+// ------------------------------------------------------- Root-Anmeldeadressen
+
+/// So lange zählt eine Adresse als „hier kam schon einmal ein Root durch".
+pub const ROOT_IP_TAGE: i64 = 30;
+
+/// Eine Adresse merken, von der eine Root-Anmeldung gelang.
+pub fn root_ip_merken(conn: &Connection, ip: &str, jetzt: OffsetDateTime) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO root_ips (ip, zuletzt) VALUES (?1, ?2) \
+         ON CONFLICT(ip) DO UPDATE SET zuletzt = excluded.zuletzt",
+        params![ip, hilfen::als_text(jetzt)],
+    )?;
+    let grenze = jetzt - time::Duration::days(ROOT_IP_TAGE);
+    conn.execute(
+        "DELETE FROM root_ips WHERE zuletzt < ?1",
+        params![hilfen::als_text(grenze)],
+    )?;
+    Ok(())
+}
+
+/// Kam von dieser Adresse in den letzten [`ROOT_IP_TAGE`] eine Root-Anmeldung?
+pub fn root_ip_bekannt(conn: &Connection, ip: &str, jetzt: OffsetDateTime) -> anyhow::Result<bool> {
+    let grenze = jetzt - time::Duration::days(ROOT_IP_TAGE);
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM root_ips WHERE ip = ?1 AND zuletzt >= ?2",
+            params![ip, hilfen::als_text(grenze)],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }
 
 /// Letzte Meldung und Zeitstempel speichern.
@@ -961,12 +1116,45 @@ pub fn pruefspur_schreiben(
         "INSERT INTO pruefspur (zeit, art, akteur, text) VALUES (?1, ?2, ?3, ?4)",
         params![hilfen::als_text(jetzt), art, akteur, text],
     )?;
-    let grenze = jetzt - time::Duration::days(PRUEFSPUR_TAGE);
+    Ok(())
+}
+
+/// Ein Fehlversuch je Adresse und Stunde: ein Eintrag mit Zähler statt einer
+/// Zeile je Versuch.
+///
+/// Die Stunde steckt im Zeitstempel (Anfang `JJJJ-MM-TTTHH`); der Zähler wächst
+/// im selben Eintrag. Das hält die Spur auch bei vielen Versuchen klein.
+pub fn pruefspur_fehlschlag(
+    conn: &Connection,
+    jetzt: OffsetDateTime,
+    akteur: &str,
+    text: &str,
+) -> anyhow::Result<()> {
+    let zeit = hilfen::als_text(jetzt);
+    let stunde = zeit.get(..13).unwrap_or(&zeit);
+    let getroffen = conn.execute(
+        "UPDATE pruefspur SET anzahl = anzahl + 1 \
+         WHERE art = 'fehlschlag' AND akteur = ?1 AND substr(zeit, 1, 13) = ?2",
+        params![akteur, stunde],
+    )?;
+    if getroffen > 0 {
+        return Ok(());
+    }
     conn.execute(
-        "DELETE FROM pruefspur WHERE zeit < ?1",
-        params![hilfen::als_text(grenze)],
+        "INSERT INTO pruefspur (zeit, art, akteur, text, anzahl) VALUES (?1, 'fehlschlag', ?2, ?3, 1)",
+        params![zeit, akteur, text],
     )?;
     Ok(())
+}
+
+/// Alte Einträge entfernen – wird höchstens stündlich aufgerufen, nicht bei
+/// jedem Schreiben.
+pub fn pruefspur_aufraeumen(conn: &Connection, jetzt: OffsetDateTime) -> anyhow::Result<usize> {
+    let grenze = jetzt - time::Duration::days(PRUEFSPUR_TAGE);
+    Ok(conn.execute(
+        "DELETE FROM pruefspur WHERE zeit < ?1",
+        params![hilfen::als_text(grenze)],
+    )?)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -975,6 +1163,8 @@ pub struct PruefspurZeile {
     pub art: String,
     pub akteur: String,
     pub text: String,
+    /// Wie oft dasselbe (Fehlversuche einer Adresse in einer Stunde).
+    pub anzahl: u32,
 }
 
 /// Steht zu diesem Tag schon ein Hinweis mit diesem Anfang in der Prüfspur?
@@ -998,14 +1188,16 @@ pub fn pruefspur_hat_am_tag(
 }
 
 pub fn pruefspur_liste(conn: &Connection, limit: u32) -> anyhow::Result<Vec<PruefspurZeile>> {
-    let mut stmt =
-        conn.prepare("SELECT zeit, art, akteur, text FROM pruefspur ORDER BY id DESC LIMIT ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT zeit, art, akteur, text, anzahl FROM pruefspur ORDER BY id DESC LIMIT ?1",
+    )?;
     let zeilen = stmt.query_map(params![i64::from(limit.clamp(1, 1000))], |zeile| {
         Ok(PruefspurZeile {
             zeit: zeile.get(0)?,
             art: zeile.get(1)?,
             akteur: zeile.get(2)?,
             text: zeile.get(3)?,
+            anzahl: zeile.get::<_, i64>(4).unwrap_or(1).max(1) as u32,
         })
     })?;
     let mut aus = Vec::new();
@@ -1141,6 +1333,14 @@ pub fn oidc_aufraeumen(conn: &Connection, jetzt: OffsetDateTime) -> anyhow::Resu
         params![text],
     )?;
     Ok(())
+}
+
+/// Wie viele Anmeldevorgänge gerade offen sind (für die Obergrenze).
+pub fn oidc_offen(conn: &Connection) -> anyhow::Result<usize> {
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM oidc_zustand", [], |zeile| {
+        zeile.get(0)
+    })?;
+    Ok(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 /// Eine wartende Bestätigung nach der Rückkehr von Entra.
@@ -1914,22 +2114,105 @@ mod tests {
         );
     }
 
+    /// Härtung Punkt 11: vorhandene Geräte beginnen bei Null – Alter und letzte
+    /// Nutzung tragen den Zeitpunkt der Migration.
+    #[test]
+    fn vorhandene_geraete_beginnen_bei_null() {
+        let ordner = ordner("token-alter-migration");
+        let pfad = ordner.join("quiver.db");
+        {
+            let conn = Connection::open(&pfad).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE geraete (
+                    id TEXT PRIMARY KEY, json TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+                    zuletzt_gesehen TEXT, meldung_json TEXT, oid TEXT, tid TEXT,
+                    manuell_json TEXT NOT NULL DEFAULT '[]');
+                 PRAGMA user_version = 3;",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO geraete (id, json, token_hash) VALUES ('alt-1', ?1, 'hash')",
+                params![serde_json::to_string(&Geraet {
+                    id: quiver_domain::GeraetId::neu("alt-1"),
+                    name: "Altgerät".into(),
+                    gruppen: Vec::new(),
+                    gesperrt: false,
+                })
+                .unwrap()],
+            )
+            .unwrap();
+        }
+        let conn = oeffnen(&pfad).unwrap();
+        let zeile = hole_geraet(&conn, "alt-1").unwrap().expect("Gerät bleibt");
+        assert!(
+            zeile.token_erstellt.is_some(),
+            "Alter beginnt bei der Migration"
+        );
+        assert!(
+            zeile.token_zuletzt.is_some(),
+            "Nutzung beginnt bei der Migration"
+        );
+        // Frisch: nicht abgelaufen.
+        let erstellt = hilfen::zeit_lesen(zeile.token_erstellt.as_deref().unwrap()).unwrap();
+        let zuletzt = hilfen::zeit_lesen(zeile.token_zuletzt.as_deref().unwrap()).unwrap();
+        assert!(hilfen::jetzt() - erstellt < time::Duration::minutes(5));
+        assert!(hilfen::jetzt() - zuletzt < time::Duration::minutes(5));
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    #[test]
+    fn root_adresse_wird_gemerkt_und_vergisst_nach_dreissig_tagen() {
+        let conn = gedaechtnis();
+        let jetzt = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        assert!(!root_ip_bekannt(&conn, "ip:203.0.113.20", jetzt).unwrap());
+        root_ip_merken(&conn, "ip:203.0.113.20", jetzt).unwrap();
+        assert!(root_ip_bekannt(&conn, "ip:203.0.113.20", jetzt).unwrap());
+        assert!(!root_ip_bekannt(&conn, "ip:203.0.113.21", jetzt).unwrap());
+        // Nach 30 Tagen zählt sie nicht mehr.
+        assert!(!root_ip_bekannt(
+            &conn,
+            "ip:203.0.113.20",
+            jetzt + time::Duration::days(ROOT_IP_TAGE + 1)
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn fehlversuche_stehen_je_adresse_und_stunde_als_ein_eintrag() {
+        let conn = gedaechtnis();
+        let jetzt = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        for _ in 0..5 {
+            pruefspur_fehlschlag(&conn, jetzt, "ip:203.0.113.9", "Root-Anmeldung").unwrap();
+        }
+        let liste = pruefspur_liste(&conn, 10).unwrap();
+        assert_eq!(liste.len(), 1, "ein Eintrag mit Zähler");
+        assert_eq!(liste[0].anzahl, 5);
+        assert_eq!(liste[0].art, "fehlschlag");
+        // Die nächste Stunde ist ein neuer Eintrag.
+        pruefspur_fehlschlag(
+            &conn,
+            jetzt + time::Duration::hours(1),
+            "ip:203.0.113.9",
+            "Root-Anmeldung",
+        )
+        .unwrap();
+        assert_eq!(pruefspur_liste(&conn, 10).unwrap().len(), 2);
+    }
+
     #[test]
     fn pruefspur_haelt_180_tage() {
         let conn = gedaechtnis();
         let jetzt = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
         pruefspur_schreiben(&conn, jetzt, "test", "wer", "alt").unwrap();
-        pruefspur_schreiben(
-            &conn,
-            jetzt + time::Duration::days(PRUEFSPUR_TAGE + 1),
-            "test",
-            "wer",
-            "neu",
-        )
-        .unwrap();
+        let spaeter = jetzt + time::Duration::days(PRUEFSPUR_TAGE + 1);
+        pruefspur_schreiben(&conn, spaeter, "test", "wer", "neu").unwrap();
+        // Aufgeräumt wird im Hintergrund, nicht beim Schreiben (Punkt 7).
+        assert_eq!(pruefspur_liste(&conn, 10).unwrap().len(), 2);
+        assert_eq!(pruefspur_aufraeumen(&conn, spaeter).unwrap(), 1);
         let liste = pruefspur_liste(&conn, 10).unwrap();
         assert_eq!(liste.len(), 1);
         assert_eq!(liste[0].text, "neu");
+        assert_eq!(liste[0].anzahl, 1);
     }
 
     fn jetzt() -> OffsetDateTime {
@@ -2200,7 +2483,9 @@ mod tests {
         assert!(liste[0].name_entra.is_none());
         assert!(liste[0].name_entra_am.is_none());
         assert!(
-            ordner.join("quiver.db.vor-3").exists(),
+            ordner
+                .join(format!("quiver.db.vor-{SCHEMA_VERSION}"))
+                .exists(),
             "Sicherung liegt da"
         );
         let _ = std::fs::remove_dir_all(&ordner);

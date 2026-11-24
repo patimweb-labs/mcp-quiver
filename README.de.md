@@ -87,8 +87,10 @@ nach, deren Rechte von Hand verstellt wurden (Symlinks werden nicht verfolgt).
 Danach `http://localhost:8740` öffnen. Die erste Seite ist die
 **Ersteinrichtung**: sie fragt E-Mail und Passwort des einen Root-Benutzers ab
 (12 bis 256 Zeichen, Argon2id) und meldet ihn gleich an. Die Einrichtung ist
-nur 15 Minuten nach dem Start des Servers offen und – außer auf Loopback – nur
-mit einem Einmal-Code, den der Server beim Start genau einmal ins Log schreibt:
+nur 15 Minuten nach dem Start des Servers offen und nur mit einem Einmal-Code,
+den der Server beim Start genau einmal ins Log schreibt – Pflicht, sobald der
+Server nicht nur auf Loopback lauscht (im Container also immer), unabhängig von
+der Basis-URL:
 
 ```
 INFO quiver_server::einrichtung: Ersteinrichtung: Code für diesen Start: …
@@ -104,11 +106,12 @@ Docker-Hub-Login mit `--build-arg BASIS=public.ecr.aws/docker/library` bauen.
 Der Container lauscht immer auf allen Adressen; das Veröffentlichen oben hält
 ihn auf `127.0.0.1`. Deshalb darf die Basis-URL blankes `http` sein: mit einer
 Basis-URL, die kein https ist, startet der Server nur, wenn der Host Loopback
-ist. **Dabei bleibt es besser.** Eine Loopback-Basis-URL heißt: die
-Ersteinrichtung braucht keinen Einmal-Code (den verlangt nur eine
-Nicht-Loopback-Basis-URL) – wer den Port in den ersten 15 Minuten erreicht,
-könnte den Root anlegen. Also auf `127.0.0.1` veröffentlichen (wie oben) oder
-eine `https`-Basis-URL verwenden.
+ist. Der Einmal-Code bleibt trotzdem Pflicht, weil die Lauschadresse
+entscheidet und nicht die Basis-URL. Nur ein ausdrückliches
+`QUIVER_EINRICHTUNG=ohne-code` zusammen mit einer Loopback-Basis-URL hebt ihn
+auf; der Start meldet das deutlich. Sonst könnte wer den Port in den ersten 15
+Minuten erreicht den Root anlegen. Also auf `127.0.0.1` veröffentlichen (wie
+oben) oder eine `https`-Basis-URL verwenden.
 
 | Ersteinrichtung (dunkel) | Anmelden (hell) | Fenster zu (dunkel) |
 | --- | --- | --- |
@@ -192,11 +195,12 @@ aufnehmen. Höchstens 200 Gruppen legt der Server auf diesem Weg an.
 | `QUIVER_ENTRA_CLIENT_ID` | Anwendungs-Id (Client-Id) |
 | `QUIVER_ENTRA_SECRET_DATEI` | Datei mit dem Client-Geheimnis (Standard `<Daten>/entra-secret`); genau eins von Geheimnis und Schlüssel |
 | `QUIVER_ENTRA_SCHLUESSEL_DATEI` | Privater Schlüssel für `private_key_jwt` (Standard `<Daten>/entra-schluessel.pem`) |
+| `QUIVER_EINRICHTUNG` | `mit-code` (Standard) oder `ohne-code` (nur mit Loopback-Basis-URL) |
 | `QUIVER_ENTRA_AUTHORITY` | Alternative Authority, nur Loopback (Tests) |
 | `QUIVER_ENTRA_GRUPPENNAMEN` | `an` holt die Gruppennamen über Graph; Standard `aus`, jeder andere Wert verhindert den Start |
 | `QUIVER_ENTRA_GRAPH` | Basis für Graph, nur Loopback (Tests); im Betrieb fest `https://graph.microsoft.com` |
 | `QUIVER_PROXIES` | CIDR-Liste, von der `X-Forwarded-For` geglaubt wird |
-| `QUIVER_ALTGERAETE` | `erlaubt` (Standard) oder `gesperrt` für Geräte ohne Benutzer |
+| `QUIVER_ALTGERAETE` | `gesperrt` (Standard, sobald Entra eingerichtet ist, sonst `erlaubt`) für Geräte ohne Benutzer |
 
 ## Entwicklung
 

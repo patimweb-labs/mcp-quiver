@@ -173,6 +173,7 @@ onMounted(laden);
       :eintraege="zustand.art === 'fertig' ? zustand.daten.eintraege : []"
       :client="client"
       @gespeichert="gespeichert"
+      @neuladen="laden"
     />
 
     <WpDialog

@@ -63,6 +63,24 @@ impl FehlerAntwort {
         Self::neu(StatusCode::CONFLICT, text)
     }
 
+    /// 409 – der Stand hat sich seit dem Laden geändert (`If-Match`).
+    pub fn inzwischen_geaendert(was: &str) -> Self {
+        Self::neu(
+            StatusCode::CONFLICT,
+            format!("{was} wurde inzwischen geändert; bitte neu laden"),
+        )
+    }
+
+    /// 422 – der Aufruf ist wohlgeformt, überschreitet aber eine Grenze.
+    pub fn unverarbeitbar(text: impl Into<String>) -> Self {
+        Self::neu(StatusCode::UNPROCESSABLE_ENTITY, text)
+    }
+
+    /// 503 – gerade ist kein Platz (offene Vorgänge, Prüfungen).
+    pub fn nicht_verfuegbar(text: impl Into<String>) -> Self {
+        Self::neu(StatusCode::SERVICE_UNAVAILABLE, text)
+    }
+
     /// 408 – der Client sendet den Rumpf nicht zu Ende (Zeitlimit).
     pub fn zeitlimit() -> Self {
         Self::neu(
@@ -89,9 +107,22 @@ impl FehlerAntwort {
         Self::neu(StatusCode::INTERNAL_SERVER_ERROR, text)
     }
 
-    /// 500 aus einem beliebigen Fehler; die Meldung geht an den Aufrufer.
+    /// 500 aus einem beliebigen Fehler.
+    ///
+    /// Nach außen geht **nicht** der Fehlertext (der kann Tabellen, Pfade oder
+    /// Werte enthalten), sondern eine kurze Meldung mit einer Kennung. Die
+    /// Einzelheiten stehen unter derselben Kennung im Log.
     pub fn aus_fehler(fehler: &anyhow::Error) -> Self {
-        Self::intern(format!("{fehler:#}"))
+        Self::intern_mit_kennung(fehler)
+    }
+
+    /// 500 mit Kennung: der Text ist immer derselbe, die Einzelheiten nur im Log.
+    pub fn intern_mit_kennung(fehler: &(dyn std::fmt::Display + Send + Sync)) -> Self {
+        let kennung = crate::hilfen::kennung_erzeugen();
+        tracing::error!(kennung = %kennung, "interner Fehler: {fehler}");
+        Self::intern(format!(
+            "interner Fehler (Kennung {kennung}); die Einzelheiten stehen im Server-Log"
+        ))
     }
 }
 
@@ -153,7 +184,14 @@ where
                 if ursache_ist::<tower_http::timeout::TimeoutError>(&fehler) {
                     return FehlerAntwort::zeitlimit();
                 }
-                FehlerAntwort::ungueltig(format!("Rumpf nicht lesbar: {fehler}"))
+                // Auch hier keine Einzelheiten nach außen: der Serde-Text nennt
+                // Feldpfade und Werte aus dem Rumpf.
+                let kennung = crate::hilfen::kennung_erzeugen();
+                tracing::warn!(kennung = %kennung, "Rumpf nicht lesbar: {fehler}");
+                FehlerAntwort::neu(
+                    StatusCode::BAD_REQUEST,
+                    format!("der Rumpf passt nicht zum Vertrag (Kennung {kennung})"),
+                )
             })?;
         Ok(Koerper(wert))
     }

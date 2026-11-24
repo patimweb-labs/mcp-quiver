@@ -13,7 +13,7 @@ import {
 } from "@weppelmann/components";
 import { tief_kopie } from "../logik/kopie";
 
-import { fehlertext, type Client } from "../api/client";
+import { ApiFehler, fehlertext, type Client } from "../api/client";
 import type { Eintrag, Satz, SatzEintrag } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
 import Feldwert from "../bausteine/Feldwert.vue";
@@ -46,12 +46,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:offen": [boolean];
+  neuladen: [];
   gespeichert: [Satz];
 }>();
 
 const entwurf = ref<Satz>(neuer_satz());
 const fehler = ref<Record<string, string>>({});
 const speicherfehler = ref("");
+const konflikt = ref(false);
 const speichert = ref(false);
 const auswahl = ref<string | null>(null);
 
@@ -139,10 +141,19 @@ async function speichern(): Promise<void> {
     emit("gespeichert", gespeichert);
     emit("update:offen", false);
   } catch (fehlerWert) {
-    speicherfehler.value = fehlertext(fehlerWert);
+    konflikt.value = fehlerWert instanceof ApiFehler && fehlerWert.status === 409;
+    speicherfehler.value = konflikt.value
+      ? "Inzwischen geändert – bitte neu laden."
+      : fehlertext(fehlerWert);
   } finally {
     speichert.value = false;
   }
+}
+
+/** Nach einem 409: die Liste neu holen und den Dialog schließen. */
+function neu_laden(): void {
+  emit("neuladen");
+  emit("update:offen", false);
 }
 </script>
 
@@ -274,6 +285,7 @@ async function speichern(): Promise<void> {
       <span v-if="sperrgrund" class="sperrgrund" role="status">
         {{ sperrgrund }}
       </span>
+      <WpButton v-if="konflikt" label="Neu laden" @press="neu_laden" />
       <WpButton label="Abbrechen" @press="emit('update:offen', false)" />
       <WpButton
         label="Speichern"

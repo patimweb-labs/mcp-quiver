@@ -303,16 +303,46 @@ pub fn aenderung_pruefen(headers: &HeaderMap, oeffentlich: &str) -> Ergebnis<()>
 }
 
 /// Die IP des Aufrufers, nur mit vertrauten Proxies aus `X-Forwarded-For`.
+///
+/// **Alle** Kopfzeilen dieses Namens werden in ihrer Reihenfolge übergeben: ein
+/// Proxy kann eine zweite Zeile anhängen; nur die erste zu lesen hieße, dem
+/// Client zu glauben (siehe [`crate::config::aufrufer_ip`]).
 pub fn aufrufer(req: &Request, zustand: &Zustand) -> Option<IpAddr> {
     let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0);
-    let xff = req
+    let koepfe: Vec<&str> = req
         .headers()
-        .get("x-forwarded-for")
-        .and_then(|wert| wert.to_str().ok());
-    aufrufer_ip(peer, xff, &zustand.konfig.proxies)
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|wert| wert.to_str().ok())
+        .collect();
+    aufrufer_ip(peer, &koepfe, &zustand.konfig.proxies)
+}
+
+/// Ist die Adresse des Aufrufers unterscheidbar?
+///
+/// Hinter einem vertrauten Proxy nur dann, wenn `X-Forwarded-For` eine Kette
+/// nennt; ohne Kopf ist die Adresse die des Proxys und für alle gleich (etwa
+/// die Docker-Brücke). Dann darf eine Konto-Drossel nur kurz greifen.
+pub fn ip_unterscheidbar(req: &Request, zustand: &Zustand) -> bool {
+    let Some(peer) = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0)
+    else {
+        return false;
+    };
+    if zustand
+        .konfig
+        .proxies
+        .iter()
+        .any(|netz| netz.enthaelt(peer.ip()))
+    {
+        return req.headers().get("x-forwarded-for").is_some();
+    }
+    true
 }
 
 /// Middleware für die Verwaltung: Sitzung, Rolle frisch, Origin bei Änderungen.
@@ -373,6 +403,64 @@ pub(crate) async fn angemeldet_wache(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ohne Peer-Adresse und hinter einem vertrauten Proxy ohne Kopf ist die
+    /// Adresse nicht unterscheidbar (Härtung Punkt 5).
+    #[test]
+    fn die_adresse_ist_nicht_immer_unterscheidbar() {
+        use crate::config::{Konfig, Netz};
+        let mut konfig = Konfig::neu(".");
+        let zustand = crate::zustand::Zustand::neu(
+            rusqlite::Connection::open_in_memory().expect("Speicher"),
+            konfig.clone(),
+            crate::krypto::Schluessel::aus_bytes(&[7u8; 32]).expect("Schlüssel"),
+            None,
+            None,
+            String::from("dummy"),
+        );
+        let mut anfrage = Request::builder()
+            .uri("/x")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(!ip_unterscheidbar(&anfrage, &zustand), "ohne Peer nicht");
+
+        anfrage.extensions_mut().insert(ConnectInfo(
+            "203.0.113.9:5000".parse::<SocketAddr>().unwrap(),
+        ));
+        assert!(ip_unterscheidbar(&anfrage, &zustand), "einzelne Adresse");
+
+        // Hinter einem vertrauten Proxy ohne Kopf: die Adresse ist die des
+        // Proxys, für alle gleich.
+        konfig.proxies = vec![Netz::lesen("10.0.0.0/8").unwrap()];
+        let zustand = crate::zustand::Zustand::neu(
+            rusqlite::Connection::open_in_memory().expect("Speicher"),
+            konfig,
+            crate::krypto::Schluessel::aus_bytes(&[7u8; 32]).expect("Schlüssel"),
+            None,
+            None,
+            String::from("dummy"),
+        );
+        let mut proxy = Request::builder()
+            .uri("/x")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        proxy
+            .extensions_mut()
+            .insert(ConnectInfo("10.0.0.5:5000".parse::<SocketAddr>().unwrap()));
+        assert!(!ip_unterscheidbar(&proxy, &zustand), "Proxy ohne Kette");
+        let mut mit_kopf = Request::builder()
+            .uri("/x")
+            .header("x-forwarded-for", "203.0.113.9")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        mit_kopf
+            .extensions_mut()
+            .insert(ConnectInfo("10.0.0.5:5000".parse::<SocketAddr>().unwrap()));
+        assert!(
+            ip_unterscheidbar(&mit_kopf, &zustand),
+            "Kette nennt den Absender"
+        );
+    }
 
     #[test]
     fn origin_muss_exakt_passen() {

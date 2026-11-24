@@ -226,7 +226,12 @@ onMounted(laden);
                 />
               </td>
               <td>{{ eintrag.akteur }}</td>
-              <td>{{ eintrag.text }}</td>
+              <td>
+                {{ eintrag.text }}
+                <span v-if="eintrag.anzahl > 1" class="pruefspur__zaehler">
+                  · {{ eintrag.anzahl }}×
+                </span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -236,6 +241,10 @@ onMounted(laden);
 </template>
 
 <style scoped>
+.pruefspur__zaehler {
+  color: var(--wp-color-text-muted);
+}
+
 .seite {
   display: flex;
   flex-direction: column;

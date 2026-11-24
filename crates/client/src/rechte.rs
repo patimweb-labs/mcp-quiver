@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 pub const ORDNER: u32 = 0o700;
 /// Rechte der Dateien darin.
 pub const DATEI: u32 = 0o600;
+/// So alte Zwischendateien (`*.neu`) dürfen beim Start noch liegen bleiben.
+pub const REST_ALTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// Die umask des Prozesses auf `0077` setzen (Unix; sonst nichts).
 ///
@@ -150,6 +152,10 @@ pub fn datei_schuetzen(pfad: &Path) {
 /// wird eine Ebene tief, weil dort genau die Dateien liegen, um die es geht.
 pub fn profil_pruefen(ordner: &Path) -> std::io::Result<()> {
     ordner_anlegen(ordner)?;
+    let jetzt = std::time::SystemTime::now();
+    // Was nach einem Absturz liegen blieb, blockiert kein Schreiben mehr (der
+    // Zwischenname ist zufällig), wäre aber für immer da. Ältere Reste weg.
+    reste_entfernen(ordner, jetzt);
     let Ok(eintraege) = std::fs::read_dir(ordner) else {
         return Ok(());
     };
@@ -163,6 +169,7 @@ pub fn profil_pruefen(ordner: &Path) -> std::io::Result<()> {
         }
         if meta.is_dir() {
             setze_rechte(&pfad, ORDNER);
+            reste_entfernen(&pfad, jetzt);
             let Ok(innen) = std::fs::read_dir(&pfad) else {
                 continue;
             };
@@ -174,6 +181,51 @@ pub fn profil_pruefen(ordner: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Liegen gebliebene Zwischendateien (`*.neu`) entfernen, wenn sie älter als
+/// [`REST_ALTER`] sind. Gibt zurück, wie viele es waren.
+pub fn reste_entfernen(ordner: &Path, jetzt: std::time::SystemTime) -> usize {
+    let Ok(eintraege) = std::fs::read_dir(ordner) else {
+        return 0;
+    };
+    let mut weg = 0;
+    for eintrag in eintraege.flatten() {
+        let pfad = eintrag.path();
+        if !pfad
+            .file_name()
+            .map(|name| name.to_string_lossy().ends_with(".neu"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&pfad) else {
+            continue;
+        };
+        // Symlinks und Ordner fasst niemand an.
+        if !meta.file_type().is_file() {
+            continue;
+        }
+        let alt = meta
+            .modified()
+            .ok()
+            .and_then(|zeit| jetzt.duration_since(zeit).ok())
+            .is_some_and(|alter| alter > REST_ALTER);
+        if !alt {
+            continue;
+        }
+        match std::fs::remove_file(&pfad) {
+            Ok(()) => {
+                weg += 1;
+                tracing::info!("Zwischendatei {} entfernt", pfad.display());
+            }
+            Err(fehler) => tracing::warn!(
+                "Zwischendatei {} nicht entfernbar: {fehler}",
+                pfad.display()
+            ),
+        }
+    }
+    weg
 }
 
 #[cfg(unix)]
@@ -297,6 +349,39 @@ mod tests {
             .file_type()
             .is_symlink());
         assert_eq!(std::fs::read(&ziel).expect("Datei"), b"{\"a\":1}");
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    /// Nach einem Absturz liegen gebliebene Zwischendateien werden beim Start
+    /// entfernt, wenn sie älter als eine Stunde sind (Härtung, Punkt 17).
+    #[test]
+    fn alte_zwischendateien_verschwinden_beim_start() {
+        let ordner = ordner();
+        let profil = ordner.join("profil");
+        std::fs::create_dir_all(&profil).expect("Ordner");
+        let alt = profil.join("zustand.json.1234.deadbeef.neu");
+        let frisch = profil.join("oberflaeche.json.1234.cafebabe.neu");
+        std::fs::write(&alt, b"alt").expect("schreibbar");
+        std::fs::write(&frisch, b"frisch").expect("schreibbar");
+        let vor_zwei_stunden =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&alt)
+            .expect("offen")
+            .set_modified(vor_zwei_stunden)
+            .expect("Zeit setzbar");
+
+        profil_pruefen(&profil).expect("Rechte");
+
+        assert!(!alt.exists(), "die alte Zwischendatei ist weg");
+        assert!(frisch.exists(), "die frische bleibt");
+        // Der Zwischenname trägt PID **und** Zufall: zwei Aufgaben im selben
+        // Prozess kommen sich nicht in die Quere.
+        let a = zwischenpfad(&profil.join("zustand.json"));
+        let b = zwischenpfad(&profil.join("zustand.json"));
+        assert_ne!(a, b, "der Zufall macht den Namen eindeutig");
+        assert!(a.to_string_lossy().ends_with(".neu"));
         let _ = std::fs::remove_dir_all(&ordner);
     }
 

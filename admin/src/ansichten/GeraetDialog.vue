@@ -9,7 +9,7 @@ import {
   WpMultiselect,
 } from "@weppelmann/components";
 
-import { fehlertext, type Client } from "../api/client";
+import { ApiFehler, fehlertext, type Client } from "../api/client";
 import type { GeraetStand, Gruppe, GruppeId } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
 
@@ -22,6 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:offen": [boolean];
+  neuladen: [];
   gespeichert: [GeraetStand];
 }>();
 
@@ -29,6 +30,7 @@ const name = ref("");
 const gewaehlt = ref<GruppeId[]>([]);
 const speichert = ref(false);
 const speicherfehler = ref("");
+const konflikt = ref(false);
 
 watch(
   () => props.offen,
@@ -37,6 +39,7 @@ watch(
     name.value = props.stand?.geraet.name ?? "";
     gewaehlt.value = [...(props.stand?.geraet.gruppen ?? [])];
     speicherfehler.value = "";
+    konflikt.value = false;
   },
   { immediate: true },
 );
@@ -64,10 +67,19 @@ async function speichern(): Promise<void> {
     emit("gespeichert", gespeichert);
     emit("update:offen", false);
   } catch (fehlerWert) {
-    speicherfehler.value = fehlertext(fehlerWert);
+    konflikt.value = fehlerWert instanceof ApiFehler && fehlerWert.status === 409;
+    speicherfehler.value = konflikt.value
+      ? "Inzwischen geändert – bitte neu laden."
+      : fehlertext(fehlerWert);
   } finally {
     speichert.value = false;
   }
+}
+
+/** Nach einem 409: die Liste neu holen und den Dialog schließen. */
+function neu_laden(): void {
+  emit("neuladen");
+  emit("update:offen", false);
 }
 </script>
 
@@ -108,6 +120,7 @@ async function speichern(): Promise<void> {
     </div>
 
     <template #actions>
+      <WpButton v-if="konflikt" label="Neu laden" @press="neu_laden" />
       <WpButton label="Abbrechen" @press="emit('update:offen', false)" />
       <WpButton
         label="Speichern"

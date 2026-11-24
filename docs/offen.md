@@ -16,13 +16,14 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Zustand der Ersteinrichtung (Code-Hash, Fehlversuche) liegt nur im
       Arbeitsspeicher; ein Neustart erzeugt einen neuen Code und öffnet das
       Fenster erneut. Bei mehreren Instanzen hätte jede ihr eigenes Fenster.
-- [ ] Ohne `QUIVER_OEFFENTLICH` gilt `http://localhost:<Port>`; dann braucht
-      die Einrichtung keinen Code, und der `Host`-Kopf lässt sich fälschen. Wer
-      den Port in den ersten 15 Minuten erreicht, könnte den Root anlegen.
-      Deshalb: auf `127.0.0.1` veröffentlichen oder eine `https`-Basis-URL
-      setzen. Eine Prüfung der Aufrufer-IP statt der Basis-URL wäre strenger,
-      bricht aber den üblichen Docker-Weg (`-p 127.0.0.1:…`, im Container
-      kommt die Verbindung vom Docker-Netz).
+- [ ] Die Ersteinrichtung verlangt den Code, sobald der Server nicht nur auf
+      Loopback lauscht – der Docker-Weg braucht ihn also. Nur mit
+      `QUIVER_EINRICHTUNG=ohne-code` **und** Loopback-Basis-URL entfällt er;
+      dann lässt sich der `Host`-Kopf fälschen, und wer den Port in den ersten
+      15 Minuten erreicht, könnte den Root anlegen. Eine Prüfung der
+      Aufrufer-IP statt der Lauschadresse wäre strenger, bricht aber den
+      üblichen Docker-Weg (`-p 127.0.0.1:…`, im Container kommt die Verbindung
+      vom Docker-Netz).
 - [ ] Zeitlimit und Größenbegrenzung der Entra-Antworten sind eingebaut, aber
       nicht gegen einen hängenden oder riesigen Nachbau getestet.
 - [ ] Die Drossel liegt im Arbeitsspeicher; ein Neustart vergisst die Versuche.
@@ -48,8 +49,8 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       neues Gerät; das alte bleibt in der Verwaltung stehen.
 - [ ] Die Prüfspur der Kommandozeile nennt als Akteur `root-setzen`, nicht die
       E-Mail des Aufrufers.
-- [ ] Abgelaufene Einmal-Codes und OIDC-Zustände werden beim nächsten Zugriff
-      aufgeräumt, nicht in einem eigenen Lauf.
+- [ ] Abgelaufene Einmal-Codes und OIDC-Zustände werden im Hintergrund
+      aufgeräumt (alle 60 s), nicht in einem eigenen Takt je Tabelle.
 
 ## Client
 - [ ] SIGTERM und Strg+C enden geordnet; das „Abmelden des Systems“ ist auf

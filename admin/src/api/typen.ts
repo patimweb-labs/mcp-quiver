@@ -370,6 +370,8 @@ export interface PruefspurEintrag {
   art: string;
   akteur: string;
   text: string;
+  /** Wie oft dasselbe geschah (Fehlversuche einer Adresse in einer Stunde). */
+  anzahl: number;
 }
 
 /** `POST /api/v1/auth/root`: Root-Anmeldung mit E-Mail und Passwort. */

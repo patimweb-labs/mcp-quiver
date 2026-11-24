@@ -110,5 +110,12 @@ echo "== Volume"
 pruefe "Volume am Datenordner" "$VOLUME" \
     "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/daten"}}{{.Name}}{{end}}{{end}}' "$NAME")"
 
+echo "== SIGTERM (docker stop) endet mit 0"
+# Der Server ist im Container PID 1 und muss SIGTERM selbst behandeln; sonst
+# endet der Container nach der Frist hart mit 137.
+docker stop -t 10 "$NAME" >/dev/null
+sleep 1
+pruefe "Exit-Code nach docker stop" "0" "$(docker inspect -f '{{.State.ExitCode}}' "$NAME")"
+
 echo
 echo "Alles in Ordnung. $NAME und $VOLUME werden entfernt."

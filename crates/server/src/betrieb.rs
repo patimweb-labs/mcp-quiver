@@ -32,6 +32,8 @@ use tokio::sync::Semaphore;
 pub const KOPF_ZEIT: Duration = Duration::from_secs(10);
 /// So viele Verbindungen dürfen gleichzeitig offen sein.
 pub const VERBINDUNGEN: usize = 256;
+/// So lange dürfen offene Anfragen beim Herunterfahren noch laufen.
+pub const ENDE_ZEIT: Duration = Duration::from_secs(5);
 
 /// Die Grenzen des Betriebs. In Tests kleiner, im Betrieb die Vorgaben.
 #[derive(Debug, Clone, Copy)]
@@ -68,13 +70,10 @@ pub async fn bedienen_mit(
     herunterfahren: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
     let plaetze = Arc::new(Semaphore::new(grenzen.verbindungen));
-    tokio::pin!(herunterfahren);
+    let mut warten = std::pin::pin!(herunterfahren);
     loop {
         tokio::select! {
-            _ = &mut herunterfahren => {
-                tracing::info!("beende");
-                return Ok(());
-            }
+            _ = &mut warten => break,
             angenommen = listener.accept() => {
                 let (strom, adresse) = angenommen?;
                 let Ok(platz) = plaetze.clone().try_acquire_owned() else {
@@ -105,6 +104,18 @@ pub async fn bedienen_mit(
             }
         }
     }
+    // Kein neuer Zugang mehr (der Lauscher fällt am Ende weg). Die
+    // Ereignis-Ströme hat der Aufrufer schon beendet; offene Anfragen bekommen
+    // noch [`ENDE_ZEIT`] Platz zum Auslaufen.
+    tracing::info!("beende: offene Anfragen laufen höchstens {ENDE_ZEIT:?} aus");
+    let alle = u32::try_from(grenzen.verbindungen).unwrap_or(u32::MAX);
+    if tokio::time::timeout(ENDE_ZEIT, plaetze.acquire_many(alle))
+        .await
+        .is_err()
+    {
+        tracing::warn!("offene Anfragen nach {ENDE_ZEIT:?} nicht fertig; Ende trotzdem");
+    }
+    Ok(())
 }
 
 /// Die Adresse, unter der der Gesundheitsweg zu erreichen ist.

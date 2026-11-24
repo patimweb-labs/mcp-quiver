@@ -292,6 +292,14 @@ pub struct PruefspurEintrag {
     pub art: String,
     pub akteur: String,
     pub text: String,
+    /// Wie oft dasselbe geschah (Fehlversuche einer Adresse in einer Stunde
+    /// stehen als **ein** Eintrag mit Zähler). Fehlt der Wert, ist es 1.
+    #[serde(default = "eins")]
+    pub anzahl: u32,
+}
+
+fn eins() -> u32 {
+    1
 }
 
 /// Eine in Anmeldungen gesehene Entra-Gruppe (Aufgabe 23).

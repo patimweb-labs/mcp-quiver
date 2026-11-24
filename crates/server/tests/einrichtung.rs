@@ -118,6 +118,53 @@ impl Pruefung {
         }
     }
 
+    /// `POST /auth/einrichten` von einer bestimmten Adresse (für die
+    /// Fehlversuche je Adresse, Härtung Punkt 3).
+    async fn einrichten_von(&self, ip: std::net::IpAddr, rumpf: Value) -> Antwort {
+        let oeffentlich = self.konfig.oeffentlich.clone();
+        self.anfrage_von(
+            ip,
+            "POST",
+            "/auth/einrichten",
+            Some(serde_json::to_vec(&rumpf).expect("JSON")),
+            &oeffentlich,
+            Some(("x-quiver", "1")),
+        )
+        .await
+    }
+
+    async fn anfrage_von(
+        &self,
+        ip: std::net::IpAddr,
+        methode: &str,
+        pfad: &str,
+        rumpf: Option<Vec<u8>>,
+        origin: &str,
+        kopf: Option<(&str, &str)>,
+    ) -> Antwort {
+        let mut bauer = Request::builder()
+            .method(methode)
+            .uri(pfad)
+            .header(header::HOST, self.host())
+            .header("content-type", "application/json");
+        if !origin.is_empty() {
+            bauer = bauer.header(header::ORIGIN, origin);
+        }
+        if let Some((name, wert)) = kopf {
+            bauer = bauer.header(name, wert);
+        }
+        let mut anfrage = bauer
+            .body(rumpf.map(Body::from).unwrap_or_else(Body::empty))
+            .expect("Anfrage");
+        anfrage
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 50000,
+            ))));
+        let antwort = self.router.clone().oneshot(anfrage).await.expect("Antwort");
+        auspacken(antwort).await
+    }
+
     async fn anfrage(
         &self,
         methode: &str,
@@ -463,6 +510,35 @@ async fn host_origin_und_x_quiver_sind_pflicht() {
     .await;
 }
 
+/// Härtung Punkt 2: der Code ist Pflicht, sobald der Server **nicht nur auf
+/// Loopback** lauscht – auch wenn die Basis-URL lokal ist (so läuft der
+/// Container). Die Meldung „nur lokal erreichbar" gilt dann nicht mehr.
+#[tokio::test(flavor = "current_thread")]
+async fn offene_lauschadresse_verlangt_den_code_auch_bei_lokaler_basis_url() {
+    mit_zeitlimit(async {
+        let ordner = ordner();
+        let mut konfig = Konfig::neu(&ordner);
+        // Basis-URL lokal, aber der Server lauscht im Netz.
+        konfig.oeffentlich = String::from(OEFFENTLICH);
+        konfig.adresse = "0.0.0.0:8740".parse().expect("Adresse");
+        assert!(konfig.einrichtung_mit_code(), "die Adresse entscheidet");
+        let router = app(konfig.clone()).await.expect("App baut");
+        let p = Pruefung {
+            ordner,
+            router,
+            konfig,
+        };
+        let stand = p.stand().await;
+        assert!(stand.code_noetig, "der Code ist Pflicht");
+        // Ohne Code gibt es keinen Root.
+        let antwort = p.einrichten(Pruefung::rumpf(EMAIL, PASSWORT, None)).await;
+        assert_eq!(antwort.status, StatusCode::BAD_REQUEST, "{}", antwort.text);
+        assert!(!p.stand().await.eingerichtet);
+        let _ = std::fs::remove_dir_all(&p.ordner);
+    })
+    .await;
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn code_fehlt_falsch_und_nach_zehn_versuchen_zu() {
     let puffer = Mitlesen::default();
@@ -492,16 +568,39 @@ async fn code_fehlt_falsch_und_nach_zehn_versuchen_zu() {
             .await;
         assert_eq!(antwort.status, StatusCode::FORBIDDEN);
 
-        // Zehnmal falsch: danach ist die Einrichtung geschlossen.
+        // Zehnmal falsch von **einer** Adresse: nur diese ist gesperrt, die
+        // Einrichtung bleibt offen (global erst nach hundert Fehlversuchen).
+        let eine: std::net::IpAddr = "203.0.113.9".parse().unwrap();
         for _ in 0..10 {
             let _ = p
-                .einrichten(Pruefung::rumpf(EMAIL, PASSWORT, Some("immer-noch-falsch")))
+                .einrichten_von(
+                    eine,
+                    Pruefung::rumpf(EMAIL, PASSWORT, Some("immer-noch-falsch")),
+                )
                 .await;
         }
         assert_eq!(
             p.stand().await.einrichtung,
-            Some(Einrichtungslage::Geschlossen)
+            Some(Einrichtungslage::Offen),
+            "eine Adresse sperrt die Einrichtung nicht für alle"
         );
+        // Von einer anderen Adresse geht es weiter (und bleibt falsch).
+        let andere: std::net::IpAddr = "203.0.113.10".parse().unwrap();
+        let antwort = p
+            .einrichten_von(
+                andere,
+                Pruefung::rumpf(EMAIL, PASSWORT, Some("immer-noch-falsch")),
+            )
+            .await;
+        assert_eq!(antwort.status, StatusCode::FORBIDDEN, "{}", antwort.text);
+        // Die gesperrte Adresse bekommt keine weiteren Versuche.
+        let antwort = p
+            .einrichten_von(
+                eine,
+                Pruefung::rumpf(EMAIL, PASSWORT, Some("immer-noch-falsch")),
+            )
+            .await;
+        assert_eq!(antwort.status, StatusCode::TOO_MANY_REQUESTS);
 
         // Ein frischer Server: der richtige Code steht nur im Log und öffnet.
         let p2 = Pruefung::bauen("https://quiver.example.test", None).await;

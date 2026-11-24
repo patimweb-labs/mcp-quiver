@@ -2,15 +2,27 @@
 // Copyright (C) 2026 Patrick Weppelmann
 
 //! `quiver-server`: Unterbefehl oder Server. Liest die Umgebung, baut
-//! [`quiver_server::app_mit_hintergrund`], bindet und fährt bei Strg+C sauber
-//! herunter.
+//! [`quiver_server::app_mit_hintergrund_und_abschalter`], bindet und fährt bei
+//! SIGTERM oder Strg+C sauber herunter.
+//!
+//! SIGTERM muss genauso wirken wie Strg+C: im Container ist der Server PID 1,
+//! und dort wird SIGTERM (das `docker stop` schickt) nur beachtet, wenn der
+//! Prozess es selbst behandelt. Sonst endet `docker stop` hart mit Exit 137.
+//!
+//! Reihenfolge beim Ende: Ereignis-Ströme sofort beenden, offene Anfragen
+//! höchstens fünf Sekunden auslaufen lassen, WAL zurückschreiben, Ende mit 0.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use quiver_server::{app_mit_hintergrund, benutzer, betrieb, rechte, unterbefehl, Konfig};
+use quiver_server::{
+    app_mit_hintergrund_und_abschalter, benutzer, betrieb, rechte, unterbefehl, Konfig,
+};
 use tracing_subscriber::EnvFilter;
+
+/// So lange dürfen offene Anfragen beim Herunterfahren noch laufen.
+pub const ENDE_ZEIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,9 +67,9 @@ async fn main() -> anyhow::Result<()> {
     // in der Umgebung steht.
     benutzer::admin_token_ignorieren();
 
-    let konfig =
-        Konfig::aus_umgebung_mit_port(daten, adresse.port())?.mit_admin_dist(Some(admin_dist));
+    let konfig = Konfig::aus_umgebung_mit_adresse(daten, adresse)?.mit_admin_dist(Some(admin_dist));
     tracing::info!("Basis-URL: {}", konfig.oeffentlich);
+    tracing::info!("lauscht auf {adresse}");
     if let Some(entra) = &konfig.entra {
         tracing::info!(
             "Entra-Mandant {} (Authority {})",
@@ -68,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("kein Entra konfiguriert: Geräte nutzen Einmal-Codes");
     }
 
-    let router = app_mit_hintergrund(konfig).await?;
+    let (router, abschalter) = app_mit_hintergrund_und_abschalter(konfig).await?;
 
     let listener = tokio::net::TcpListener::bind(adresse)
         .await
@@ -76,13 +88,40 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("quiver-server lauscht auf http://{adresse}");
     println!("quiver-server lauscht auf http://{adresse}");
 
-    betrieb::bedienen(listener, router, herunterfahren()).await
+    let ende = async {
+        abschalter_endesignal().await;
+        abschalter.ende_jetzt();
+    };
+    betrieb::bedienen(listener, router, ende).await?;
+    abschalter.abschluss().await;
+    tracing::info!("beendet");
+    Ok(())
 }
 
-async fn herunterfahren() {
-    if tokio::signal::ctrl_c().await.is_ok() {
-        tracing::info!("Strg+C: beende");
-    } else {
-        tracing::warn!("kein Signal-Handler, beende");
+/// Auf Strg+C oder SIGTERM warten.
+async fn abschalter_endesignal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut beenden = match signal(SignalKind::terminate()) {
+            Ok(beenden) => beenden,
+            Err(fehler) => {
+                tracing::warn!("kein SIGTERM-Handler: {fehler}");
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => tracing::info!("Strg+C: beende"),
+            _ = beenden.recv() => tracing::info!("SIGTERM: beende"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::info!("Strg+C: beende");
+        } else {
+            tracing::warn!("kein Signal-Handler, beende");
+        }
     }
 }

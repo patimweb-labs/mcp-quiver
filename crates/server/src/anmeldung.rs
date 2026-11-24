@@ -50,7 +50,14 @@ const NAME_MAX: usize = 80;
 /// Längster Fehlertext von Entra, der angezeigt wird.
 const FEHLERTEXT_MAX: usize = 200;
 
-/// Eine Weiterleitung, wahlweise mit einem Cookie (Set-Cookie).
+/// So viele Anmeldevorgänge dürfen gleichzeitig offen sein (Härtung, Punkt 1).
+///
+/// Jeder Start legt eine Zeile in `oidc_zustand` an. Die Zahl der offenen
+/// Vorgänge bleibt begrenzt, damit Tabelle und Datenbankverbindung im Rahmen
+/// bleiben; darüber antwortet der Start mit 503 und einem Hinweis.
+pub const OFFENE_VORGAENGE_MAX: usize = 2_000;
+
+/// Ein Weiterleitung, wahlweise mit einem Cookie (Set-Cookie).
 fn weiter(status: StatusCode, ziel: &str, cookie: Option<String>) -> Response {
     let mut antwort = Response::builder()
         .status(status)
@@ -115,14 +122,31 @@ fn kurz(text: &str) -> String {
 /// `GET /auth/geraet/start?challenge&port&zustand&name`
 pub(crate) async fn geraet_start(
     State(zustand): State<Arc<Zustand>>,
-    Query(abfrage): Query<HashMap<String, String>>,
-    headers: HeaderMap,
+    req: axum::extract::Request,
 ) -> Response {
-    let sprache = seiten::sprache(&headers);
+    let sprache = seiten::sprache(req.headers());
+    let abfrage = abfrage_aus(&req);
+    // Drossel je Adresse (Härtung, Punkt 1).
+    let ip = sitzung::aufrufer(&req, &zustand);
+    if let Some(fehler) = start_drosseln(&zustand, ip) {
+        return fehler.seite(sprache);
+    }
     match start(&zustand, &abfrage).await {
         Ok(antwort) => antwort,
         Err(fehler) => fehler.seite(sprache),
     }
+}
+
+/// Die Abfragewerte aus der Adresse (ohne zustätzliche Abhängigkeit).
+fn abfrage_aus(req: &axum::extract::Request) -> HashMap<String, String> {
+    req.uri()
+        .query()
+        .map(|query| {
+            form_urlencoded::parse(query.as_bytes())
+                .into_owned()
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn start(
@@ -188,6 +212,7 @@ async fn starte(
         )));
     };
     let jetzt = zustand.uhr.jetzt();
+    let offene_max = zustand.konfig.offene_vorgaenge_max;
     let state = krypto::zufall_b64(32);
     let nonce = krypto::zufall_b64(32);
     let verifier = krypto::zufall_b64(32);
@@ -208,7 +233,15 @@ async fn starte(
         let name = name.clone();
         let modus = modus.clone();
         move |conn| {
-            speicher::oidc_aufraeumen(conn, jetzt)?;
+            // Obergrenze offener Vorgänge: darüber 503 statt weiterer Zeilen.
+            // Aufgeräumt wird im Hintergrund (`refresh::hintergrund`), nicht
+            // hier im Anfragepfad.
+            if speicher::oidc_offen(conn)? >= offene_max {
+                return Ok(Err(SeitenFehler::nicht_verfuegbar(Paar::neu(
+                    "gerade laufen zu viele Anmeldungen; bitte in einigen Minuten erneut versuchen",
+                    "too many sign-in attempts are pending; please try again in a few minutes",
+                ))));
+            }
             speicher::oidc_anlegen(
                 conn,
                 &hilfen::hash(&state),
@@ -224,11 +257,11 @@ async fn starte(
                     gueltig_bis: hilfen::als_text(jetzt + time::Duration::minutes(ZUSTAND_MINUTEN)),
                 },
             )?;
-            Ok(())
+            Ok(Ok(()))
         }
     })
     .await
-    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
+    .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))??;
 
     let ziel = oidc
         .anmelde_url(&state, &nonce, &server_challenge, jetzt)
@@ -254,13 +287,32 @@ async fn starte(
 /// `GET /auth/admin/start`: Anmeldung der Verwaltung über Entra.
 pub(crate) async fn admin_start(
     State(zustand): State<Arc<Zustand>>,
-    headers: HeaderMap,
+    req: axum::extract::Request,
 ) -> Response {
-    let sprache = seiten::sprache(&headers);
+    let sprache = seiten::sprache(req.headers());
+    // Derselbe Weg wie beim Gerät: Drossel je Adresse, Obergrenze offener
+    // Vorgänge (Härtung, Punkt 1).
+    let ip = sitzung::aufrufer(&req, &zustand);
+    if let Some(fehler) = start_drosseln(&zustand, ip) {
+        return fehler.seite(sprache);
+    }
     match starte(&zustand, "admin", "", 0, "", "").await {
         Ok(antwort) => antwort,
         Err(fehler) => fehler.seite(sprache),
     }
+}
+
+/// Prüft die Drossel für einen Anmelde-Start; `Some` heißt: abweisen.
+fn start_drosseln(zustand: &Arc<Zustand>, ip: Option<std::net::IpAddr>) -> Option<SeitenFehler> {
+    let jetzt = zustand.uhr.jetzt();
+    let schluessel = format!("start:{}", crate::drossel::ip_schluessel(ip));
+    let wartezeit = zustand.drossel.treffer(&schluessel, jetzt);
+    wartezeit.map(|sekunden| {
+        SeitenFehler::nicht_verfuegbar(Paar::neu(
+            format!("zu viele Anmeldeversuche; bitte {sekunden} Sekunden warten"),
+            format!("too many sign-in attempts; please wait {sekunden} seconds"),
+        ))
+    })
 }
 
 // ---------------------------------------------------------------- Rückkehr

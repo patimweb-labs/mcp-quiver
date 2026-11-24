@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{header, Request, StatusCode};
+use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::response::Response;
 use axum::Router;
 use http_body_util::BodyExt;
@@ -162,6 +162,49 @@ impl Pruefung {
             .await
             .expect("Antwort");
         auspacken(antwort).await
+    }
+
+    /// Verwaltungs-Aufruf mit einem zusätzlichen Kopf; liefert Status, JSON und
+    /// die Köpfe (für `ETag`/`If-Match`).
+    async fn admin_mit_kopf(
+        &self,
+        methode: &str,
+        pfad: &str,
+        extra: (&str, &str),
+        rumpf: Option<Value>,
+    ) -> (StatusCode, Value, HeaderMap) {
+        let koerper = match rumpf {
+            Some(wert) => Body::from(serde_json::to_vec(&wert).expect("JSON")),
+            None => Body::empty(),
+        };
+        let antwort = self
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(methode)
+                    .uri(format!("/api/v1{pfad}"))
+                    .header("host", HOST)
+                    .header("content-type", "application/json")
+                    .header("cookie", &self.cookie)
+                    .header("origin", OEFFENTLICH)
+                    .header("x-quiver", "1")
+                    .header(extra.0, extra.1)
+                    .body(koerper)
+                    .expect("Anfrage"),
+            )
+            .await
+            .expect("Antwort");
+        let status = antwort.status();
+        let headers = antwort.headers().clone();
+        let bytes = antwort
+            .into_body()
+            .collect()
+            .await
+            .expect("Rumpf")
+            .to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, json, headers)
     }
 
     async fn put_eintrag(&self, eintrag: &Eintrag) -> (StatusCode, Value) {
@@ -601,11 +644,18 @@ async fn konflikte_und_falsche_kennungen() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // Satz auf einen unbekannten Eintrag → 400.
+    // Satz auf einen unbekannten Eintrag → 422 mit dem Namen.
     let (status, rumpf) = p
         .put_satz(&satz("kaputt", "gibtsnicht", json!({ "PFAD": "/tmp" })))
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{rumpf}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rumpf}");
+    assert!(
+        rumpf["fehler"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("gibtsnicht"),
+        "der unbekannte Eintrag wird benannt: {rumpf}"
+    );
 
     // Nach dem Löschen der Gruppe bekommt das Gerät nichts mehr.
     let soll = p.soll(&antwort.token).await;
@@ -1090,6 +1140,19 @@ fn grosser_eintrag(id: &str, bytes: usize) -> Eintrag {
     eintrag
 }
 
+/// Ein Eintrag, dessen Rumpf groß ist und der **innerhalb** der Feldgrenzen
+/// bleibt (Umgebung: 50 Einträge, je höchstens 4000 Zeichen).
+fn grosser_eintrag_gueltig(id: &str, bytes: usize) -> Eintrag {
+    let mut eintrag = eintrag(id);
+    if let Laufzeit::Stdio { umgebung, .. } = &mut eintrag.laufzeit {
+        let je = bytes.div_ceil(50).min(4000);
+        for nummer in 0..50 {
+            umgebung.insert(format!("GROSS_{nummer}"), "x".repeat(je));
+        }
+    }
+    eintrag
+}
+
 /// Ein `server.json`, wie es die MCP-Registry liefert.
 fn server_json(name: &str) -> Value {
     json!({
@@ -1167,8 +1230,9 @@ async fn rumpfgrenze_je_route() {
     let (status, rumpf) = p.anfrage("POST", "/anmelden", None, Some(zu_gross)).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{rumpf}");
 
-    // Einträge dürfen 256 KB: 100 KB gehen durch, 300 KB nicht.
-    let gross = grosser_eintrag("gross", 100 * 1024);
+    // Einträge dürfen 256 KB: 100 KB gehen durch (innerhalb der Feldgrenzen),
+    // 300 KB nicht.
+    let gross = grosser_eintrag_gueltig("gross", 100 * 1024);
     assert_eq!(
         p.put_eintrag(&gross).await.0,
         StatusCode::OK,
@@ -1414,4 +1478,204 @@ async fn jede_aendernde_verwaltungsroute_schreibt_in_die_pruefspur() {
     for verboten in ["Titel weg", "Test Person", "ein-sehr-langes", "Bearer"] {
         assert!(!texte.contains(verboten), "{verboten} steht in der Spur");
     }
+}
+
+// ------------------------------------ Härtung: gleichzeitiges Bearbeiten (12)
+
+#[tokio::test]
+async fn veralteter_stand_gibt_409_mit_hinweis() {
+    let p = Pruefung::neu().await;
+    let eintrag = eintrag("wetter");
+    assert_eq!(p.put_eintrag(&eintrag).await.0, StatusCode::OK);
+
+    // Der Stand, den dieser Aufrufer geladen hat.
+    let (status, _, koepfe) = p
+        .admin_mit_kopf("GET", "/admin/eintraege/wetter", ("accept", "*/*"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = koepfe
+        .get(header::ETAG)
+        .expect("GET liefert ein ETag")
+        .to_str()
+        .expect("ETag ist Text")
+        .to_string();
+
+    // Jemand anders ändert den Eintrag.
+    let mut anders = eintrag.clone();
+    anders.titel = String::from("Wetter (neu)");
+    assert_eq!(p.put_eintrag(&anders).await.0, StatusCode::OK);
+
+    // Mit dem alten Stand speichern: 409 und ein Hinweis zum Neuladen.
+    let (status, rumpf, _) = p
+        .admin_mit_kopf(
+            "PUT",
+            "/admin/eintraege/wetter",
+            ("if-match", &etag),
+            Some(json!(&eintrag)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{rumpf}");
+    assert!(
+        rumpf["fehler"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("neu laden"),
+        "{rumpf}"
+    );
+
+    // Mit dem aktuellen Stand geht es.
+    let (status, _, koepfe) = p
+        .admin_mit_kopf("GET", "/admin/eintraege/wetter", ("accept", "*/*"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = koepfe
+        .get(header::ETAG)
+        .expect("ETag")
+        .to_str()
+        .expect("Text")
+        .to_string();
+    let (status, rumpf, _) = p
+        .admin_mit_kopf(
+            "PUT",
+            "/admin/eintraege/wetter",
+            ("if-match", &etag),
+            Some(json!(&eintrag)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+}
+
+#[tokio::test]
+async fn gerat_und_satz_und_gruppe_pruefen_if_match() {
+    let p = Pruefung::neu().await;
+    assert_eq!(p.put_eintrag(&eintrag("wetter")).await.0, StatusCode::OK);
+    assert_eq!(
+        p.put_satz(&satz("basis", "wetter", json!({}))).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        p.put_gruppe(&gruppe("team", &["basis"])).await.0,
+        StatusCode::OK
+    );
+    // Ein falscher Stand trifft alle drei.
+    for (pfad, rumpf) in [
+        (
+            "/admin/saetze/basis",
+            json!(satz("basis", "wetter", json!({ "PFAD": "/tmp" }))),
+        ),
+        ("/admin/gruppen/team", json!(gruppe("team", &["basis"]))),
+    ] {
+        let (status, antwort, _) = p
+            .admin_mit_kopf("PUT", pfad, ("if-match", "\"veraltet\""), Some(rumpf))
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{pfad}: {antwort}");
+    }
+    // Ein Gerät entsteht erst mit einer Anmeldung; dafür genügt der Satz.
+    let geraet = p.aufbau().await;
+    let (status, antwort, _) = p
+        .admin_mit_kopf(
+            "PUT",
+            &format!("/admin/geraete/{}", geraet.geraet.id),
+            ("if-match", "\"veraltet\""),
+            Some(json!({
+                "name": "Testrechner",
+                "gruppen": geraet.geraet.gruppen.iter().map(|g| g.als_str()).collect::<Vec<_>>(),
+                "gesperrt": false
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{antwort}");
+}
+
+// ----------------------------------------------- Härtung: Grenzen (13)
+
+#[tokio::test]
+async fn zu_grosse_texte_und_zu_viele_felder_sind_422() {
+    let p = Pruefung::neu().await;
+
+    let mut lang = eintrag("wetter");
+    lang.titel = "T".repeat(121);
+    let (status, rumpf) = p.put_eintrag(&lang).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rumpf}");
+
+    let mut lang = eintrag("wetter");
+    lang.beschreibung = "B".repeat(1001);
+    let (status, _) = p.put_eintrag(&lang).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let mut lang = eintrag("wetter");
+    lang.id = EintragId::neu("x".repeat(81));
+    let (status, _) = p.put_eintrag(&lang).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Gruppen-Name 80.
+    let mut gruppe_lang = gruppe("team", &[]);
+    gruppe_lang.titel = "G".repeat(121);
+    let (status, _) = p.put_gruppe(&gruppe_lang).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn eine_meldung_wird_gekuerzt_und_nicht_abgelehnt() {
+    let p = Pruefung::neu().await;
+    let geraet = p.aufbau().await;
+    let eintraege: Vec<Value> = (0..210)
+        .map(|i| {
+            let text = if i == 0 {
+                "x".repeat(600)
+            } else {
+                String::from("kurz")
+            };
+            json!([
+                format!("e{i}"),
+                { "zustand": "fehler", "text": text }
+            ])
+        })
+        .collect();
+    let (status, rumpf) = p
+        .anfrage(
+            "POST",
+            "/geraet/meldung",
+            Some(&geraet.token),
+            Some(json!({
+                "revision": geraet.geraet.id.als_str(),
+                "client_version": "v".repeat(200),
+                "eintraege": eintraege
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{rumpf}");
+
+    // Gespeichert sind höchstens 200 Einträge, der Text ist gekürzt, die
+    // Client-Fassung auf 64 Zeichen.
+    let (status, liste) = p.admin("GET", "/admin/geraete", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let meldung = &liste[0]["meldung"];
+    assert_eq!(meldung["eintraege"].as_array().expect("Liste").len(), 200);
+    assert_eq!(
+        meldung["client_version"]
+            .as_str()
+            .expect("Text")
+            .chars()
+            .count(),
+        64
+    );
+    let text = meldung["eintraege"][0][1]["text"].as_str().expect("Text");
+    assert_eq!(text.chars().count(), 501, "gekürzt mit …");
+}
+
+// ------------------------------------ Härtung: unbekannter Satz (15)
+
+#[tokio::test]
+async fn gruppe_mit_unbekanntem_satz_ist_422_mit_namen() {
+    let p = Pruefung::neu().await;
+    let (status, rumpf) = p.put_gruppe(&gruppe("team", &["gibtsnicht"])).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rumpf}");
+    assert!(
+        rumpf["fehler"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("gibtsnicht"),
+        "die Namen stehen in der Antwort: {rumpf}"
+    );
 }

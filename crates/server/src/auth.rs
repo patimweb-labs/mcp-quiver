@@ -11,6 +11,7 @@ use axum::http::header;
 use axum::middleware::Next;
 use axum::response::Response;
 use quiver_protocol::AnmeldeGrund;
+use time::OffsetDateTime;
 
 use crate::db;
 use crate::fehler::{Ergebnis, FehlerAntwort};
@@ -29,8 +30,29 @@ fn bearer(req: &Request) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
+/// So lange darf ein Geräte-Token ungenutzt bleiben (Härtung, Punkt 11).
+pub const TOKEN_UNBENUTZT_TAGE: i64 = 60;
+/// So alt darf ein Geräte-Token höchstens werden.
+pub const TOKEN_ALTER_TAGE: i64 = 365;
+
 fn fehlt() -> FehlerAntwort {
     FehlerAntwort::nicht_angemeldet("Token fehlt oder ist kein Bearer-Token")
+}
+
+/// Ist das Token zu alt oder zu lange ungenutzt? Dann muss sich das Gerät neu
+/// anmelden.
+pub(crate) fn token_abgelaufen(zeile: &GeraetZeile, jetzt: OffsetDateTime) -> bool {
+    let zu_alt = zeile
+        .token_erstellt
+        .as_deref()
+        .and_then(hilfen::zeit_lesen)
+        .is_some_and(|erstellt| jetzt - erstellt > time::Duration::days(TOKEN_ALTER_TAGE));
+    let ungenutzt = zeile
+        .token_zuletzt
+        .as_deref()
+        .and_then(hilfen::zeit_lesen)
+        .is_some_and(|zuletzt| jetzt - zuletzt > time::Duration::days(TOKEN_UNBENUTZT_TAGE));
+    zu_alt || ungenutzt
 }
 
 /// Geräte-Pfade: sha256(Token) muss zu einem Gerät passen.
@@ -45,6 +67,13 @@ pub(crate) async fn geraete_wache(
         .await?
         .ok_or_else(|| FehlerAntwort::nicht_angemeldet("Token gehört zu keinem Gerät"))?;
     geraet_pruefen(&zustand, &zeile).await?;
+    // Die letzte Nutzung nachziehen (höchstens stündlich geschrieben).
+    let kennung = zeile.geraet.id.clone();
+    let jetzt = zustand.uhr.jetzt();
+    db(&zustand, move |conn| {
+        speicher::geraet_token_nutzen(conn, kennung.als_str(), jetzt)
+    })
+    .await?;
     req.extensions_mut().insert(zeile.geraet.id);
     Ok(next.run(req).await)
 }
@@ -52,6 +81,15 @@ pub(crate) async fn geraete_wache(
 /// Darf dieses Gerät noch? Die Antwort trägt bei Verweigerung einen
 /// maschinenlesbaren Grund (`gesperrt`, `neu_anmelden`, `kein_zugriff`).
 pub(crate) async fn geraet_pruefen(zustand: &Arc<Zustand>, zeile: &GeraetZeile) -> Ergebnis<()> {
+    // Alter und letzte Nutzung des Tokens: beides ist eine harte Grenze, nach
+    // der sich das Gerät neu anmelden muss (Härtung, Punkt 11).
+    if token_abgelaufen(zeile, zustand.uhr.jetzt()) {
+        return Err(FehlerAntwort::mit_grund(
+            axum::http::StatusCode::FORBIDDEN,
+            "das Geräte-Token ist zu alt oder zu lange ungenutzt; bitte neu anmelden",
+            AnmeldeGrund::NeuAnmelden,
+        ));
+    }
     if zeile.geraet.gesperrt {
         return Err(FehlerAntwort::mit_grund(
             axum::http::StatusCode::FORBIDDEN,
@@ -167,5 +205,47 @@ mod tests {
         assert_eq!(bearer(&anfrage(Some("Basic abc"))), None);
         assert_eq!(bearer(&anfrage(Some("Bearer "))), None);
         assert_eq!(bearer(&anfrage(None)), None);
+    }
+
+    fn geraet_mit(erstellt: Option<&str>, zuletzt: Option<&str>) -> GeraetZeile {
+        GeraetZeile {
+            geraet: quiver_domain::Geraet {
+                id: quiver_domain::GeraetId::neu("d1"),
+                name: String::from("Gerät"),
+                gruppen: Vec::new(),
+                gesperrt: false,
+            },
+            zuletzt_gesehen: None,
+            meldung: None,
+            oid: None,
+            tid: None,
+            manuell: Vec::new(),
+            token_erstellt: erstellt.map(String::from),
+            token_zuletzt: zuletzt.map(String::from),
+        }
+    }
+
+    #[test]
+    fn zu_altes_oder_ungenutztes_token_verlangt_neue_anmeldung() {
+        let jetzt = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let frisch = hilfen::als_text(jetzt - time::Duration::days(10));
+        assert!(!token_abgelaufen(
+            &geraet_mit(Some(&frisch), Some(&frisch)),
+            jetzt
+        ));
+        // 60 Tage ungenutzt: neu anmelden.
+        let alt = hilfen::als_text(jetzt - time::Duration::days(TOKEN_UNBENUTZT_TAGE + 1));
+        assert!(token_abgelaufen(
+            &geraet_mit(Some(&frisch), Some(&alt)),
+            jetzt
+        ));
+        // 365 Tage alt: neu anmelden, auch bei frischer Nutzung.
+        let alt = hilfen::als_text(jetzt - time::Duration::days(TOKEN_ALTER_TAGE + 1));
+        assert!(token_abgelaufen(
+            &geraet_mit(Some(&alt), Some(&frisch)),
+            jetzt
+        ));
+        // Ohne Angaben (Altbestand) gilt nichts als abgelaufen.
+        assert!(!token_abgelaufen(&geraet_mit(None, None), jetzt));
     }
 }

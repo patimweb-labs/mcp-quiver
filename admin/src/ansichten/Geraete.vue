@@ -411,6 +411,7 @@ onMounted(laden);
       :gruppen="gruppenListe"
       :client="client"
       @gespeichert="gespeichert"
+      @neuladen="laden"
     />
 
     <EinbindenDialog

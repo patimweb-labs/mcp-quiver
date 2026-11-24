@@ -273,6 +273,7 @@ onMounted(laden);
       :neu="neuModus"
       :client="client"
       @gespeichert="gespeichert"
+      @neuladen="laden"
     />
 
     <ImportDialog

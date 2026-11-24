@@ -10,9 +10,11 @@
 //! der Wanduhr (`config::Laufzeit`); wer die Systemzeit verstellt, verlängert es
 //! nicht.
 
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::extract::{Request, State};
@@ -22,7 +24,6 @@ use axum::Json;
 use quiver_protocol::{AuthStand, Einrichten, Einrichtungslage};
 
 use crate::benutzer::{self, PASSWORT_MAX, PASSWORT_MIN};
-use crate::config::ist_loopback_url;
 use crate::db;
 use crate::drossel::{email_normalisieren, ip_schluessel};
 use crate::fehler::{Ergebnis, FehlerAntwort};
@@ -33,8 +34,12 @@ use crate::zustand::Zustand;
 
 /// So lange nach dem Start ist die Einrichtung offen.
 pub const FENSTER_MINUTEN: u64 = 15;
-/// Nach so vielen falschen Codes ist die Einrichtung zu.
+/// Nach so vielen falschen Codes ist die Einrichtung **für diese Adresse** zu.
 pub const CODE_FEHLVERSUCHE: u32 = 10;
+/// Erst nach so vielen falschen Codes ist die Einrichtung ganz zu – über alle
+/// Adressen zusammen. So sperrt ein einzelner Aufrufer die Einrichtung nicht
+/// für alle aus.
+pub const GESAMT_FEHLVERSUCHE: u32 = 100;
 /// Länge des Einmal-Codes: 128 Bit aus dem Zufall, base64url (22 Zeichen).
 pub const CODE_BYTES: usize = 16;
 
@@ -43,29 +48,48 @@ pub const CODE_BYTES: usize = 16;
 pub(crate) struct Einrichtung {
     /// Hash des Codes; `None` heißt: auf Loopback braucht es keinen.
     code_hash: Option<String>,
-    /// Fehlversuche mit dem Code (danach ist die Einrichtung zu).
+    /// Fehlversuche über alle Adressen (die harte Grenze).
     fehlversuche: AtomicU32,
+    /// Fehlversuche je Adresse; jede sperrt nur sich selbst.
+    je_ip: Mutex<HashMap<String, u32>>,
 }
 
 impl Einrichtung {
-    /// Beim Start: Code erzeugen, wenn der Server nicht auf Loopback steht, und
-    /// ihn **nur** ins eigene Log schreiben.
-    pub(crate) fn neu(oeffentlich: &str) -> Self {
-        if ist_loopback_url(oeffentlich) {
-            return Self {
-                code_hash: None,
-                fehlversuche: AtomicU32::new(0),
-            };
+    /// Beim Start: Code erzeugen, wenn der Server ihn verlangt
+    /// ([`crate::Konfig::einrichtung_mit_code`]), und ihn **nur** ins eigene Log
+    /// schreiben.
+    pub(crate) fn neu(oeffentlich: &str, mit_code: bool) -> Self {
+        let leer = Self {
+            code_hash: None,
+            fehlversuche: AtomicU32::new(0),
+            je_ip: Mutex::new(HashMap::new()),
+        };
+        if !mit_code {
+            if !crate::config::ist_loopback_url(oeffentlich) {
+                // Kommt hier an, hat die Konfiguration den Fall schon abgelehnt;
+                // zur Sicherheit trotzdem ein Code.
+                tracing::warn!(
+                    "Ersteinrichtung ohne Code bei nicht-lokaler Basis-URL – es gilt trotzdem ein Code"
+                );
+            } else {
+                tracing::info!(
+                    "Ersteinrichtung ohne Einmal-Code (nur lokal erreichbar); \
+                     die Einrichtung ist {FENSTER_MINUTEN} Minuten nach dem Start offen"
+                );
+                return leer;
+            }
         }
         let code = krypto_code();
         // Die eine Zeile, in der der Code steht – sonst nirgends.
         tracing::info!(
             "Ersteinrichtung: Code für diesen Start: {code} \
-             (steht nur hier im Log, gilt {FENSTER_MINUTEN} Minuten)"
+             (steht nur hier im Log, gilt {FENSTER_MINUTEN} Minuten) – \
+             im Container zeigt ihn `docker logs <container>`"
         );
         Self {
             code_hash: Some(hilfen::hash(&code)),
             fehlversuche: AtomicU32::new(0),
+            je_ip: Mutex::new(HashMap::new()),
         }
     }
 
@@ -75,6 +99,7 @@ impl Einrichtung {
         Self {
             code_hash: Some(hilfen::hash(code)),
             fehlversuche: AtomicU32::new(0),
+            je_ip: Mutex::new(HashMap::new()),
         }
     }
 
@@ -83,18 +108,28 @@ impl Einrichtung {
         self.code_hash.is_some()
     }
 
-    /// Wie viele Codes wurden schon falsch eingegeben?
+    /// Wie viele Codes wurden schon falsch eingegeben (alle Adressen)?
     pub(crate) fn fehlversuche(&self) -> u32 {
         self.fehlversuche.load(Ordering::SeqCst)
     }
 
-    /// Ist die Einrichtung zu, weil zu viele Codes falsch waren?
+    /// Ist die Einrichtung **ganz** zu, weil zu viele Codes falsch waren?
     pub(crate) fn gesperrt(&self) -> bool {
-        self.fehlversuche() >= CODE_FEHLVERSUCHE
+        self.fehlversuche() >= GESAMT_FEHLVERSUCHE
     }
 
-    /// Der Stand für `/auth/stand`: offen nur, solange die Laufzeit unter der
-    /// Frist liegt und der Code nicht zehnmal falsch war.
+    /// Wie viele Fehlversuche hat diese Adresse schon?
+    pub(crate) fn fehlversuche_von(&self, ip: Option<IpAddr>) -> u32 {
+        let karte = ip_karte(&self.je_ip);
+        *karte.get(&ip_schluessel(ip)).unwrap_or(&0)
+    }
+
+    /// Ist die Einrichtung für diese Adresse zu?
+    pub(crate) fn gesperrt_fuer(&self, ip: Option<IpAddr>) -> bool {
+        self.gesperrt() || self.fehlversuche_von(ip) >= CODE_FEHLVERSUCHE
+    }
+
+    /// Der Stand für `/auth/stand` (ohne Adresse: die Gesamtlage).
     pub(crate) fn lage(&self, seit_start: Duration) -> Einrichtungslage {
         if self.gesperrt() || seit_start >= Duration::from_secs(FENSTER_MINUTEN * 60) {
             Einrichtungslage::Geschlossen
@@ -103,8 +138,9 @@ impl Einrichtung {
         }
     }
 
-    /// Den Code prüfen: in konstanter Zeit, gezählt, nach zehn Fehlern zu.
-    pub(crate) fn code_pruefen(&self, code: Option<&str>) -> Ergebnis<()> {
+    /// Den Code prüfen: in konstanter Zeit, je Adresse gezählt, global nach
+    /// [`GESAMT_FEHLVERSUCHE`] zu.
+    pub(crate) fn code_pruefen(&self, code: Option<&str>, ip: Option<IpAddr>) -> Ergebnis<()> {
         let Some(erwartet) = self.code_hash.as_deref() else {
             return Ok(());
         };
@@ -114,24 +150,52 @@ impl Einrichtung {
                  Server neu starten",
             ));
         }
+        if self.gesperrt_fuer(ip) {
+            return Err(FehlerAntwort::neu(
+                StatusCode::TOO_MANY_REQUESTS,
+                "zu viele falsche Codes von dieser Adresse; bitte später erneut versuchen",
+            ));
+        }
         let eingegeben = code.unwrap_or_default().trim();
         if eingegeben.is_empty() {
             return Err(FehlerAntwort::ungueltig(
-                "der Einmal-Code fehlt; er steht in der Log-Ausgabe des Servers",
+                "der Einmal-Code fehlt; er steht in der Log-Ausgabe des Servers \
+                 (im Container: `docker logs <container>`)",
             ));
         }
         if hilfen::gleich_konstant(erwartet, &hilfen::hash(eingegeben)) {
             return Ok(());
         }
         let versuche = self.fehlversuche.fetch_add(1, Ordering::SeqCst) + 1;
-        if versuche >= CODE_FEHLVERSUCHE {
+        let jetzt_ip = {
+            let mut karte = ip_karte(&self.je_ip);
+            let zaehler = karte.entry(ip_schluessel(ip)).or_insert(0);
+            *zaehler = zaehler.saturating_add(1);
+            *zaehler
+        };
+        if versuche >= GESAMT_FEHLVERSUCHE {
             return Err(FehlerAntwort::verboten(
                 "zu viele falsche Codes; die Einrichtung ist geschlossen – \
                  Server neu starten",
             ));
         }
+        if jetzt_ip >= CODE_FEHLVERSUCHE {
+            return Err(FehlerAntwort::neu(
+                StatusCode::TOO_MANY_REQUESTS,
+                "zu viele falsche Codes von dieser Adresse; bitte später erneut versuchen",
+            ));
+        }
         Err(FehlerAntwort::verboten("der Einmal-Code stimmt nicht"))
     }
+}
+
+/// Sperre holen, auch wenn ein anderer Aufruf panisch war.
+fn ip_karte(
+    karte: &Mutex<HashMap<String, u32>>,
+) -> std::sync::MutexGuard<'_, HashMap<String, u32>> {
+    karte
+        .lock()
+        .unwrap_or_else(|vergiftet| vergiftet.into_inner())
 }
 
 /// 128 Bit Zufall als base64url (22 Zeichen).
@@ -202,19 +266,22 @@ pub(crate) async fn einrichten(
         ));
     }
 
-    // Der Code wird in konstanter Zeit geprüft und **jeder** Fehlversuch
-    // gezählt; nach zehn ist die Einrichtung zu. Zusätzlich bremst die Drossel
-    // je IP ab dem sechsten Versuch (429) – der Zähler bleibt die harte Grenze.
+    // Der Code wird in konstanter Zeit geprüft; Fehlversuche zählen je Adresse
+    // (zehn, dann ist die Einrichtung für diese Adresse zu) und global erst nach
+    // hundert. Zusätzlich bremst die Drossel je IP.
     let schluessel = format!("einrichtung:{}", ip_schluessel(ip));
-    if let Err(fehler) = zustand.einrichtung.code_pruefen(anfrage.code.as_deref()) {
+    if let Err(fehler) = zustand
+        .einrichtung
+        .code_pruefen(anfrage.code.as_deref(), ip)
+    {
         let wartezeit = zustand.drossel.fehlschlag(&schluessel, jetzt);
         let akteur = ip_schluessel(ip);
         db(&zustand, move |conn| {
-            speicher::pruefspur_schreiben(conn, jetzt, "fehlschlag", &akteur, "Einrichtung: Code")?;
+            speicher::pruefspur_fehlschlag(conn, jetzt, &akteur, "Einrichtung: Code")?;
             Ok(())
         })
         .await?;
-        if zustand.einrichtung.gesperrt() {
+        if zustand.einrichtung.gesperrt() || zustand.einrichtung.gesperrt_fuer(ip) {
             // Ab jetzt hilft auch der richtige Code nicht mehr.
             return Err(fehler);
         }
@@ -255,8 +322,8 @@ pub(crate) async fn einrichten(
     let passwort = anfrage.passwort.clone();
     let hash = tokio::task::spawn_blocking(move || benutzer::passwort_hashen(&passwort))
         .await
-        .map_err(|fehler| FehlerAntwort::intern(format!("Passwortprüfung gescheitert: {fehler}")))?
-        .map_err(|fehler| FehlerAntwort::intern(format!("Passwort nicht hashbar: {fehler}")))?;
+        .map_err(|fehler| FehlerAntwort::intern_mit_kennung(&fehler))?
+        .map_err(|fehler| FehlerAntwort::intern_mit_kennung(&fehler))?;
     drop(permit);
 
     // Genau einer gewinnt: Prüfung „kein Root“ und Einfügen in einer Transaktion.
@@ -383,7 +450,7 @@ mod tests {
 
     #[test]
     fn fenster_haengt_an_der_laufzeit() {
-        let einrichtung = Einrichtung::neu("http://127.0.0.1:8740");
+        let einrichtung = Einrichtung::neu("http://127.0.0.1:8740", false);
         assert!(!einrichtung.code_noetig(), "Loopback braucht keinen Code");
         assert_eq!(
             einrichtung.lage(Duration::from_secs(FENSTER_MINUTEN * 60 - 1)),
@@ -393,31 +460,53 @@ mod tests {
             einrichtung.lage(Duration::from_secs(FENSTER_MINUTEN * 60)),
             Einrichtungslage::Geschlossen
         );
-        assert!(einrichtung.code_pruefen(None).is_ok());
+        assert!(einrichtung.code_pruefen(None, None).is_ok());
     }
 
+    /// Fehlversuche zählen je Adresse; gesperrt wird zuerst nur diese.
     #[test]
-    fn code_ist_pflicht_und_nach_zehn_versuchen_zu() {
-        let einrichtung = Einrichtung::neu("https://quiver.example.test");
+    fn code_ist_pflicht_und_je_adresse_zu() {
+        let einrichtung = Einrichtung::neu("https://quiver.example.test", true);
         assert!(einrichtung.code_noetig());
-        assert!(einrichtung.code_pruefen(None).is_err());
+        let a: IpAddr = "203.0.113.9".parse().unwrap();
+        let b: IpAddr = "203.0.113.10".parse().unwrap();
+        assert!(einrichtung.code_pruefen(None, Some(a)).is_err());
         for _ in 0..CODE_FEHLVERSUCHE {
-            assert!(einrichtung.code_pruefen(Some("falsch")).is_err());
+            let _ = einrichtung.code_pruefen(Some("falsch"), Some(a));
+        }
+        assert!(einrichtung.gesperrt_fuer(Some(a)));
+        assert!(
+            !einrichtung.gesperrt_fuer(Some(b)),
+            "eine andere Adresse ist nicht mitgesperrt"
+        );
+        assert!(!einrichtung.gesperrt(), "global noch offen");
+        // Für die gesperrte Adresse hilft auch der richtige Code nicht mehr.
+        assert!(einrichtung.code_pruefen(None, Some(a)).is_err());
+    }
+
+    /// Global ist die Einrichtung erst nach hundert Fehlversuchen zu.
+    #[test]
+    fn global_erst_nach_hundert() {
+        let einrichtung = Einrichtung::mit_code("richtiger-code");
+        for i in 0..GESAMT_FEHLVERSUCHE {
+            let ip: IpAddr = format!("198.51.100.{}", (i % 250) + 1).parse().unwrap();
+            let _ = einrichtung.code_pruefen(Some("falsch"), Some(ip));
         }
         assert!(einrichtung.gesperrt());
         assert_eq!(
             einrichtung.lage(Duration::from_secs(0)),
             Einrichtungslage::Geschlossen
         );
-        // Auch der richtige Code hilft jetzt nicht mehr.
-        assert!(einrichtung.code_pruefen(None).is_err());
+        assert!(einrichtung.code_pruefen(None, None).is_err());
     }
 
     #[test]
     fn richtiger_code_oeffnet() {
         let einrichtung = Einrichtung::mit_code("richtiger-code");
-        assert!(einrichtung.code_pruefen(Some("falsch")).is_err());
-        assert!(einrichtung.code_pruefen(Some("richtiger-code")).is_ok());
+        assert!(einrichtung.code_pruefen(Some("falsch"), None).is_err());
+        assert!(einrichtung
+            .code_pruefen(Some("richtiger-code"), None)
+            .is_ok());
         assert_eq!(einrichtung.fehlversuche(), 1, "richtig zählt nicht weiter");
     }
 

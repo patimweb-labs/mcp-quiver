@@ -853,6 +853,33 @@ impl Pruefung {
         )
     }
 
+    /// Root-Anmeldung von einer bestimmten Adresse (Härtung Punkt 5).
+    async fn root_anmelden_von(&self, ip: std::net::IpAddr, passwort: &str) -> Antwort {
+        let _wache = ROOT_SPERRE.lock().await;
+        let mut anfrage = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/root")
+            .header("host", HOST)
+            .header("content-type", "application/json")
+            .header("origin", &self.oeffentlich)
+            .header("x-quiver", "1")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&json!({
+                    "email": ROOT_EMAIL,
+                    "passwort": passwort
+                }))
+                .expect("JSON"),
+            ))
+            .expect("Anfrage");
+        anfrage
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 50000,
+            ))));
+        let antwort = self.router.clone().oneshot(anfrage).await.expect("Antwort");
+        auspacken(antwort).await
+    }
+
     async fn anfrage(
         &self,
         methode: &str,
@@ -3386,4 +3413,131 @@ async fn nachpruefen_und_aufnehmen_schreiben_in_die_pruefspur() {
         }
     })
     .await;
+}
+
+// ------------------------------------------- Härtung: Anmelde-Start begrenzen
+
+/// Ein Server mit Entra und einer kleinen Grenze für offene Vorgänge.
+async fn start_router(offene_max: usize) -> (Router, PathBuf, Mock, Uhr) {
+    static ZAEHLER: AtomicUsize = AtomicUsize::new(50_000);
+    let uhr = Uhr::default();
+    let mock = Mock::start(uhr.clone()).await;
+    let daten = std::env::temp_dir().join(format!(
+        "quiver-start-test-{}-{}",
+        std::process::id(),
+        ZAEHLER.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&daten).expect("Ordner");
+    let mut konfig = Konfig::neu(&daten);
+    konfig.oeffentlich = String::from(OEFFENTLICH);
+    konfig.uhr = uhr.clone();
+    konfig.offene_vorgaenge_max = offene_max;
+    konfig.entra = Some(EntraKonfig {
+        tenant: TENANT.into(),
+        client_id: CLIENT.into(),
+        ausweis: Ausweis::geheimnis(ENTRA_SECRET),
+        authority: mock.basis.clone(),
+        issuer: mock.basis.clone(),
+        redirect_uri: format!("{OEFFENTLICH}/auth/callback"),
+        gruppen_namen: false,
+        graph_basis: String::from(GRAPH_BASIS),
+    });
+    let router = app(konfig).await.expect("App baut");
+    (router, daten, mock, uhr)
+}
+
+const START: &str = "/auth/geraet/start?challenge=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&port=50000&zustand=a&name=a";
+
+async fn start_anfrage(router: &Router) -> Antwort {
+    let antwort = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(START)
+                .header("host", HOST)
+                .body(axum::body::Body::empty())
+                .expect("Anfrage"),
+        )
+        .await
+        .expect("Antwort");
+    auspacken(antwort).await
+}
+
+/// Punkt 1: offene Anmeldevorgänge sind begrenzt; darüber 503 mit Hinweis.
+#[tokio::test]
+async fn anmelde_start_hat_eine_obergrenze() {
+    let (router, daten, _mock, _uhr) = start_router(2).await;
+    for nummer in 0..2 {
+        let antwort = start_anfrage(&router).await;
+        assert_eq!(
+            antwort.status,
+            StatusCode::SEE_OTHER,
+            "Start {nummer}: {}",
+            antwort.text
+        );
+    }
+    let antwort = start_anfrage(&router).await;
+    assert_eq!(antwort.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        antwort.text.contains("Anmeldungen"),
+        "mit Hinweis: {}",
+        antwort.text
+    );
+    // Aufgeräumt wird erst im Hintergrund: die Zeilen sind noch da.
+    let _ = std::fs::remove_dir_all(&daten);
+}
+
+/// Punkt 1: derselbe Weg ist je Adresse gedrosselt (429/503 mit Wartezeit).
+#[tokio::test]
+async fn anmelde_start_ist_gedrosselt() {
+    let (router, daten, _mock, _uhr) = start_router(1_000).await;
+    for _ in 0..30 {
+        let antwort = start_anfrage(&router).await;
+        assert_eq!(antwort.status, StatusCode::SEE_OTHER, "{}", antwort.text);
+    }
+    let antwort = start_anfrage(&router).await;
+    assert_eq!(antwort.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        antwort.text.contains("Sekunden warten"),
+        "mit Wartezeit: {}",
+        antwort.text
+    );
+    let _ = std::fs::remove_dir_all(&daten);
+}
+
+// ------------------------------------------- Härtung: Root-Drossel (Punkt 5)
+
+/// Eine Kontosperre darf den Besitzer nicht aussperren: von einer Adresse, von
+/// der schon einmal eine Root-Anmeldung gelang, gilt nur die IP-Drossel.
+#[tokio::test]
+async fn kontosperre_sperrt_den_besitzer_nicht_aus() {
+    let p = Pruefung::mit_entra().await;
+    let besitzer: std::net::IpAddr = "203.0.113.20".parse().unwrap();
+    let fremd: std::net::IpAddr = "203.0.113.21".parse().unwrap();
+
+    // Der Besitzer meldet sich einmal richtig an: die Adresse wird gemerkt.
+    let antwort = p.root_anmelden_von(besitzer, ROOT_PASSWORT).await;
+    assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+
+    // Ein Fremder probiert das Konto durch: die Konto-Drossel greift.
+    let mut gesperrt = false;
+    for _ in 0..8 {
+        let antwort = p.root_anmelden_von(fremd, "falsches-passwort").await;
+        if antwort.status == StatusCode::TOO_MANY_REQUESTS {
+            gesperrt = true;
+            break;
+        }
+        assert_eq!(antwort.status, StatusCode::UNAUTHORIZED, "{}", antwort.text);
+    }
+    assert!(gesperrt, "das Konto ist nach den Fehlversuchen gedrosselt");
+
+    // Der Besitzer kommt weiterhin herein – nur seine IP zählt.
+    let antwort = p.root_anmelden_von(besitzer, ROOT_PASSWORT).await;
+    assert_eq!(
+        antwort.status,
+        StatusCode::OK,
+        "die Kontosperre gilt für den Besitzer nicht: {}",
+        antwort.text
+    );
+    let _ = std::fs::remove_dir_all(&p.daten);
 }

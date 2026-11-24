@@ -36,6 +36,7 @@ pub mod entra_schluessel;
 mod fehler;
 mod geraet;
 mod graph;
+mod grenzen;
 mod hilfen;
 mod host;
 mod kopfzeilen;
@@ -92,10 +93,59 @@ pub async fn app(konfig: Konfig) -> anyhow::Result<Router> {
 /// Wie [`app`], plus stündliche Nachprüfung und Beobachtung der Datenbank
 /// (`PRAGMA data_version`, höchstens 2 s Verzug).
 pub async fn app_mit_hintergrund(konfig: Konfig) -> anyhow::Result<Router> {
-    let (router, zustand) = bauen(konfig).await?;
-    tokio::spawn(refresh::hintergrund(zustand.clone()));
-    tokio::spawn(beobachte_datenbank(zustand));
+    let (router, _) = app_mit_hintergrund_und_abschalter(konfig).await?;
     Ok(router)
+}
+
+/// Wie [`app_mit_hintergrund`], plus [`Abschalter`] für ein geordnetes Ende.
+///
+/// Der Abschalter beendet die Ereignis-Ströme sofort und schreibt beim
+/// Herunterfahren das WAL in die Datenbank zurück (siehe [`Abschalter::abschluss`]).
+pub async fn app_mit_hintergrund_und_abschalter(
+    konfig: Konfig,
+) -> anyhow::Result<(Router, Abschalter)> {
+    let (router, zustand) = bauen(konfig).await?;
+    let aufgaben = vec![
+        tokio::spawn(refresh::hintergrund(zustand.clone())),
+        tokio::spawn(beobachte_datenbank(zustand.clone())),
+    ];
+    Ok((router, Abschalter { zustand, aufgaben }))
+}
+
+/// Das geordnete Ende des Servers.
+///
+/// `ende_jetzt` beendet alle offenen Ereignis-Ströme (sie sollen nicht auf ein
+/// Zeitlimit warten müssen). `abschluss` beendet die Hintergrundläufe und
+/// schreibt das WAL zurück.
+pub struct Abschalter {
+    zustand: Arc<Zustand>,
+    aufgaben: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl Abschalter {
+    /// Alle Ereignis-Ströme sofort beenden (SIGTERM, Strg+C).
+    pub fn ende_jetzt(&self) {
+        self.zustand.beenden();
+    }
+
+    /// Nach dem letzten Aufruf: Hintergrundläufe anhalten und WAL zurückführen.
+    pub async fn abschluss(mut self) {
+        for aufgabe in self.aufgaben.drain(..) {
+            aufgabe.abort();
+        }
+        // `abort` wirkt beim nächsten Haltepunkt; aufräumen dauert nicht lang.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let conn = sperre(&self.zustand.db);
+        match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |zeile| {
+            Ok((zeile.get::<_, i64>(0)?, zeile.get::<_, i64>(1)?))
+        }) {
+            Ok((0, _)) => tracing::info!("WAL in die Datenbank zurückgeschrieben"),
+            Ok((_, seiten)) => {
+                tracing::warn!("WAL-Checkpoint unvollständig ({seiten} Seiten offen)")
+            }
+            Err(fehler) => tracing::warn!("WAL-Checkpoint nicht möglich: {fehler}"),
+        }
+    }
 }
 
 async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
@@ -306,7 +356,7 @@ where
         arbeit(&mut conn).map_err(|fehler| FehlerAntwort::aus_fehler(&fehler))
     })
     .await
-    .map_err(|fehler| FehlerAntwort::intern(format!("Hintergrundaufgabe gescheitert: {fehler}")))?
+    .map_err(|fehler| FehlerAntwort::intern_mit_kennung(&fehler))?
 }
 
 /// Sperre holen, auch wenn ein anderer Aufruf panisch war.

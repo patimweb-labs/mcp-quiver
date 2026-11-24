@@ -353,12 +353,26 @@ pub async fn hintergrund(zustand: Arc<Zustand>) {
         if anzahl > 0 {
             tracing::info!("Nachprüfen: {anzahl} Benutzer aufgefrischt");
         }
-        zustand.drossel.aufraeumen(zustand.uhr.jetzt());
+        // Aufräumen in Schritten: je Takt höchstens [`crate::drossel::AUFRAEUM_SCHRITT`]
+        // Einträge, damit die Karte hinter ihrer Sperre nicht alles aufhält.
+        let weg = zustand.drossel.aufraeumen(zustand.uhr.jetzt());
+        if weg > 0 {
+            tracing::debug!("Drossel: {weg} alte Einträge entfernt");
+        }
         {
             let jetzt = zustand.uhr.jetzt();
             let conn = crate::sperre(&zustand.db);
             let _ = speicher::sitzungen_aufraeumen(&conn, jetzt);
             let _ = speicher::oidc_aufraeumen(&conn, jetzt);
+            // Die Prüfspur wächst nur langsam; sie wird höchstens stündlich
+            // aufgeräumt und nicht bei jedem Schreiben.
+            if zustand.pruefspur_aufraeumen_faellig(jetzt) {
+                match speicher::pruefspur_aufraeumen(&conn, jetzt) {
+                    Ok(0) => {}
+                    Ok(anzahl) => tracing::info!("Prüfspur: {anzahl} alte Einträge entfernt"),
+                    Err(fehler) => tracing::warn!("Prüfspur nicht aufgeräumt: {fehler}"),
+                }
+            }
         }
     }
 }

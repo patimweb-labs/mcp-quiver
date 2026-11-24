@@ -178,6 +178,15 @@ impl SeitenFehler {
         )
     }
 
+    /// 503 – gerade ist kein Platz für einen weiteren Anmeldevorgang.
+    pub(crate) fn nicht_verfuegbar(text: Paar) -> Self {
+        Self::mit(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Paar::neu("Gerade nicht möglich", "Not possible right now"),
+            text,
+        )
+    }
+
     /// Die Seite zum Fehler, in der Sprache des Browsers.
     pub(crate) fn seite(self, sprache: Sprache) -> Response {
         let absatz = format!("<p>{}</p>", html(self.text.fuer(sprache)));

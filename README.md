@@ -84,8 +84,9 @@ that were changed by hand (symlinks are not followed).
 Then open `http://localhost:8740`. The first page is the **initial setup**: it
 asks for the e-mail and password of the one root user (12 to 256 characters,
 Argon2id) and signs that user in. The setup is only available for 15 minutes
-after the server starts, and — unless the base URL is loopback — only with a
-one-time code that the server prints once at start-up:
+after the server starts, and only with a one-time code that the server prints
+once at start-up — the code is required whenever the server listens on more
+than loopback (so always in the container), regardless of the base URL:
 
 ```
 INFO quiver_server::einrichtung: Ersteinrichtung: Code für diesen Start: …
@@ -101,10 +102,11 @@ with `--build-arg BASIS=public.ecr.aws/docker/library`.
 The container always listens on all addresses; the publish above keeps it on
 `127.0.0.1` only. That is why the base URL may be plain `http`: with anything
 but an https base URL the server refuses to start unless the host is loopback.
-**Keep it that way.** A loopback base URL means the setup needs no one-time
-code, and the code is only required for non-loopback base URLs – whoever can
-reach the port during the first 15 minutes could create the root. Publish on
-`127.0.0.1` (as above) or use an `https` base URL.
+The one-time code is still required, because the listen address decides, not
+the base URL. Only an explicit `QUIVER_EINRICHTUNG=ohne-code` together with a
+loopback base URL lifts it, and that is logged loudly at start-up. Whoever can
+reach the port during the first 15 minutes could otherwise create the root.
+Publish on `127.0.0.1` (as above) or use an `https` base URL.
 
 | First start (dark) | Sign-in (light) | Closed window (dark) |
 | --- | --- | --- |
@@ -185,11 +187,12 @@ it again. At most 200 groups are created this way.
 | `QUIVER_ENTRA_CLIENT_ID` | Application (client) id |
 | `QUIVER_ENTRA_SECRET_DATEI` | Client secret file (default `<data>/entra-secret`); exactly one of secret and key |
 | `QUIVER_ENTRA_SCHLUESSEL_DATEI` | Private key for `private_key_jwt` (default `<data>/entra-schluessel.pem`) |
+| `QUIVER_EINRICHTUNG` | `mit-code` (default) or `ohne-code` (only with a loopback base URL) |
 | `QUIVER_ENTRA_AUTHORITY` | Alternative authority, loopback only (tests) |
 | `QUIVER_ENTRA_GRUPPENNAMEN` | `an` fetches group names via Graph; default `aus`, any other value prevents startup |
 | `QUIVER_ENTRA_GRAPH` | Base URL for Graph, loopback only (tests); fixed to `https://graph.microsoft.com` in production |
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
-| `QUIVER_ALTGERAETE` | `erlaubt` (default) or `gesperrt` for devices without a user |
+| `QUIVER_ALTGERAETE` | `gesperrt` (default once Entra is configured, otherwise `erlaubt`) for devices without a user |
 
 ## Development
 

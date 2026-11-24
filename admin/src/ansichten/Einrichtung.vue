@@ -160,7 +160,7 @@ function eingerichtet_oder_fehler(wert: unknown): string {
         <Feld
           v-if="code_noetig"
           beschriftung="Einmal-Code"
-          hinweis="Steht in der Log-Ausgabe des Servers; er wird bei jedem Start neu erzeugt."
+          hinweis="Steht in der Log-Ausgabe des Servers (im Container: docker logs <container>, mit Compose: docker compose logs quiver). Er wird bei jedem Start neu erzeugt."
         >
           <template #default="{ id }">
             <WpInput
