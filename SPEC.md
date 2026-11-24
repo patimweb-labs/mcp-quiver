@@ -145,12 +145,14 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
    Koppeln im Client-Fenster ein eigenes Token. So weiß der Client, welcher
    Agent fragt, und kann Tools pro Agent filtern.
 2. **Client → Server, mit Entra:** Der **Server** ist der einzige OIDC-Client
-   (eine Anwendung, ein Mandant, Authorization Code + PKCE, Client-Geheimnis
-   nur am Server). Der Client spricht nie mit Entra: er öffnet die Anmeldung
-   des Servers im Browser, bekommt über `127.0.0.1` einen Einmal-Code und
-   tauscht ihn mit seinem PKCE-Verifier gegen ein Geräte-Token. Identität ist
-   `(tid, oid)`; E-Mail und Name sind nur Anzeige. Gruppen kommen als
-   Objekt-Ids aus dem ID-Token und werden auf lokale Gruppen abgebildet.
+   (eine Anwendung, ein Mandant, Authorization Code + PKCE; Client-Geheimnis
+   **oder** Zertifikat nur am Server, Aufgabe 23). Der Client spricht nie mit
+   Entra: er öffnet die Anmeldung des Servers im Browser, bekommt über
+   `127.0.0.1` einen Einmal-Code und tauscht ihn mit seinem PKCE-Verifier
+   gegen ein Geräte-Token. Identität ist `(tid, oid)`; E-Mail und Name sind
+   nur Anzeige. Gruppen kommen als Objekt-Ids aus dem ID-Token; jede gesehene
+   Id legt **einmal** eine lokale Gruppe an (ohne Sätze), Titel und Sätze
+   gehören dem Admin.
 3. **Client → Server, ohne Entra:** Einmal-Code aus der Verwaltung. Beide Wege
    enden in derselben Gerätebindung; Geräte lassen sich sperren.
 4. **Verwaltung:** Root (genau einer, E-Mail und Passwort, Argon2id) wird bei
@@ -198,6 +200,26 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
    bekommt `form-action 'self' http://127.0.0.1:<Port>` mit genau dem Port des
    Vorgangs, weil Chrome auch die Weiterleitung nach dem Absenden prüft.
 
+10. **Zertifikat statt Geheimnis (Aufgabe 23):** Der Server weist sich bei
+    Entra wahlweise mit `private_key_jwt` aus: PS256, Kopf `x5t#S256`, `aud` =
+    Token-Endpunkt, `iss` = `sub` = Client-Id, zufällige `jti`, `nbf`/`exp`
+    höchstens fünf Minuten; je Anfrage neu, bei Code-Einlösung und Refresh.
+    Konfiguriert ist **genau eins** von Schlüssel und Geheimnis; beides oder
+    eine Lücke verhindert den Start. Der Unterbefehl `entra-schluessel` erzeugt
+    RSA 3072 und ein selbst signiertes Zertifikat (ein Jahr), legt den privaten
+    Schlüssel mit 0600 an, überschreibt nie und gibt nur das öffentliche
+    Zertifikat, Fingerabdruck und Ablauf aus. `--erneuern` legt einen zweiten
+    an, `--umschalten` macht ihn ohne Neustart und ohne Ausfall aktiv. Ab 30
+    Tagen vor dem Ablauf wird im Log, in der Verwaltung und in der Prüfspur
+    gewarnt (je Tag einmal). Der Schlüssel erscheint nie in Log, Fehler,
+    Antwort, Prüfspur oder `Debug`.
+11. **Gruppen aus Entra (Aufgabe 23):** Höchstens 200; jede Id einmal, ohne
+    Sätze; Titel und Sätze gehören danach dem Admin und werden nie
+    überschrieben. Löscht der Admin eine solche Gruppe, bleibt sie gelöscht
+    (Id gemerkt), bis er sie wieder aufnimmt. Mitgliedschaften pflegt nur
+    Entra: Anmeldung und jede Nachprüfung ersetzen sie, auch das Entfernen,
+    und wirken sofort auf verbundene Geräte.
+
 **Festlegung:** Zugangsdaten werden nie als Umgebungsvariable oder Datei
 abgelegt, die ein Agent lesen könnte. Fehler an ein Gerät tragen einen
 maschinenlesbaren `grund` (`gesperrt`, `neu_anmelden`, `kein_zugriff`);
@@ -205,7 +227,9 @@ unbekannte Gründe gelten als `neu_anmelden`.
 
 *Preis:* Der Server ist nun auch Identity-Provider-Abhängigkeit: ohne Entra
 gilt der letzte Stand höchstens 24 h. Ein Gruppen-Überlauf im Token wird
-abgelehnt statt als „keine Gruppen“ gelesen. Die Seiten des Servers sind
+abgelehnt statt als „keine Gruppen“ gelesen. Ein selbst signiertes Zertifikat
+muss der Betreiber vor dem Ablauf erneuern; der Server warnt 30 Tage vorher,
+aber erneuern kann er es nicht von selbst. Die Seiten des Servers sind
 schmucklos (kein Inline-Skript, keine Inline-Stile), damit die CSP ohne
 Ausnahme gilt; sie tragen dieselben Tokens wie Verwaltung und Client, aber
 nicht deren Bausteine. Die Ersteinrichtung ist ein Weg, der nur in den ersten

@@ -97,25 +97,48 @@ Without Entra the server issues one-time device codes from the admin UI. With
 Entra, devices sign in through the browser and groups come from the token.
 
 1. Register an application in your Entra tenant (single tenant). Add
-   `<base URL>/auth/callback` as a redirect URI (web platform), create a client
-   secret, and turn on ID tokens.
+   `<base URL>/auth/callback` as a redirect URI (web platform) and turn on ID
+   tokens.
 2. Make the app emit the groups assigned to the application (`groups` claim,
    object ids only, no directory read permission). Very large group lists are
    rejected on purpose; limit the assignment instead.
-3. Start the server with `QUIVER_OEFFENTLICH=https://quiver.example.test`,
+3. Choose an identity – **exactly one** of the two:
+   * **Certificate (recommended, `private_key_jwt`):** `quiver-server
+     entra-schluessel` creates an RSA 3072 key and a self-signed certificate
+     valid for one year. It prints **only** the public certificate, the
+     thumbprint and the expiry; upload that certificate to the application in
+     Entra (the certificate is also written to
+     `<data>/entra-schluessel.crt.pem`). The private key
+     (`<data>/entra-schluessel.pem`, mode 0600) never leaves the server. No
+     client secret, which many tenants forbid by policy.
+   * **Secret:** in `<data>/entra-secret` (or `QUIVER_ENTRA_SECRET_DATEI`).
+4. Start the server with `QUIVER_OEFFENTLICH=https://quiver.example.test`,
    `QUIVER_ENTRA_TENANT=<tenant GUID>`, `QUIVER_ENTRA_CLIENT_ID=<app id>` and
-   the client secret in `<data>/entra-secret` (or set
-   `QUIVER_ENTRA_SECRET_DATEI`). Permissions 0600; the server warns if they are
-   more open.
-4. In the admin UI map each Entra group id to a local group. Users without a
-   mapped group get no tools.
-5. Root can appoint admins; an Entra user must sign in once before
+   the key (default `<data>/entra-schluessel.pem`, or
+   `QUIVER_ENTRA_SCHLUESSEL_DATEI`) **or** the secret. If both are present the
+   server refuses to start; if one of the three pieces is missing, it does not
+   start either. Permissions more open than 0600 are reported in the log.
+5. No mapping step: every group id seen in a token creates a group
+   "Entra-Gruppe <first 8 characters>" **once**, without tool sets – so it
+   grants nothing until an admin assigns a set in the admin UI. After that the
+   title and sets belong to the admin; Entra only replaces the members. Users
+   without a group get no tools.
+6. Root can appoint admins; an Entra user must sign in once before
    `quiver-server admin-setzen --oid <object id>` works.
+
+**Rotating the certificate without downtime:** `quiver-server entra-schluessel
+--erneuern` creates a second key (the active one stays untouched);
+`--umschalten` makes it active, and the running server picks it up without a
+restart. Both certificates are registered in Entra, so there is no gap. From 30
+days before expiry the server warns in the log, in the admin UI and in the audit
+trail (once per day). Existing keys are never overwritten.
 
 The server refreshes each user's token hourly (with jitter) and when a device
 connects after more than an hour. If Entra is unreachable, the last state stays
 valid for at most 24 hours. If a user is blocked, no longer assigned, or their
-token is revoked, their devices lose their tools on the next check.
+token is revoked, their devices lose their tools on the next check. If an admin
+deletes a group that came from Entra, it stays deleted; the admin UI can adopt
+it again. At most 200 groups are created this way.
 
 ### Server configuration
 
@@ -127,7 +150,8 @@ token is revoked, their devices lose their tools on the next check.
 | `QUIVER_ADMIN_DIST` | Built admin UI (default `./admin/dist`) |
 | `QUIVER_ENTRA_TENANT` | Tenant GUID (never `common`/`organizations`) |
 | `QUIVER_ENTRA_CLIENT_ID` | Application (client) id |
-| `QUIVER_ENTRA_SECRET_DATEI` | Client secret file (default `<data>/entra-secret`) |
+| `QUIVER_ENTRA_SECRET_DATEI` | Client secret file (default `<data>/entra-secret`); exactly one of secret and key |
+| `QUIVER_ENTRA_SCHLUESSEL_DATEI` | Private key for `private_key_jwt` (default `<data>/entra-schluessel.pem`) |
 | `QUIVER_ENTRA_AUTHORITY` | Alternative authority, loopback only (tests) |
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
 | `QUIVER_ALTGERAETE` | `erlaubt` (default) or `gesperrt` for devices without a user |

@@ -89,14 +89,44 @@ impl Laufzeit {
     }
 }
 
+/// Womit sich der Server bei Entra ausweist (genau eins von beidem).
+#[derive(Clone)]
+pub enum Ausweis {
+    /// Client-Geheimnis (`client_secret`). Wird nie geloggt und nie ausgeliefert.
+    Geheimnis(String),
+    /// Privater Schlüssel mit Zertifikat (`private_key_jwt`, Aufgabe 23).
+    Schluessel(Arc<crate::entra_schluessel::SchluesselHalter>),
+}
+
+impl std::fmt::Debug for Ausweis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Weder Geheimnis noch Schlüssel gehören in ein Debug-Protokoll.
+        match self {
+            Ausweis::Geheimnis(_) => f.write_str("Geheimnis(<verborgen>)"),
+            Ausweis::Schluessel(halter) => write!(f, "Schluessel({:?})", halter.pfad()),
+        }
+    }
+}
+
+impl Ausweis {
+    /// Nur für Tests und Aufrufer, die ein Geheimnis im Speicher haben.
+    pub fn geheimnis(wert: impl Into<String>) -> Self {
+        Self::Geheimnis(wert.into())
+    }
+
+    pub fn ist_schluessel(&self) -> bool {
+        matches!(self, Ausweis::Schluessel(_))
+    }
+}
+
 /// Entra-Konfiguration. Fehlt sie ganz, gilt der alte Weg mit Einmal-Codes.
 #[derive(Clone)]
 pub struct EntraKonfig {
     /// Mandant (GUID, nie `common` oder `organizations`).
     pub tenant: String,
     pub client_id: String,
-    /// Das Client-Geheimnis. Wird nie geloggt und nie ausgeliefert.
-    pub secret: String,
+    /// Geheimnis **oder** Schlüssel, nie beides.
+    pub ausweis: Ausweis,
     /// Authority ohne abschließenden Schrägstrich (Loopback nur im Test).
     pub authority: String,
     /// Der erwartete `iss`; muss exakt der Authority entsprechen.
@@ -105,16 +135,37 @@ pub struct EntraKonfig {
     pub redirect_uri: String,
 }
 
+impl EntraKonfig {
+    /// Eine Konfiguration mit Client-Geheimnis (Tests, kleine Installationen).
+    pub fn mit_geheimnis(
+        tenant: impl Into<String>,
+        client_id: impl Into<String>,
+        authority: impl Into<String>,
+        redirect_uri: impl Into<String>,
+        geheimnis: impl Into<String>,
+    ) -> Self {
+        let authority = authority.into();
+        Self {
+            tenant: tenant.into(),
+            client_id: client_id.into(),
+            ausweis: Ausweis::Geheimnis(geheimnis.into()),
+            issuer: authority.clone(),
+            authority,
+            redirect_uri: redirect_uri.into(),
+        }
+    }
+}
+
 impl std::fmt::Debug for EntraKonfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Das Geheimnis gehört nicht in ein Debug-Protokoll.
+        // Geheimnis und Schlüssel gehören nicht in ein Debug-Protokoll.
         f.debug_struct("EntraKonfig")
             .field("tenant", &self.tenant)
             .field("client_id", &self.client_id)
             .field("authority", &self.authority)
             .field("issuer", &self.issuer)
             .field("redirect_uri", &self.redirect_uri)
-            .field("secret", &"<verborgen>")
+            .field("ausweis", &self.ausweis)
             .finish()
     }
 }
@@ -178,43 +229,75 @@ impl Konfig {
         let secret_pfad = std::env::var_os("QUIVER_ENTRA_SECRET_DATEI")
             .map(PathBuf::from)
             .unwrap_or_else(|| daten.join("entra-secret"));
+        let schluessel_pfad = crate::entra_schluessel::pfad_aus_umgebung(&daten);
+        let secret_gesetzt = std::env::var_os("QUIVER_ENTRA_SECRET_DATEI").is_some();
+        let schluessel_gesetzt = std::env::var_os("QUIVER_ENTRA_SCHLUESSEL_DATEI").is_some();
+        let secret_da = secret_pfad.exists();
+        let schluessel_da = schluessel_pfad.exists();
 
-        let gesetzt = [
-            !tenant.trim().is_empty(),
-            !client_id.trim().is_empty(),
-            secret_pfad.exists() || std::env::var_os("QUIVER_ENTRA_SECRET_DATEI").is_some(),
-        ];
-        let teilweise = gesetzt.iter().any(|x| *x) && !gesetzt.iter().all(|x| *x);
-        if teilweise {
+        // Genau eins von beidem: Geheimnis oder Schlüssel (Aufgabe 23).
+        if (secret_da || secret_gesetzt) && (schluessel_da || schluessel_gesetzt) {
             anyhow::bail!(
-                "Entra ist nur teilweise gesetzt: QUIVER_ENTRA_TENANT, QUIVER_ENTRA_CLIENT_ID \
-                 und QUIVER_ENTRA_SECRET_DATEI gehören zusammen (alle oder keine)."
+                "Entra hat Geheimnis ({}) und Schlüssel ({}); es gilt genau eins von beidem. \
+                 Bitte eine der beiden Angaben entfernen.",
+                secret_pfad.display(),
+                schluessel_pfad.display()
+            );
+        }
+        let geheimnis_weg = secret_da || secret_gesetzt;
+        let schluessel_weg = schluessel_da || schluessel_gesetzt;
+        let tenant_da = !tenant.trim().is_empty();
+        let client_da = !client_id.trim().is_empty();
+        let ausweis_da = geheimnis_weg || schluessel_weg;
+        let etwas_gesetzt = tenant_da || client_da || ausweis_da;
+        let vollstaendig = tenant_da && client_da && ausweis_da;
+        if etwas_gesetzt && !vollstaendig {
+            anyhow::bail!(
+                "Entra ist nur teilweise gesetzt: QUIVER_ENTRA_TENANT und \
+                 QUIVER_ENTRA_CLIENT_ID gehören mit genau einem Ausweis zusammen – \
+                 QUIVER_ENTRA_SECRET_DATEI (Geheimnis) oder \
+                 QUIVER_ENTRA_SCHLUESSEL_DATEI (Zertifikat); alle oder keine."
             );
         }
 
-        let entra = if gesetzt.iter().all(|x| *x) {
+        let entra = if vollstaendig {
             let tenant = tenant.trim().to_string();
             if !ist_guid(&tenant) {
                 anyhow::bail!("QUIVER_ENTRA_TENANT ist keine GUID (und nie common/organizations)");
             }
-            let secret = std::fs::read_to_string(&secret_pfad)
-                .map_err(|fehler| {
-                    anyhow::anyhow!(
-                        "Entra-Geheimnis {} nicht lesbar: {fehler}",
+            let ausweis = if geheimnis_weg {
+                let secret = std::fs::read_to_string(&secret_pfad)
+                    .map_err(|fehler| {
+                        anyhow::anyhow!(
+                            "Entra-Geheimnis {} nicht lesbar: {fehler}",
+                            secret_pfad.display()
+                        )
+                    })?
+                    .trim()
+                    .to_string();
+                if secret.is_empty() {
+                    anyhow::bail!("Entra-Geheimnis in {} ist leer", secret_pfad.display());
+                }
+                if krypto::rechte_zu_offen(&secret_pfad) {
+                    tracing::warn!(
+                        "{} ist für Gruppe oder alle lesbar; bitte auf 0600 setzen",
                         secret_pfad.display()
-                    )
-                })?
-                .trim()
-                .to_string();
-            if secret.is_empty() {
-                anyhow::bail!("Entra-Geheimnis in {} ist leer", secret_pfad.display());
-            }
-            if krypto::rechte_zu_offen(&secret_pfad) {
-                tracing::warn!(
-                    "{} ist für Gruppe oder alle lesbar; bitte auf 0600 setzen",
-                    secret_pfad.display()
-                );
-            }
+                    );
+                }
+                Ausweis::Geheimnis(secret)
+            } else {
+                if krypto::rechte_zu_offen(&schluessel_pfad) {
+                    tracing::warn!(
+                        "{} ist für Gruppe oder alle lesbar; bitte auf 0600 setzen",
+                        schluessel_pfad.display()
+                    );
+                }
+                let halter = crate::entra_schluessel::SchluesselHalter::laden(schluessel_pfad)
+                    .map_err(|fehler| {
+                        anyhow::anyhow!("Entra-Schlüssel nicht brauchbar: {fehler:#}")
+                    })?;
+                Ausweis::Schluessel(Arc::new(halter))
+            };
             let authority = match std::env::var("QUIVER_ENTRA_AUTHORITY") {
                 Ok(wert) if !wert.trim().is_empty() => {
                     let wert = basis_url_pruefen(&wert)?;
@@ -230,7 +313,7 @@ impl Konfig {
             Some(EntraKonfig {
                 tenant,
                 client_id: client_id.trim().to_string(),
-                secret,
+                ausweis,
                 issuer: authority.clone(),
                 authority,
                 redirect_uri: format!("{oeffentlich}/auth/callback"),

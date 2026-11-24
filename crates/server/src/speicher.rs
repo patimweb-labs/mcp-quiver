@@ -31,7 +31,9 @@ pub const GERAETE: &str = "geraete";
 pub const UNBEGRENZT: &str = "unbegrenzt";
 
 /// Die Schemaversion, die diese Fassung schreibt.
-pub const SCHEMA_VERSION: i64 = 1;
+///
+/// 2 = Aufgabe 23: `entra_gruppen` merkt sich gelöschte Gruppen.
+pub const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -120,7 +122,8 @@ CREATE TABLE IF NOT EXISTS geraete_codes (
 CREATE TABLE IF NOT EXISTS entra_gruppen (
     id            TEXT PRIMARY KEY,
     anzeigename   TEXT,
-    zuletzt       TEXT NOT NULL
+    zuletzt       TEXT NOT NULL,
+    geloescht_am  TEXT
 );
 "#;
 
@@ -191,6 +194,10 @@ fn migrieren(conn: &Connection) -> anyhow::Result<()> {
                 manuell_neu = true;
             }
         }
+    }
+    // Aufgabe 23: alte `entra_gruppen` kennen das Löschmerkmal nicht.
+    if !spalte_existiert(conn, "entra_gruppen", "geloescht_am")? {
+        conn.execute("ALTER TABLE entra_gruppen ADD COLUMN geloescht_am TEXT", [])?;
     }
     // Alte Geräte kennen nur eine Gruppenliste; sie wird die manuelle Liste.
     if manuell_neu {
@@ -930,6 +937,26 @@ pub struct PruefspurZeile {
     pub text: String,
 }
 
+/// Steht zu diesem Tag schon ein Hinweis mit diesem Anfang in der Prüfspur?
+///
+/// Damit erscheint die Zertifikatswarnung höchstens einmal je Tag
+/// (Aufgabe 23), auch wenn viele Aufrufe sie prüfen.
+pub fn pruefspur_hat_am_tag(
+    conn: &Connection,
+    art: &str,
+    tag: &str,
+    text_anfang: &str,
+) -> anyhow::Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM pruefspur WHERE art = ?1 AND zeit LIKE ?2 AND text LIKE ?3 LIMIT 1",
+            params![art, format!("{tag}%"), format!("{text_anfang}%")],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 pub fn pruefspur_liste(conn: &Connection, limit: u32) -> anyhow::Result<Vec<PruefspurZeile>> {
     let mut stmt =
         conn.prepare("SELECT zeit, art, akteur, text FROM pruefspur ORDER BY id DESC LIMIT ?1")?;
@@ -1272,55 +1299,232 @@ pub fn geraete_code_nehmen(
 
 // ------------------------------------------------------------- Entra-Gruppen
 
+/// Höchstens so viele Gruppen legt der Server aus Entra-Ids an (Aufgabe 23).
+pub const MAX_ENTRA_GRUPPEN: usize = 200;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntraGruppeZeile {
     pub id: String,
+    /// Titel der quiver-Gruppe, die diese Id trägt.
     pub anzeigename: Option<String>,
     pub zuletzt: String,
+    /// Kennung der quiver-Gruppe, falls es sie gibt.
+    pub gruppe: Option<GruppeId>,
+    /// Vom Admin gelöscht: bleibt gelöscht, bis er sie wieder aufnimmt.
+    pub geloescht: bool,
 }
 
+/// Den Titel einer automatisch angelegten Gruppe: „Entra-Gruppe <erste 8>“.
+fn entra_titel(id: &str) -> String {
+    let kurz: String = id.chars().take(8).collect();
+    format!("Entra-Gruppe {kurz}")
+}
+
+/// Eine Id in der Merkliste anlegen oder auffrischen.
+fn entra_zeile_merken(conn: &Connection, id: &str, jetzt: OffsetDateTime) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO entra_gruppen (id, anzeigename, zuletzt) VALUES (?1, NULL, ?2) \
+         ON CONFLICT(id) DO UPDATE SET zuletzt = ?2",
+        params![id, hilfen::als_text(jetzt)],
+    )?;
+    Ok(())
+}
+
+fn entra_geloescht_am(conn: &Connection, id: &str) -> anyhow::Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT geloescht_am FROM entra_gruppen WHERE id = ?1",
+            params![id],
+            |zeile| zeile.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// Gruppen, die diese Entra-Id tragen.
+fn gruppe_mit_entra<'a>(gruppen: &'a [Gruppe], id: &str) -> Option<&'a Gruppe> {
+    gruppen
+        .iter()
+        .find(|gruppe| gruppe.entra.iter().any(|e| e.eq_ignore_ascii_case(id)))
+}
+
+/// Jede gesehene Entra-Id **einmal** als quiver-Gruppe anlegen, falls noch
+/// keine Gruppe sie trägt (Aufgabe 23). Titel und Sätze werden nie
+/// überschrieben; gelöschte Ids bleiben gelöscht.
+///
+/// Gibt die neu angelegten Gruppen zurück (für die Prüfspur).
 pub fn entra_gruppen_merken(
     conn: &Connection,
     ids: &[String],
     jetzt: OffsetDateTime,
-) -> anyhow::Result<()> {
-    let text = hilfen::als_text(jetzt);
+) -> anyhow::Result<Vec<Gruppe>> {
+    let mut gruppen: Vec<Gruppe> = liste(conn, GRUPPEN)?;
+    let mut anzahl = gruppen
+        .iter()
+        .filter(|gruppe| !gruppe.entra.is_empty())
+        .count();
+    let mut neu = Vec::new();
     for id in ids {
+        let id = id.to_ascii_lowercase();
+        entra_zeile_merken(conn, &id, jetzt)?;
+        // Trägt schon eine Gruppe diese Id? Dann gehören Titel und Sätze dem
+        // Admin – nichts wird angefasst.
+        if gruppe_mit_entra(&gruppen, &id).is_some() {
+            continue;
+        }
+        if entra_geloescht_am(conn, &id)?.is_some() {
+            // Der Admin hat sie gelöscht; sie bleibt gelöscht.
+            continue;
+        }
+        if anzahl >= MAX_ENTRA_GRUPPEN {
+            tracing::warn!(
+                "Entra-Gruppe {id} wird nicht angelegt: es gibt schon {MAX_ENTRA_GRUPPEN} \
+                 Gruppen aus Entra"
+            );
+            continue;
+        }
+        if gruppen.iter().any(|gruppe| gruppe.id.als_str() == id) {
+            // Die Kennung ist von einer anderen Gruppe belegt; sie gehört dem
+            // Admin und wird nicht überschrieben.
+            tracing::warn!(
+                "Entra-Gruppe {id} wird nicht angelegt: die Kennung trägt schon eine andere Gruppe"
+            );
+            continue;
+        }
+        let gruppe = Gruppe {
+            id: GruppeId::neu(id.clone()),
+            titel: entra_titel(&id),
+            saetze: Vec::new(),
+            entra: vec![id.clone()],
+        };
+        setze(conn, GRUPPEN, &id, &gruppe)?;
+        anzahl += 1;
+        gruppen.push(gruppe.clone());
+        neu.push(gruppe);
+    }
+    Ok(neu)
+}
+
+/// Wie [`entra_gruppen_merken`], plus Prüfspur „angelegt durch …“.
+pub fn entra_gruppen_merken_und_spur(
+    conn: &Connection,
+    ids: &[String],
+    jetzt: OffsetDateTime,
+    durch: &str,
+    akteur: &str,
+) -> anyhow::Result<Vec<Gruppe>> {
+    let neu = entra_gruppen_merken(conn, ids, jetzt)?;
+    for gruppe in &neu {
+        pruefspur_schreiben(
+            conn,
+            jetzt,
+            "gruppe",
+            akteur,
+            &format!("{} angelegt durch {durch}", gruppe.id),
+        )?;
+    }
+    Ok(neu)
+}
+
+pub fn entra_gruppen_liste(conn: &Connection) -> anyhow::Result<Vec<EntraGruppeZeile>> {
+    let gruppen: Vec<Gruppe> = liste(conn, GRUPPEN)?;
+    let mut stmt = conn
+        .prepare("SELECT id, anzeigename, zuletzt, geloescht_am FROM entra_gruppen ORDER BY id")?;
+    let zeilen = stmt.query_map([], |zeile| {
+        Ok((
+            zeile.get::<_, String>(0)?,
+            zeile.get::<_, Option<String>>(1)?,
+            zeile.get::<_, String>(2)?,
+            zeile.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    let mut aus = Vec::new();
+    for zeile in zeilen {
+        let (id, gespeicherter_name, zuletzt, geloescht_am) = zeile?;
+        let gruppe = gruppe_mit_entra(&gruppen, &id);
+        aus.push(EntraGruppeZeile {
+            anzeigename: gruppe.map(|g| g.titel.clone()).or(gespeicherter_name),
+            gruppe: gruppe.map(|g| g.id.clone()),
+            geloescht: geloescht_am.is_some(),
+            id,
+            zuletzt,
+        });
+    }
+    Ok(aus)
+}
+
+/// Eine gelöschte Entra-Gruppe wieder aufnehmen (oder eine neue anlegen): die
+/// quiver-Gruppe entsteht mit dieser Id, ohne Sätze. Der Titel darf vorgegeben
+/// werden; sonst gilt der gemerkte oder „Entra-Gruppe <erste 8>“.
+pub fn entra_gruppe_aufnehmen(
+    conn: &Connection,
+    id: &str,
+    titel: Option<&str>,
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<Gruppe> {
+    let id = id.to_ascii_lowercase();
+    entra_zeile_merken(conn, &id, jetzt)?;
+    let gruppen: Vec<Gruppe> = liste(conn, GRUPPEN)?;
+    let mut gruppe = match gruppe_mit_entra(&gruppen, &id) {
+        Some(gruppe) => gruppe.clone(),
+        None => {
+            if gruppen.iter().any(|g| g.id.als_str() == id) {
+                anyhow::bail!("die Kennung {id} trägt schon eine andere Gruppe");
+            }
+            Gruppe {
+                id: GruppeId::neu(id.clone()),
+                titel: entra_titel(&id),
+                saetze: Vec::new(),
+                entra: vec![id.clone()],
+            }
+        }
+    };
+    // Von Hand aufgenommen: das Löschmerkmal gilt nicht mehr.
+    conn.execute(
+        "UPDATE entra_gruppen SET geloescht_am = NULL WHERE id = ?1",
+        params![id],
+    )?;
+    if let Some(titel) = titel.map(str::trim).filter(|t| !t.is_empty()) {
+        gruppe.titel = titel.to_string();
+    } else if gruppe.titel.trim().is_empty() {
+        gruppe.titel = entra_titel(&id);
+    }
+    setze(conn, GRUPPEN, gruppe.id.als_str(), &gruppe)?;
+    Ok(gruppe)
+}
+
+/// Eine Entra-Gruppe löschen: die Id bleibt gemerkt und wird nicht wieder
+/// angelegt, bis der Admin sie aufnimmt.
+pub fn entra_gruppe_loeschen_merken(
+    conn: &Connection,
+    entra_ids: &[String],
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<()> {
+    for id in entra_ids {
+        let id = id.to_ascii_lowercase();
+        entra_zeile_merken(conn, &id, jetzt)?;
         conn.execute(
-            "INSERT INTO entra_gruppen (id, anzeigename, zuletzt) VALUES (?1, NULL, ?2) \
-             ON CONFLICT(id) DO UPDATE SET zuletzt = ?2",
-            params![id, text],
+            "UPDATE entra_gruppen SET geloescht_am = ?2 WHERE id = ?1",
+            params![id, hilfen::als_text(jetzt)],
         )?;
     }
     Ok(())
 }
 
-pub fn entra_gruppen_liste(conn: &Connection) -> anyhow::Result<Vec<EntraGruppeZeile>> {
-    let mut stmt =
-        conn.prepare("SELECT id, anzeigename, zuletzt FROM entra_gruppen ORDER BY id")?;
-    let zeilen = stmt.query_map([], |zeile| {
-        Ok(EntraGruppeZeile {
-            id: zeile.get(0)?,
-            anzeigename: zeile.get(1)?,
-            zuletzt: zeile.get(2)?,
-        })
-    })?;
-    let mut aus = Vec::new();
-    for zeile in zeilen {
-        aus.push(zeile?);
+/// Alle Geräte eines Benutzers neu rechnen: die Entra-Ids bestimmen die
+/// wirksamen Gruppen. Änderungen wirken sofort auf verbundene Geräte.
+pub fn geraete_gruppen_neu(conn: &Connection, oid: &str, entra: &[String]) -> anyhow::Result<bool> {
+    let mut geaendert = false;
+    for zeile in geraete_von_user(conn, oid)? {
+        let wirksam = wirksame_gruppen(conn, &zeile.manuell, entra)?;
+        if wirksam != zeile.geraet.gruppen {
+            let mut geraet = zeile.geraet;
+            geraet.gruppen = wirksam;
+            aendere_geraet(conn, &geraet)?;
+            geaendert = true;
+        }
     }
-    Ok(aus)
-}
-
-pub fn entra_anzeigename_setzen(
-    conn: &Connection,
-    id: &str,
-    name: Option<&str>,
-) -> anyhow::Result<bool> {
-    Ok(conn.execute(
-        "UPDATE entra_gruppen SET anzeigename = ?2 WHERE id = ?1",
-        params![id, name],
-    )? > 0)
+    Ok(geaendert)
 }
 
 /// Wirksame Gruppen eines Geräts: die am Gerät gesetzten **und** die über die
@@ -1356,7 +1560,7 @@ pub fn data_version(conn: &Connection) -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quiver_domain::{Herkunft, Laufzeit};
+    use quiver_domain::{Herkunft, Laufzeit, SatzId};
 
     fn eintrag(id: &str) -> Eintrag {
         Eintrag {
@@ -1488,7 +1692,7 @@ mod tests {
         assert_eq!(alt.manuell, vec![GruppeId::neu("team")]);
         assert_eq!(alt.oid, None);
         assert!(
-            ordner.join("quiver.db.vor-1").exists(),
+            ordner.join("quiver.db.vor-2").exists(),
             "Sicherung liegt da"
         );
         // Zweiter Start migriert nicht noch einmal.
@@ -1551,6 +1755,125 @@ mod tests {
         let liste = pruefspur_liste(&conn, 10).unwrap();
         assert_eq!(liste.len(), 1);
         assert_eq!(liste[0].text, "neu");
+    }
+
+    fn jetzt() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap()
+    }
+
+    #[test]
+    fn entra_gruppe_entsteht_einmal_und_behaelt_titel_und_saetze() {
+        let conn = gedaechtnis();
+        let ids = vec![String::from("12345678-1234-1234-1234-123456789012")];
+        let neu = entra_gruppen_merken(&conn, &ids, jetzt()).unwrap();
+        assert_eq!(neu.len(), 1);
+        assert_eq!(neu[0].id.als_str(), ids[0]);
+        assert_eq!(neu[0].titel, "Entra-Gruppe 12345678");
+        assert!(neu[0].saetze.is_empty());
+
+        // Der Admin benennt um und ordnet einen Satz zu.
+        let mut gruppe = neu[0].clone();
+        gruppe.titel = String::from("Team");
+        gruppe.saetze = vec![SatzId::neu("basis")];
+        setze(&conn, GRUPPEN, gruppe.id.als_str(), &gruppe).unwrap();
+
+        // Eine zweite Meldung derselben Id ändert nichts.
+        assert!(entra_gruppen_merken(&conn, &ids, jetzt())
+            .unwrap()
+            .is_empty());
+        let alle: Vec<Gruppe> = liste(&conn, GRUPPEN).unwrap();
+        assert_eq!(alle.len(), 1);
+        assert_eq!(alle[0].titel, "Team");
+        assert_eq!(alle[0].saetze, vec![SatzId::neu("basis")]);
+    }
+
+    #[test]
+    fn geloeschte_entra_gruppe_bleibt_geloescht_bis_zur_aufnahme() {
+        let conn = gedaechtnis();
+        let id = String::from("abcdefab-1234-1234-1234-123456789012");
+        entra_gruppen_merken(&conn, std::slice::from_ref(&id), jetzt()).unwrap();
+        loesche(&conn, GRUPPEN, &id).unwrap();
+        entra_gruppe_loeschen_merken(&conn, std::slice::from_ref(&id), jetzt()).unwrap();
+
+        // Erneutes Sehen legt sie nicht wieder an.
+        assert!(
+            entra_gruppen_merken(&conn, std::slice::from_ref(&id), jetzt())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(liste::<Gruppe>(&conn, GRUPPEN).unwrap().is_empty());
+        let liste = entra_gruppen_liste(&conn).unwrap();
+        assert_eq!(liste.len(), 1);
+        assert!(liste[0].geloescht);
+        assert!(liste[0].gruppe.is_none());
+
+        // Wieder aufnehmen: eine Gruppe, ohne Sätze, nicht mehr gelöscht.
+        let gruppe = entra_gruppe_aufnehmen(&conn, &id, None, jetzt()).unwrap();
+        assert!(gruppe.saetze.is_empty());
+        assert_eq!(gruppe.entra, vec![id.clone()]);
+        let liste = entra_gruppen_liste(&conn).unwrap();
+        assert!(!liste[0].geloescht);
+        assert_eq!(
+            liste[0].gruppe.as_ref().map(|g| g.als_str()),
+            Some(id.as_str())
+        );
+        assert_eq!(
+            liste[0].anzeigename.as_deref(),
+            Some("Entra-Gruppe abcdefab")
+        );
+    }
+
+    #[test]
+    fn hoechstens_zweihundert_gruppen_aus_entra() {
+        let conn = gedaechtnis();
+        for n in 0..MAX_ENTRA_GRUPPEN {
+            let id = format!("00000000-0000-0000-0000-{n:012x}");
+            let gruppe = Gruppe {
+                id: GruppeId::neu(id.clone()),
+                titel: format!("G{n}"),
+                saetze: Vec::new(),
+                entra: vec![id],
+            };
+            setze(&conn, GRUPPEN, gruppe.id.als_str(), &gruppe).unwrap();
+        }
+        let zuviel = vec![String::from("ffffffff-0000-0000-0000-000000000001")];
+        assert!(entra_gruppen_merken(&conn, &zuviel, jetzt())
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap().len(),
+            MAX_ENTRA_GRUPPEN
+        );
+    }
+
+    #[test]
+    fn alte_entra_gruppen_tabelle_bekommt_das_loeschmerkmal() {
+        let ordner = ordner("entra-migration");
+        let pfad = ordner.join("quiver.db");
+        {
+            let conn = Connection::open(&pfad).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE entra_gruppen (id TEXT PRIMARY KEY, anzeigename TEXT,
+                    zuletzt TEXT NOT NULL);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entra_gruppen (id, anzeigename, zuletzt) VALUES ('alt', NULL, 'x')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = oeffnen(&pfad).unwrap();
+        let liste = entra_gruppen_liste(&conn).unwrap();
+        assert_eq!(liste.len(), 1, "alte Zeile bleibt");
+        assert_eq!(liste[0].id, "alt");
+        assert!(!liste[0].geloescht);
+        assert!(
+            ordner.join("quiver.db.vor-2").exists(),
+            "Sicherung liegt da"
+        );
+        let _ = std::fs::remove_dir_all(&ordner);
     }
 
     #[test]

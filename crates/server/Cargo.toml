@@ -41,9 +41,11 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url = "2"
+rsa = "0.10"
+x509-cert = { version = "0.3", features = ["builder", "pem"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
-rsa = "0.9"
+rsa_alt = { package = "rsa", version = "0.9" }
 rand08 = { package = "rand", version = "0.8" }
 tower = { version = "0.5", features = ["util"] }

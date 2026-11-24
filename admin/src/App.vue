@@ -9,8 +9,9 @@
 // Seit ADR 0002 gibt es keinen Admin-Token mehr: die Sitzung liegt allein im
 // HttpOnly-Cookie. Nichts davon steht im Speicher des Browsers – nur das Theme.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { TriangleAlert } from "lucide-vue-next";
 
-import type { Ich, Seite, Thema } from "./api/typen";
+import type { EntraAusweis, Ich, Seite, Thema } from "./api/typen";
 import {
   Client,
   abmelden as sitzungBeenden,
@@ -30,6 +31,7 @@ import {
   lage_ohne_stand,
   weiter_nach_anmeldung,
 } from "./logik/anmeldung";
+import { zertifikat_warnung } from "./logik/ausweis";
 import { hash_aus_seite, seite_aus_hash, seite_titel } from "./logik/navigation";
 import { thema_aus_wert, THEMA_SPEICHER } from "./logik/thema";
 
@@ -52,6 +54,11 @@ const kennt_entra = ref(false);
 
 /** Ein Client, kein Token: die Sitzung schickt der Browser als Cookie mit. */
 const client = new Client();
+
+/** Stand des Entra-Ausweises (Aufgabe 23); `null` heißt: unbekannt. */
+const ausweis = ref<EntraAusweis | null>(null);
+/** Warntext zum Zertifikat, sonst `null` (die Rechnung steht in `logik`). */
+const warnung = computed(() => zertifikat_warnung(ausweis.value));
 
 const ANSICHTEN = {
   ueberblick: Ueberblick,
@@ -131,6 +138,7 @@ async function starten(): Promise<void> {
       const angemeldet = await wer_bin_ich();
       if (angemeldet) {
         lage.value = lage_aus_ich(angemeldet);
+        void ausweis_laden();
         return;
       }
     }
@@ -140,10 +148,24 @@ async function starten(): Promise<void> {
   }
 }
 
+/**
+ * `GET /admin/entra-schluessel`: Geheimnis, Zertifikat oder keins. Ein Fehler
+ * darf die Verwaltung nicht aufhalten; dann gibt es eben keine Warnung.
+ */
+async function ausweis_laden(): Promise<void> {
+  try {
+    ausweis.value = await client.entraAusweis();
+  } catch (fehler) {
+    console.warn("Stand des Entra-Ausweises nicht lesbar:", fehlertext(fehler));
+    ausweis.value = null;
+  }
+}
+
 /** Nach Anmelden oder Einrichten: in die Verwaltung, auf die gemeinte Seite. */
 function angemeldet(ich: Ich): void {
   seite.value = weiter.value;
   lage.value = lage_aus_ich(ich);
+  void ausweis_laden();
 }
 
 async function abmelden(): Promise<void> {
@@ -154,6 +176,7 @@ async function abmelden(): Promise<void> {
     // die Anmeldung zu verweigern.
     console.warn("Abmelden am Server gescheitert:", fehlertext(fehler));
   }
+  ausweis.value = null;
   lage.value = anmeldung_lage(kennt_entra.value);
 }
 
@@ -184,6 +207,12 @@ onBeforeUnmount(() => {
         @thema="setzeThema"
         @abmelden="abmelden"
       />
+      <!-- Aufgabe 23: ab 30 Tagen vor dem Ablauf des Entra-Zertifikats, in
+           allen drei Themes und auf jeder Seite sichtbar. -->
+      <div v-if="warnung" class="warnung" role="status">
+        <TriangleAlert class="warnung__zeichen" aria-hidden="true" />
+        <p class="warnung__text">{{ warnung }}</p>
+      </div>
       <div class="app__koerper">
         <Seitenleiste :seite="seite" @waehle="waehleSeite" />
         <main class="app__inhalt">
@@ -216,6 +245,28 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   min-height: 0;
+}
+
+.warnung {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wp-space-2);
+  padding: var(--wp-space-2) var(--wp-space-5);
+  border-bottom: var(--wp-size-border) solid var(--wp-color-status-warn);
+  background: var(--wp-color-bg-raised);
+}
+
+.warnung__zeichen {
+  flex: none;
+  width: var(--wp-font-size-md);
+  height: var(--wp-font-size-md);
+  margin-top: var(--wp-space-1);
+  color: var(--wp-color-status-warn);
+}
+
+.warnung__text {
+  color: var(--wp-color-text-default);
+  font-size: var(--wp-font-size-sm);
 }
 
 .app__inhalt {

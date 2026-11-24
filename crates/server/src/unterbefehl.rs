@@ -26,6 +26,7 @@ pub const UNTERBEFEHLE: &[&str] = &[
     "satz-setzen",
     "eintraege",
     "saetze",
+    "entra-schluessel",
 ];
 
 /// Ist das erste Argument ein Unterbefehl?
@@ -57,6 +58,7 @@ pub fn ausfuehren(args: &[String]) -> anyhow::Result<()> {
         "satz-setzen" => satz_setzen(rest),
         "eintraege" => eintraege_zeigen(),
         "saetze" => saetze_zeigen(),
+        "entra-schluessel" => entra_schluessel(rest),
         anderes => anyhow::bail!("unbekannter Unterbefehl {anderes}"),
     }
 }
@@ -154,6 +156,67 @@ fn admin_setzen(rest: &[String]) -> anyhow::Result<()> {
     admin_setzen_auf_platte(&daten(), &oid)?;
     println!("{oid} ist jetzt Admin.");
     Ok(())
+}
+
+// ------------------------------------------------------------ entra-schluessel
+
+/// `quiver-server entra-schluessel [--erneuern|--umschalten]` (Aufgabe 23).
+///
+/// Gibt **nur** das öffentliche Zertifikat, den Fingerabdruck und den Ablauf
+/// aus. Der private Schlüssel bleibt in `<daten>/entra-schluessel.pem` (0600)
+/// und wird nie überschrieben.
+fn entra_schluessel(rest: &[String]) -> anyhow::Result<()> {
+    use crate::entra_schluessel::{
+        erneuern, erzeugen, pfad_aus_umgebung, umschalten, EntraSchluessel, GUELTIG_TAGE,
+    };
+
+    if hat(rest, "--erneuern") && hat(rest, "--umschalten") {
+        anyhow::bail!("entweder --erneuern oder --umschalten, nicht beides");
+    }
+    let ordner = daten();
+    std::fs::create_dir_all(&ordner)?;
+    let aktiv = pfad_aus_umgebung(&ordner);
+    let jetzt = OffsetDateTime::now_utc();
+
+    if hat(rest, "--erneuern") {
+        let (pfad, schluessel) = erneuern(&aktiv, jetzt)?;
+        ausgeben(&schluessel);
+        println!(
+            "Der zweite Schlüssel liegt in {} und ist noch nicht aktiv; \
+             `quiver-server entra-schluessel --umschalten` macht ihn aktiv.",
+            pfad.display()
+        );
+        return Ok(());
+    }
+    if hat(rest, "--umschalten") {
+        let schluessel = umschalten(&aktiv)?;
+        ausgeben(&schluessel);
+        println!("Dieser Schlüssel ist jetzt aktiv (kein Neustart nötig).");
+        return Ok(());
+    }
+    if aktiv.exists() {
+        let schluessel = EntraSchluessel::laden(&aktiv)?;
+        ausgeben(&schluessel);
+        println!(
+            "Der Schlüssel war schon da; nichts wurde geändert. \
+             Für einen neuen: --erneuern, danach --umschalten."
+        );
+        return Ok(());
+    }
+    let schluessel = erzeugen(&aktiv, jetzt, GUELTIG_TAGE)?;
+    ausgeben(&schluessel);
+    Ok(())
+}
+
+fn ausgeben(schluessel: &crate::entra_schluessel::EntraSchluessel) {
+    println!("Fingerabdruck (SHA-256): {}", schluessel.fingerabdruck());
+    println!("Gültig bis: {}", schluessel.nicht_nach().date());
+    println!("x5t#S256: {}", schluessel.x5t_s256());
+    println!("Öffentliches Zertifikat (PEM):");
+    print!("{}", schluessel.zertifikat_pem());
+    if !schluessel.zertifikat_pem().ends_with('\n') {
+        println!();
+    }
 }
 
 // ------------------------------------------------------------------ Anzeigen

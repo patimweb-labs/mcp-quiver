@@ -22,7 +22,9 @@ use axum::{Json, Router};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use http_body_util::BodyExt;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{
+    decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+};
 use quiver_domain::{
     Eintrag, EintragId, Feld, Herkunft, Laufzeit, Quelle, Satz, SatzEintrag, SatzId, Werte,
 };
@@ -30,19 +32,23 @@ use quiver_protocol::{
     AnmeldenAntwort, BenutzerAendern, BenutzerSicht, CodeAnlegen, GeraeteTausch,
     GeraeteTausch as Tausch, Rolle,
 };
-use quiver_server::{app, benutzer, EntraKonfig, Konfig, Uhr};
-use rsa::pkcs1::EncodeRsaPrivateKey;
-use rsa::traits::PublicKeyParts;
-use rsa::RsaPrivateKey;
+use quiver_server::entra_schluessel::{erzeugen, SchluesselHalter, SCHLUESSEL_DATEI};
+use quiver_server::{app, benutzer, Ausweis, EntraKonfig, Konfig, Uhr};
+use rsa::pkcs8::EncodePublicKey;
+use rsa_alt::pkcs1::EncodeRsaPrivateKey;
+use rsa_alt::traits::PublicKeyParts;
+use rsa_alt::RsaPrivateKey;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use tower::ServiceExt;
+use x509_cert::der::{DecodePem, Encode};
 
 const TENANT: &str = "11111111-2222-3333-4444-555555555555";
 const CLIENT: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const OID: &str = "99999999-8888-7777-6666-555555555555";
 const GRUPPE_ENTRA: &str = "12345678-1234-1234-1234-123456789012";
+const GRUPPE_NEU: &str = "abcdefab-1234-1234-1234-123456789012";
 const ROOT_EMAIL: &str = "root@example.test";
 const ROOT_PASSWORT: &str = "ein-sehr-langes-testpasswort";
 const ENTRA_SECRET: &str = "kein-echtes-geheimnis-nur-test";
@@ -78,6 +84,12 @@ struct MockZustand {
     refresh_fehler: Option<&'static str>,
     verzoegerung_ms: u64,
     benutzte_refresh: HashSet<String>,
+    /// Zertifikat für `private_key_jwt`; `None` heißt: Geheimnis.
+    zertifikat: Option<String>,
+    /// Jede `jti` darf nur einmal vorkommen.
+    jtis: HashSet<String>,
+    assertionen: usize,
+    assertion_fehler: Option<String>,
 }
 
 struct CodeInfo {
@@ -89,7 +101,9 @@ struct CodeInfo {
 fn sign(key: &RsaPrivateKey, kid: &str, claims: &Value) -> String {
     let mut kopf = Header::new(Algorithm::RS256);
     kopf.kid = Some(kid.to_string());
-    let pem = key.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).expect("PEM");
+    let pem = key
+        .to_pkcs1_pem(rsa_alt::pkcs1::LineEnding::LF)
+        .expect("PEM");
     let schluessel = EncodingKey::from_rsa_pem(pem.as_bytes()).expect("Signierschlüssel");
     encode(&kopf, claims, &schluessel).expect("JWT")
 }
@@ -151,6 +165,10 @@ impl Mock {
                 refresh_fehler: None,
                 verzoegerung_ms: 0,
                 benutzte_refresh: HashSet::new(),
+                zertifikat: None,
+                jtis: HashSet::new(),
+                assertionen: 0,
+                assertion_fehler: None,
             })),
         };
         let router = Router::new()
@@ -207,6 +225,118 @@ impl Mock {
     fn discovery_aus(&self, aus: bool) {
         self.zustand.lock().unwrap().discovery_fehler = aus;
     }
+
+    /// Das öffentliche Zertifikat hinterlegen; ab jetzt wird eine
+    /// Client-Assertion verlangt und streng geprüft (Aufgabe 23).
+    fn setze_zertifikat(&self, pem: &str) {
+        self.zustand.lock().unwrap().zertifikat = Some(pem.to_string());
+    }
+
+    fn assertionen(&self) -> usize {
+        self.zustand.lock().unwrap().assertionen
+    }
+
+    fn assertion_fehler(&self) -> Option<String> {
+        self.zustand.lock().unwrap().assertion_fehler.clone()
+    }
+}
+
+/// Prüft den Ausweis am Token-Endpunkt. Mit Zertifikat ist eine
+/// `private_key_jwt`-Assertion Pflicht und wird nach allen Regeln geprüft
+/// (Signatur gegen das Zertifikat, PS256, Felder, `jti` einmal, Ablauf).
+fn pruefe_client(m: &Mock, form: &HashMap<String, String>, jetzt: i64) -> Result<(), String> {
+    let zertifikat = m.zustand.lock().unwrap().zertifikat.clone();
+    match zertifikat {
+        Some(pem) => assertion_pruefen(m, form, jetzt, &pem),
+        None => {
+            if form.get("client_secret").map(String::as_str) == Some(ENTRA_SECRET) {
+                Ok(())
+            } else {
+                Err(String::from("client_secret fehlt oder ist falsch"))
+            }
+        }
+    }
+}
+
+fn assertion_pruefen(
+    m: &Mock,
+    form: &HashMap<String, String>,
+    jetzt: i64,
+    zertifikat_pem: &str,
+) -> Result<(), String> {
+    if form.get("client_assertion_type").map(String::as_str)
+        != Some("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+    {
+        return Err(String::from("client_assertion_type fehlt"));
+    }
+    let token = form
+        .get("client_assertion")
+        .ok_or_else(|| String::from("client_assertion fehlt"))?;
+    let kopf = decode_header(token).map_err(|fehler| format!("Kopf: {fehler}"))?;
+    if kopf.alg != Algorithm::PS256 {
+        return Err(format!("Algorithmus ist {:?}, nicht PS256", kopf.alg));
+    }
+    let zertifikat = x509_cert::Certificate::from_pem(zertifikat_pem.as_bytes())
+        .map_err(|fehler| format!("Zertifikat: {fehler}"))?;
+    let der = zertifikat
+        .to_der()
+        .map_err(|fehler| format!("Zertifikat als DER: {fehler}"))?;
+    let erwartet = URL_SAFE_NO_PAD.encode(Sha256::digest(&der));
+    if kopf.x5t_s256.as_deref() != Some(erwartet.as_str()) {
+        return Err(String::from("x5t#S256 passt nicht zum Zertifikat"));
+    }
+    let spki = zertifikat.tbs_certificate().subject_public_key_info();
+    let roh = spki
+        .subject_public_key
+        .as_bytes()
+        .ok_or_else(|| String::from("Zertifikat ohne öffentlichen Schlüssel"))?;
+    let public = <rsa::PublicKey as rsa::pkcs1::DecodeRsaPublicKey>::from_pkcs1_der(roh)
+        .map_err(|fehler| format!("öffentlicher Schlüssel: {fehler}"))?;
+    let oeffentlich = public
+        .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+        .map_err(|fehler| format!("öffentlicher Schlüssel als PEM: {fehler}"))?;
+    let mut pruefung = Validation::new(Algorithm::PS256);
+    pruefung.set_audience(&[format!("{}/token", m.basis)]);
+    pruefung.set_issuer(&[CLIENT]);
+    pruefung.set_required_spec_claims(&["aud", "iss", "sub", "exp", "nbf", "jti"]);
+    let daten = decode::<Value>(
+        token,
+        &DecodingKey::from_rsa_pem(oeffentlich.as_bytes())
+            .map_err(|fehler| format!("Prüfschlüssel: {fehler}"))?,
+        &pruefung,
+    )
+    .map_err(|fehler| format!("Assertion abgelehnt: {fehler}"))?;
+    let claims = &daten.claims;
+    if claims["sub"].as_str() != Some(CLIENT) {
+        return Err(String::from("sub ist nicht die Client-Id"));
+    }
+    if claims["iss"].as_str() != Some(CLIENT) {
+        return Err(String::from("iss ist nicht die Client-Id"));
+    }
+    let exp = claims["exp"]
+        .as_i64()
+        .ok_or_else(|| String::from("exp fehlt"))?;
+    if exp <= jetzt {
+        return Err(String::from("Assertion ist abgelaufen"));
+    }
+    if exp - jetzt > 300 {
+        return Err(String::from("Assertion gilt länger als 5 Minuten"));
+    }
+    let nbf = claims["nbf"]
+        .as_i64()
+        .ok_or_else(|| String::from("nbf fehlt"))?;
+    if nbf > jetzt + 60 {
+        return Err(String::from("nbf liegt in der Zukunft"));
+    }
+    let jti = claims["jti"]
+        .as_str()
+        .ok_or_else(|| String::from("jti fehlt"))?;
+    let mut z = m.zustand.lock().unwrap();
+    if !z.jtis.insert(jti.to_string()) {
+        return Err(String::from("jti wurde schon benutzt"));
+    }
+    z.assertionen += 1;
+    Ok(())
 }
 
 async fn discovery(AxState(m): AxState<Mock>) -> Response {
@@ -276,6 +406,15 @@ async fn token(AxState(m): AxState<Mock>, rumpf: Bytes) -> Response {
         }
         z.verzoegerung_ms
     };
+    let jetzt = m.uhr.jetzt().unix_timestamp();
+    if let Err(fehler) = pruefe_client(&m, &form, jetzt) {
+        m.zustand.lock().unwrap().assertion_fehler = Some(fehler);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid_client" })),
+        )
+            .into_response();
+    }
     if verzoegerung > 0 {
         tokio::time::sleep(Duration::from_millis(verzoegerung)).await;
     }
@@ -394,23 +533,55 @@ struct Pruefung {
     uhr: Uhr,
     cookie: String,
     mock: Option<Mock>,
+    ausweis: Ausweis,
+    /// Ordner mit dem Schlüssel (nur beim Zertifikatsweg; wird aufgeräumt).
+    key_ordner: Option<PathBuf>,
     http: reqwest::Client,
 }
 
 impl Pruefung {
     async fn neu() -> Self {
-        Self::bauen(None).await
+        Self::bauen(None, Ausweis::geheimnis("")).await
     }
 
     async fn mit_entra() -> Self {
         let uhr = Uhr::default();
         let mock = Mock::start(uhr.clone()).await;
-        let mut p = Self::bauen(Some(mock.clone())).await;
+        let mut p = Self::bauen(Some(mock.clone()), Ausweis::geheimnis(ENTRA_SECRET)).await;
         p.uhr = uhr;
         p
     }
 
-    async fn bauen(mock: Option<Mock>) -> Self {
+    /// Entra mit Zertifikat statt Geheimnis (Aufgabe 23); `tage` steuert den
+    /// Ablauf (für die Warnung).
+    async fn mit_entra_schluessel(tage: i64) -> Self {
+        static ZAEHLER: AtomicUsize = AtomicUsize::new(1_000);
+        let uhr = Uhr::default();
+        let mock = Mock::start(uhr.clone()).await;
+        let ordner = std::env::temp_dir().join(format!(
+            "quiver-entra-key-{}-{}",
+            std::process::id(),
+            ZAEHLER.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&ordner).expect("Ordner");
+        let pfad = ordner.join(SCHLUESSEL_DATEI);
+        let schluessel = erzeugen(&pfad, uhr.jetzt(), tage).expect("Schlüssel");
+        mock.setze_zertifikat(schluessel.zertifikat_pem());
+        let halter = SchluesselHalter::laden(pfad).expect("Halter");
+        let mut p = Self::bauen(Some(mock.clone()), Ausweis::Schluessel(Arc::new(halter))).await;
+        p.uhr = uhr;
+        p.key_ordner = Some(ordner);
+        p
+    }
+
+    fn key_pfad(&self) -> PathBuf {
+        self.key_ordner
+            .as_ref()
+            .expect("kein Schlüssel")
+            .join(SCHLUESSEL_DATEI)
+    }
+
+    async fn bauen(mock: Option<Mock>, ausweis: Ausweis) -> Self {
         static ZAEHLER: AtomicUsize = AtomicUsize::new(0);
         let nummer = ZAEHLER.fetch_add(1, Ordering::SeqCst);
         let stempel = std::time::SystemTime::now()
@@ -432,7 +603,7 @@ impl Pruefung {
             konfig.entra = Some(EntraKonfig {
                 tenant: TENANT.into(),
                 client_id: CLIENT.into(),
-                secret: ENTRA_SECRET.into(),
+                ausweis: ausweis.clone(),
                 authority: mock.basis.clone(),
                 issuer: mock.basis.clone(),
                 redirect_uri: format!("{oeffentlich}/auth/callback"),
@@ -446,6 +617,8 @@ impl Pruefung {
             uhr,
             cookie: String::new(),
             mock,
+            ausweis,
+            key_ordner: None,
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
@@ -464,13 +637,25 @@ impl Pruefung {
             konfig.entra = Some(EntraKonfig {
                 tenant: TENANT.into(),
                 client_id: CLIENT.into(),
-                secret: ENTRA_SECRET.into(),
+                ausweis: self.ausweis.clone(),
                 authority: mock.basis.clone(),
                 issuer: mock.basis.clone(),
                 redirect_uri: format!("{oeffentlich}/auth/callback"),
             });
         }
         app(konfig).await.expect("App baut")
+    }
+
+    async fn gruppen(&self) -> Vec<quiver_domain::Gruppe> {
+        let antwort = self.admin("GET", "/admin/gruppen", None).await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+        serde_json::from_value(antwort.json).expect("Gruppen")
+    }
+
+    async fn entra_gruppen(&self) -> Vec<quiver_protocol::EntraGruppe> {
+        let antwort = self.admin("GET", "/admin/entra-gruppen", None).await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+        serde_json::from_value(antwort.json).expect("Entra-Gruppen")
     }
 
     async fn root_anmelden(&self) -> String {
@@ -750,6 +935,21 @@ impl Pruefung {
     }
 
     async fn eintrag_anlegen(&self) {
+        self.eintrag_und_satz_anlegen().await;
+        let gruppe = quiver_domain::Gruppe {
+            id: quiver_domain::GruppeId::neu("team"),
+            titel: "Team".into(),
+            saetze: vec![SatzId::neu("basis")],
+            entra: vec![GRUPPE_ENTRA.to_string()],
+        };
+        let antwort = self
+            .admin("PUT", "/admin/gruppen/team", Some(json!(gruppe)))
+            .await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+    }
+
+    /// Nur Eintrag und Satz, ohne Gruppe: die Gruppe legt die Anmeldung an.
+    async fn eintrag_und_satz_anlegen(&self) {
         let eintrag = Eintrag {
             id: EintragId::neu("wetter"),
             version: "1.0.0".into(),
@@ -784,16 +984,9 @@ impl Pruefung {
                 werte: serde_json::from_value(json!({"PFAD": "/tmp/wetter"})).expect("Werte"),
             }],
         };
-        let gruppe = quiver_domain::Gruppe {
-            id: quiver_domain::GruppeId::neu("team"),
-            titel: "Team".into(),
-            saetze: vec![SatzId::neu("basis")],
-            entra: vec![GRUPPE_ENTRA.to_string()],
-        };
         for (pfad, wert) in [
             ("/admin/eintraege/wetter", json!(eintrag)),
             ("/admin/saetze/basis", json!(satz)),
-            ("/admin/gruppen/team", json!(gruppe)),
         ] {
             let antwort = self.admin("PUT", pfad, Some(wert)).await;
             assert_eq!(antwort.status, StatusCode::OK, "{pfad}: {}", antwort.text);
@@ -804,6 +997,9 @@ impl Pruefung {
 impl Drop for Pruefung {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.daten);
+        if let Some(ordner) = &self.key_ordner {
+            let _ = std::fs::remove_dir_all(ordner);
+        }
     }
 }
 
@@ -1950,6 +2146,38 @@ async fn kein_geheimnis_im_log() {
     }
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn kein_schluessel_im_log() {
+    let puffer = Mitlesen::default();
+    let abonnent = tracing_subscriber::fmt()
+        .with_writer(puffer.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    let _wache = tracing::subscriber::set_default(abonnent);
+    tracing::callsite::rebuild_interest_cache();
+
+    let mut schluessel_pem = String::new();
+    mit_zeitlimit(async {
+        // Mit Zertifikat: der private Schlüssel darf nirgends auftauchen
+        // (Aufgabe 23), auch nicht im Log.
+        let p = Pruefung::mit_entra_schluessel(365).await;
+        schluessel_pem = std::fs::read_to_string(p.key_pfad()).expect("Schlüssel");
+        let _ = p.geraet_anmelden("Rechner", 51236).await;
+        let _ = p.admin("GET", "/admin/entra-schluessel", None).await;
+    })
+    .await;
+    let text = puffer.text();
+    assert!(
+        !text.contains("PRIVATE KEY"),
+        "Schlüssel steht im Log: {text}"
+    );
+    assert!(
+        !text.contains(schluessel_pem.trim()),
+        "Schlüsselmaterial steht im Log"
+    );
+}
+
 fn qd_gruppe() -> quiver_domain::Gruppe {
     quiver_domain::Gruppe {
         id: quiver_domain::GruppeId::neu("team"),
@@ -2188,6 +2416,386 @@ async fn discovery_wird_nach_24_stunden_erneuert_und_haelt_den_alten_stand() {
         let vor_dem_neuen = mock.discovery_zaehler();
         p.geraet_anmelden("Vierter", 51234).await;
         assert!(mock.discovery_zaehler() > vor_dem_neuen);
+    })
+    .await;
+}
+
+// ------------------------------------------- Aufgabe 23: Zertifikat statt Geheimnis
+
+/// Eine Assertion mit fremdem Schlüssel (für die Gegenprobe des Nachbaus).
+fn fremder_token(basis: &str, x5t: &str, alg: Algorithm) -> String {
+    let mut rng = rand08::thread_rng();
+    let key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA");
+    let mut kopf = Header::new(alg);
+    kopf.x5t_s256 = Some(x5t.to_string());
+    let jetzt = OffsetDateTime::now_utc().unix_timestamp();
+    let claims = json!({
+        "aud": format!("{basis}/token"),
+        "iss": CLIENT,
+        "sub": CLIENT,
+        "jti": format!("fremd-{jetzt}"),
+        "nbf": jetzt - 10,
+        "iat": jetzt - 10,
+        "exp": jetzt + 200,
+    });
+    let pem = key
+        .to_pkcs1_pem(rsa_alt::pkcs1::LineEnding::LF)
+        .expect("PEM");
+    encode(
+        &kopf,
+        &claims,
+        &EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap(),
+    )
+    .expect("JWT")
+}
+
+async fn formular_an_token(p: &Pruefung, mock: &Mock, assertion: &str) -> reqwest::Response {
+    p.http
+        .post(format!("{}/token", mock.basis))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", CLIENT),
+            ("code", "egal"),
+            (
+                "client_assertion_type",
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            ),
+            ("client_assertion", assertion),
+        ])
+        .send()
+        .await
+        .expect("Mock erreichbar")
+}
+
+#[tokio::test]
+async fn client_assertion_wird_streng_geprueft() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra_schluessel(365).await;
+        let mock = p.mock.clone().expect("Mock");
+        let key_pem = std::fs::read_to_string(p.key_pfad()).expect("Schlüssel");
+
+        // Code-Einlösung und Refresh: je eine eigene, geprüfte Assertion.
+        let _login = p.geraet_anmelden("Rechner", 51234).await;
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        assert_eq!(mock.assertion_fehler(), None);
+        assert!(
+            mock.assertionen() >= 2,
+            "nur {} Assertions",
+            mock.assertionen()
+        );
+
+        // Gegenprobe des Nachbaus: fremder Schlüssel und falscher Algorithmus
+        // werden abgelehnt (der Nachbau prüft also wirklich).
+        let schluessel = quiver_server::EntraSchluessel::laden(&p.key_pfad()).expect("Schlüssel");
+        let fremd = fremder_token(&mock.basis, schluessel.x5t_s256(), Algorithm::PS256);
+        let antwort = formular_an_token(&p, &mock, &fremd).await;
+        assert_eq!(antwort.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            mock.assertion_fehler()
+                .unwrap_or_default()
+                .contains("abgelehnt"),
+            "{:?}",
+            mock.assertion_fehler()
+        );
+
+        let falscher_alg = fremder_token(&mock.basis, schluessel.x5t_s256(), Algorithm::RS256);
+        let antwort = formular_an_token(&p, &mock, &falscher_alg).await;
+        assert_eq!(antwort.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            mock.assertion_fehler()
+                .unwrap_or_default()
+                .contains("Algorithmus"),
+            "{:?}",
+            mock.assertion_fehler()
+        );
+
+        // Der private Schlüssel steht in keiner Antwort und keinem Debug.
+        let mut ausgaben = Vec::new();
+        for pfad in [
+            "/admin/benutzer",
+            "/admin/entra-gruppen",
+            "/admin/pruefspur",
+            "/admin/ueberblick",
+            "/admin/entra-schluessel",
+            "/admin/gruppen",
+        ] {
+            let antwort = p.admin("GET", pfad, None).await;
+            assert_eq!(antwort.status, StatusCode::OK, "{pfad}: {}", antwort.text);
+            ausgaben.push(antwort.text);
+        }
+        for text in &ausgaben {
+            assert!(!text.contains("PRIVATE KEY"), "Schlüssel in einer Antwort");
+            assert!(
+                !text.contains(key_pem.trim()),
+                "Schlüsselmaterial in einer Antwort"
+            );
+        }
+        assert!(!format!("{:?}", p.ausweis).contains("PRIVATE"));
+        assert!(!format!("{schluessel:?}").contains("PRIVATE KEY"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn zertifikatswarnung_ab_dreissig_tagen_hoechstens_einmal_je_tag() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra_schluessel(10).await;
+        for _ in 0..2 {
+            let antwort = p.admin("GET", "/admin/entra-schluessel", None).await;
+            assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+            assert_eq!(antwort.json["art"], "schluessel");
+            assert_eq!(antwort.json["warnung"], true);
+            assert!(
+                antwort.json["tage_uebrig"].as_i64().unwrap_or(999) <= 10,
+                "{}",
+                antwort.json
+            );
+            assert!(antwort.json["fingerabdruck"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(':'));
+            assert!(antwort.json["hinweis"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("gilt noch"));
+        }
+        let spur = p.admin("GET", "/admin/pruefspur", None).await;
+        let hinweise = spur
+            .json
+            .as_array()
+            .expect("Liste")
+            .iter()
+            .filter(|eintrag| {
+                eintrag["art"] == "hinweis"
+                    && eintrag["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .starts_with("zertifikat")
+            })
+            .count();
+        assert_eq!(
+            hinweise, 1,
+            "Warnung steht mehr als einmal je Tag in der Prüfspur"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn ohne_warnung_kein_hinweis() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra_schluessel(365).await;
+        let antwort = p.admin("GET", "/admin/entra-schluessel", None).await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+        assert_eq!(antwort.json["warnung"], false);
+        assert!(antwort.json["hinweis"].is_null());
+        let spur = p.admin("GET", "/admin/pruefspur", None).await;
+        assert!(!spur.text.contains("zertifikat:"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn geheimnis_und_zertifikat_sind_gegenseitig_ausgeschlossen() {
+    // Ohne Entra ist der Stand „keine“; das ist kein Fehler.
+    let p = Pruefung::neu().await;
+    let antwort = p.admin("GET", "/admin/entra-schluessel", None).await;
+    assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+    assert_eq!(antwort.json["art"], "keine");
+
+    let p = Pruefung::mit_entra().await;
+    let antwort = p.admin("GET", "/admin/entra-schluessel", None).await;
+    assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+    assert_eq!(antwort.json["art"], "geheimnis");
+    assert_eq!(antwort.json["warnung"], false);
+}
+
+// ------------------------------------ Aufgabe 23: Gruppen aus Entra von selbst
+
+#[tokio::test]
+async fn entra_gruppe_wird_einmal_angelegt_und_behaelt_ihren_titel() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let erst = p.geraet_anmelden("A", 51234).await;
+        assert_eq!(
+            erst.geraet.gruppen,
+            vec![quiver_domain::GruppeId::neu(GRUPPE_ENTRA)],
+            "die gesehene Id wird zur quiver-Gruppe"
+        );
+        let gruppen = p.gruppen().await;
+        assert_eq!(gruppen.len(), 1);
+        let gruppe = &gruppen[0];
+        assert_eq!(gruppe.id.als_str(), GRUPPE_ENTRA);
+        assert_eq!(gruppe.titel, "Entra-Gruppe 12345678");
+        assert!(
+            gruppe.saetze.is_empty(),
+            "eine neue Gruppe gibt keine Tools"
+        );
+        assert_eq!(gruppe.entra, vec![String::from(GRUPPE_ENTRA)]);
+
+        // Zweite Anmeldung: keine zweite Gruppe, kein anderes Aussehen.
+        let _zweit = p.geraet_anmelden("B", 51235).await;
+        assert_eq!(p.gruppen().await.len(), 1);
+
+        // Der Admin benennt um; kein Abgleich überschreibt den Titel.
+        let mut umbenannt = gruppe.clone();
+        umbenannt.titel = String::from("Team");
+        let antwort = p
+            .admin(
+                "PUT",
+                &format!("/admin/gruppen/{GRUPPE_ENTRA}"),
+                Some(json!(umbenannt)),
+            )
+            .await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+        let _dritt = p.geraet_anmelden("C", 51236).await;
+        let nach = p.gruppen().await;
+        assert_eq!(nach.len(), 1);
+        assert_eq!(nach[0].titel, "Team");
+
+        // Prüfspur: „angelegt durch Anmeldung“; die Verwaltung sieht die Id.
+        let spur = p.admin("GET", "/admin/pruefspur", None).await;
+        assert!(
+            spur.text.contains("angelegt durch Anmeldung"),
+            "{}",
+            spur.text
+        );
+        let gesehen = p.entra_gruppen().await;
+        assert_eq!(gesehen.len(), 1);
+        assert_eq!(gesehen[0].id, GRUPPE_ENTRA);
+        assert_eq!(gesehen[0].gruppe.as_deref(), Some(GRUPPE_ENTRA));
+        assert!(!gesehen[0].geloescht);
+        assert_eq!(gesehen[0].anzeigename.as_deref(), Some("Team"));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn entzug_nimmt_tools_am_verbundenen_geraet_weg() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_und_satz_anlegen().await;
+        let login = p.geraet_anmelden("Rechner", 51234).await;
+        // Die automatisch angelegte Gruppe bekommt einen Satz.
+        let mut gruppe = p.gruppen().await.pop().expect("Gruppe");
+        gruppe.saetze = vec![SatzId::neu("basis")];
+        let antwort = p
+            .admin(
+                "PUT",
+                &format!("/admin/gruppen/{}", gruppe.id),
+                Some(json!(gruppe)),
+            )
+            .await;
+        assert_eq!(antwort.status, StatusCode::OK, "{}", antwort.text);
+        let soll = p
+            .anfrage("GET", "/geraet/soll", Some(&login.token), None, &[], None)
+            .await;
+        assert_eq!(soll.status, StatusCode::OK, "{}", soll.text);
+        let eintraege = soll.json["eintraege"].as_array().expect("Liste");
+        assert_eq!(eintraege.len(), 1, "{}", soll.text);
+        assert_eq!(eintraege[0]["eintrag"]["id"], "wetter");
+
+        // Entra nimmt die Gruppe weg: das Gerät ist noch verbunden, verliert
+        // aber sofort seine Tools. Die neue Gruppe hat keinen Satz.
+        p.mock
+            .as_ref()
+            .expect("Mock")
+            .setze_refresh_claims(|claims| {
+                claims["groups"] = json!([GRUPPE_NEU]);
+            });
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        let soll = p
+            .anfrage("GET", "/geraet/soll", Some(&login.token), None, &[], None)
+            .await;
+        assert_eq!(soll.status, StatusCode::OK, "{}", soll.text);
+        assert!(
+            soll.json["eintraege"].as_array().expect("Liste").is_empty(),
+            "{}",
+            soll.text
+        );
+        let gruppen = p.gruppen().await;
+        assert!(gruppen
+            .iter()
+            .any(|g| g.id.als_str() == GRUPPE_NEU && g.saetze.is_empty()));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn geloeschte_gruppe_bleibt_geloescht_und_wird_wieder_aufgenommen() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let _login = p.geraet_anmelden("A", 51234).await;
+        let weg = p
+            .admin("DELETE", &format!("/admin/gruppen/{GRUPPE_ENTRA}"), None)
+            .await;
+        assert_eq!(weg.status, StatusCode::NO_CONTENT, "{}", weg.text);
+
+        // Eine neue Anmeldung legt sie nicht wieder an.
+        let (code, state, oidc) = p.oidc(false, "B", 51235).await;
+        let seite = p.callback(&code, &state, &oidc).await;
+        assert_eq!(seite.status, StatusCode::OK, "{}", seite.text);
+        assert!(p.gruppen().await.is_empty(), "gelöscht bleibt gelöscht");
+        let gesehen = p.entra_gruppen().await;
+        assert_eq!(gesehen.len(), 1);
+        assert!(gesehen[0].geloescht);
+        assert!(gesehen[0].gruppe.is_none());
+
+        // Die Verwaltung nimmt sie wieder auf: eine Gruppe, ohne Sätze.
+        let aufgenommen = p
+            .admin(
+                "PUT",
+                &format!("/admin/entra-gruppen/{GRUPPE_ENTRA}"),
+                Some(json!({"aufnehmen": true})),
+            )
+            .await;
+        assert_eq!(aufgenommen.status, StatusCode::OK, "{}", aufgenommen.text);
+        assert_eq!(aufgenommen.json["geloescht"], false);
+        assert_eq!(aufgenommen.json["gruppe"], GRUPPE_ENTRA);
+        let gruppen = p.gruppen().await;
+        assert_eq!(gruppen.len(), 1);
+        assert!(gruppen[0].saetze.is_empty());
+
+        // Danach bleibt es bei genau einer Gruppe.
+        let _dritt = p.geraet_anmelden("C", 51236).await;
+        assert_eq!(p.gruppen().await.len(), 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn neue_gruppe_ohne_satz_gibt_keine_tools() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let login = p.geraet_anmelden("Rechner", 51234).await;
+        assert_eq!(login.geraet.gruppen.len(), 1);
+        let soll = p
+            .anfrage("GET", "/geraet/soll", Some(&login.token), None, &[], None)
+            .await;
+        assert_eq!(soll.status, StatusCode::OK, "{}", soll.text);
+        assert!(
+            soll.json["eintraege"].as_array().expect("Liste").is_empty(),
+            "eine Gruppe ohne Satz gibt keine Tools: {}",
+            soll.text
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn gleichzeitige_anmeldungen_legen_genau_eine_gruppe_an() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        let (a, b) = tokio::join!(p.geraet_anmelden("A", 51234), p.geraet_anmelden("B", 51235));
+        assert_eq!(a.geraet.gruppen, b.geraet.gruppen);
+        assert_eq!(p.gruppen().await.len(), 1);
+        assert_eq!(p.entra_gruppen().await.len(), 1);
     })
     .await;
 }

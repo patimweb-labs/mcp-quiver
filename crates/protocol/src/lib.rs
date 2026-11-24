@@ -284,12 +284,54 @@ pub struct PruefspurEintrag {
     pub text: String,
 }
 
-/// Eine in Anmeldungen gesehene Entra-Gruppe; der Anzeigename kommt vom Admin.
+/// Eine in Anmeldungen gesehene Entra-Gruppe (Aufgabe 23).
+///
+/// Der Server legt für jede Id **einmal** eine quiver-Gruppe an; Titel und
+/// Sätze gehören danach dem Admin. `gruppe` fehlt, wenn der Admin sie gelöscht
+/// hat; `aufnehmen` legt sie wieder an.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntraGruppe {
     pub id: String,
+    /// Titel der quiver-Gruppe, die diese Id trägt (sonst `null`).
     pub anzeigename: Option<String>,
     pub zuletzt: String,
+    /// Kennung der quiver-Gruppe, falls es sie gibt.
+    #[serde(default)]
+    pub gruppe: Option<String>,
+    /// Vom Admin gelöscht: bleibt gelöscht, bis er sie wieder aufnimmt.
+    #[serde(default)]
+    pub geloescht: bool,
+}
+
+/// Rumpf für `PUT /admin/entra-gruppen/{id}` (Aufgabe 23).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EntraGruppeAendern {
+    /// Neuer Titel der quiver-Gruppe (nur wenn es sie gibt).
+    #[serde(default)]
+    pub anzeigename: Option<String>,
+    /// Eine gelöschte Gruppe wieder aufnehmen (neu anlegen, ohne Sätze).
+    #[serde(default)]
+    pub aufnehmen: bool,
+}
+
+/// Stand des Entra-Ausweises (Aufgabe 23): Geheimnis, Zertifikat oder keins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntraAusweis {
+    /// `keine`, `geheimnis` oder `schluessel`.
+    pub art: String,
+    /// RFC 3339; nur bei einem Zertifikat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ablauf: Option<String>,
+    /// Negative Zahl, wenn das Zertifikat schon abgelaufen ist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tage_uebrig: Option<i64>,
+    /// Ab 30 Tagen vor dem Ablauf `true`.
+    pub warnung: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerabdruck: Option<String>,
+    /// Fertiger Warntext für die Verwaltung.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hinweis: Option<String>,
 }
 
 /// `POST /auth/geraet/tausch`: Code plus PKCE-Verifier gegen ein Geräte-Token.
@@ -343,6 +385,31 @@ mod tests {
                 felder: vec!["pfad".into()]
             }
         );
+    }
+
+    /// Aufgabe 23: Ein alter `EntraGruppe`-Eintrag ohne die neuen Felder wird
+    /// weiter gelesen (beide Seiten sind verträglich).
+    #[test]
+    fn entra_gruppe_ohne_neue_felder_wird_gelesen() {
+        let alt: EntraGruppe = serde_json::from_str(
+            r#"{"id":"id-1","anzeigename":null,"zuletzt":"2026-11-24T00:00:00Z"}"#,
+        )
+        .expect("alter Eintrag");
+        assert_eq!(alt.id, "id-1");
+        assert!(alt.gruppe.is_none());
+        assert!(!alt.geloescht);
+
+        let stand = EntraAusweis {
+            art: String::from("schluessel"),
+            ablauf: Some(String::from("2026-12-24T00:00:00Z")),
+            tage_uebrig: Some(30),
+            warnung: true,
+            fingerabdruck: Some(String::from("AA:BB")),
+            hinweis: Some(String::from("Bitte erneuern")),
+        };
+        let json = serde_json::to_string(&stand).expect("JSON");
+        assert!(json.contains(r#""art":"schluessel""#));
+        assert!(json.contains(r#""tage_uebrig":30"#));
     }
 
     /// Ein Wert, den diese Fassung nicht kennt, wird **nicht** abgelehnt: die

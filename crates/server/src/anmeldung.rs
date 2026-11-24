@@ -379,6 +379,15 @@ async fn callback_intern(
         let identitaet = identitaet.clone();
         let token = token_verschluesselt;
         move |conn| {
+            // Erst die gesehenen Entra-Ids als quiver-Gruppen (einmalig,
+            // ohne Sätze), dann den Benutzer, dann die Geräte neu rechnen.
+            speicher::entra_gruppen_merken_und_spur(
+                conn,
+                &identitaet.gruppen,
+                jetzt,
+                "Anmeldung",
+                identitaet.email.as_deref().unwrap_or(&identitaet.oid),
+            )?;
             speicher::benutzer_anmelden(
                 conn,
                 &identitaet.oid,
@@ -389,7 +398,9 @@ async fn callback_intern(
                 token.as_deref(),
                 jetzt,
             )?;
-            speicher::entra_gruppen_merken(conn, &identitaet.gruppen, jetzt)?;
+            // Mitgliedschaften pflegt nur Entra: auch das Entfernen wirkt
+            // sofort auf die verbundenen Geräte (Aufgabe 23).
+            speicher::geraete_gruppen_neu(conn, &identitaet.oid, &identitaet.gruppen)?;
             speicher::pruefspur_schreiben(
                 conn,
                 jetzt,
@@ -402,6 +413,8 @@ async fn callback_intern(
     })
     .await
     .map_err(|fehler| SeitenFehler::intern(Paar::technisch(fehler.text)))?;
+    // Die Geräte sollen den neuen Soll-Zustand sofort sehen.
+    zustand.melde_aenderung();
 
     if zustand_row.modus == "admin" {
         return verwaltungs_sitzung(zustand, &identitaet, jetzt).await;

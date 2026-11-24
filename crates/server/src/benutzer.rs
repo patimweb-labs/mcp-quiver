@@ -19,17 +19,16 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use quiver_protocol::{
     AnmeldeGrund as QuiverGrund, Anmeldeart, Anmeldearten, BenutzerAendern, BenutzerSicht,
-    EntraGruppe, Ich, PruefspurEintrag, Rolle, RootAnmelden,
+    EntraAusweis, EntraGruppe, EntraGruppeAendern, Ich, PruefspurEintrag, Rolle, RootAnmelden,
 };
 use time::OffsetDateTime;
 
 use crate::db;
 use crate::drossel::{email_normalisieren, ip_schluessel, konto_schluessel};
-use crate::fehler::{Ergebnis, FehlerAntwort};
+use crate::fehler::{Ergebnis, FehlerAntwort, Koerper};
 use crate::sitzung::{self, SitzungKontext};
 use crate::speicher::{self, Benutzer};
 use crate::zustand::Zustand;
-use serde::Deserialize;
 
 /// Kürzeste Länge eines Root-Passworts.
 pub const PASSWORT_MIN: usize = 12;
@@ -484,6 +483,54 @@ pub(crate) async fn benutzer_pruefen(
     Ok(Json(sicht))
 }
 
+/// `GET /admin/entra-schluessel`: weist sich der Server mit Geheimnis oder
+/// Zertifikat aus – und läuft das Zertifikat bald ab? (Aufgabe 23)
+///
+/// Bei einem Zertifikat wird die Warnung höchstens einmal je Tag in Log und
+/// Prüfspur vermerkt, auch wenn die Verwaltung öfter nachsieht.
+pub(crate) async fn entra_ausweis(
+    State(zustand): State<Arc<Zustand>>,
+) -> Ergebnis<Json<EntraAusweis>> {
+    let jetzt = zustand.uhr.jetzt();
+    let ausweis = zustand
+        .oidc
+        .as_ref()
+        .map(|oidc| oidc.konfig.ausweis.clone());
+    let stand = match ausweis {
+        None => EntraAusweis {
+            art: String::from("keine"),
+            ablauf: None,
+            tage_uebrig: None,
+            warnung: false,
+            fingerabdruck: None,
+            hinweis: None,
+        },
+        Some(crate::config::Ausweis::Geheimnis(_)) => EntraAusweis {
+            art: String::from("geheimnis"),
+            ablauf: None,
+            tage_uebrig: None,
+            warnung: false,
+            fingerabdruck: None,
+            hinweis: None,
+        },
+        Some(crate::config::Ausweis::Schluessel(halter)) => {
+            let schluessel = halter.jetzt();
+            let stand = schluessel.stand(jetzt);
+            let hinweis = schluessel.warnungstext(jetzt);
+            crate::entra_schluessel::tageshinweis(&zustand).await;
+            EntraAusweis {
+                art: String::from("schluessel"),
+                ablauf: Some(stand.ablauf),
+                tage_uebrig: Some(stand.tage_uebrig),
+                warnung: stand.warnung,
+                fingerabdruck: Some(stand.fingerabdruck),
+                hinweis,
+            }
+        }
+    };
+    Ok(Json(stand))
+}
+
 pub(crate) async fn entra_gruppen(
     State(zustand): State<Arc<Zustand>>,
 ) -> Ergebnis<Json<Vec<EntraGruppe>>> {
@@ -494,6 +541,8 @@ pub(crate) async fn entra_gruppen(
                 id: zeile.id,
                 anzeigename: zeile.anzeigename,
                 zuletzt: zeile.zuletzt,
+                gruppe: zeile.gruppe.map(|id| id.als_str().to_string()),
+                geloescht: zeile.geloescht,
             })
             .collect())
     })
@@ -501,32 +550,80 @@ pub(crate) async fn entra_gruppen(
     Ok(Json(liste))
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct Anzeigename {
-    #[serde(default)]
-    pub anzeigename: Option<String>,
-}
-
+/// `PUT /admin/entra-gruppen/{id}`: Titel ändern oder eine gelöschte Gruppe
+/// wieder aufnehmen (Aufgabe 23). Mitgliedschaften pflegt nur Entra.
 pub(crate) async fn entra_gruppe_setzen(
     State(zustand): State<Arc<Zustand>>,
     AxumPath(id): AxumPath<String>,
-    Json(aenderung): Json<Anzeigename>,
+    Koerper(aenderung): Koerper<EntraGruppeAendern>,
 ) -> Ergebnis<Json<EntraGruppe>> {
-    let kennung = id.clone();
-    let name = aenderung.anzeigename.clone();
-    let gesetzt = db(&zustand, move |conn| {
-        speicher::entra_anzeigename_setzen(conn, &kennung, name.as_deref())
+    if !crate::config::ist_guid(&id) {
+        return Err(FehlerAntwort::ungueltig(
+            "eine Entra-Gruppe ist eine Objekt-Id (GUID)",
+        ));
+    }
+    let kennung = id.to_ascii_lowercase();
+    let jetzt = zustand.uhr.jetzt();
+    let titel = aenderung
+        .anzeigename
+        .as_deref()
+        .map(str::trim)
+        .filter(|wert| !wert.is_empty())
+        .map(str::to_string);
+    let aufnehmen = aenderung.aufnehmen;
+    let wer = format!("entra-gruppe {kennung}");
+    let vorhanden = db(&zustand, {
+        let kennung = kennung.clone();
+        move |conn| {
+            Ok(speicher::entra_gruppen_liste(conn)?
+                .into_iter()
+                .find(|zeile| zeile.id == kennung))
+        }
+    })
+    .await?
+    .ok_or_else(|| {
+        FehlerAntwort::nicht_gefunden(format!("Entra-Gruppe {kennung} wurde noch nicht gesehen"))
+    })?;
+    let vorhandene_gruppe = vorhanden.gruppe.clone();
+    db(&zustand, {
+        let kennung = kennung.clone();
+        let titel = titel.clone();
+        let wer = wer.clone();
+        move |conn| {
+            if aufnehmen {
+                let gruppe =
+                    speicher::entra_gruppe_aufnehmen(conn, &kennung, titel.as_deref(), jetzt)?;
+                speicher::pruefspur_schreiben(
+                    conn,
+                    jetzt,
+                    "gruppe",
+                    &wer,
+                    &format!("{} wieder aufgenommen", gruppe.id),
+                )?;
+            } else if let (Some(titel), Some(gruppe_id)) = (&titel, &vorhandene_gruppe) {
+                let mut gruppe: quiver_domain::Gruppe =
+                    speicher::hole(conn, speicher::GRUPPEN, gruppe_id.als_str())?
+                        .ok_or_else(|| anyhow::anyhow!("Gruppe ist verschwunden"))?;
+                gruppe.titel = titel.clone();
+                speicher::setze(conn, speicher::GRUPPEN, gruppe.id.als_str(), &gruppe)?;
+                speicher::pruefspur_schreiben(
+                    conn,
+                    jetzt,
+                    "aenderung",
+                    &wer,
+                    &format!("{}: Titel geändert", gruppe.id),
+                )?;
+            }
+            Ok(())
+        }
     })
     .await?;
-    if !gesetzt {
-        return Err(FehlerAntwort::nicht_gefunden(format!(
-            "Entra-Gruppe {id} wurde noch nicht gesehen"
-        )));
-    }
+    zustand.melde_aenderung();
+    let kennung = id.to_ascii_lowercase();
     let zeile = db(&zustand, move |conn| {
         Ok(speicher::entra_gruppen_liste(conn)?
             .into_iter()
-            .find(|zeile| zeile.id == id))
+            .find(|zeile| zeile.id == kennung))
     })
     .await?
     .ok_or_else(|| FehlerAntwort::intern("Gruppe ist nach dem Speichern verschwunden"))?;
@@ -534,6 +631,8 @@ pub(crate) async fn entra_gruppe_setzen(
         id: zeile.id,
         anzeigename: zeile.anzeigename,
         zuletzt: zeile.zuletzt,
+        gruppe: zeile.gruppe.map(|id| id.als_str().to_string()),
+        geloescht: zeile.geloescht,
     }))
 }
 

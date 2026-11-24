@@ -166,7 +166,14 @@ async fn pruefen(
                     identitaet.name.as_deref(),
                     jetzt,
                 )?;
-                speicher::entra_gruppen_merken(conn, &identitaet.gruppen, jetzt)?;
+                speicher::entra_gruppen_merken_und_spur(
+                    conn,
+                    &identitaet.gruppen,
+                    jetzt,
+                    "Nachprüfen",
+                    identitaet.email.as_deref().unwrap_or(&identitaet.oid),
+                )?;
+                speicher::geraete_gruppen_neu(conn, &oid, &identitaet.gruppen)?;
                 Ok(())
             }
         })
@@ -202,18 +209,18 @@ async fn pruefen(
                 Some(jetzt),
                 "gueltig",
             )?;
-            speicher::entra_gruppen_merken(conn, &identitaet_fuer_db.gruppen, jetzt)?;
+            speicher::entra_gruppen_merken_und_spur(
+                conn,
+                &identitaet_fuer_db.gruppen,
+                jetzt,
+                "Nachprüfen",
+                identitaet_fuer_db
+                    .email
+                    .as_deref()
+                    .unwrap_or(&identitaet_fuer_db.oid),
+            )?;
             // Geräte des Benutzers neu rechnen: Zuordnung kann sich geändert haben.
-            let geraete = speicher::geraete_von_user(conn, &oid)?;
-            for zeile in geraete {
-                let wirksam =
-                    speicher::wirksame_gruppen(conn, &zeile.manuell, &identitaet_fuer_db.gruppen)?;
-                if wirksam != zeile.geraet.gruppen {
-                    let mut geraet = zeile.geraet;
-                    geraet.gruppen = wirksam;
-                    speicher::aendere_geraet(conn, &geraet)?;
-                }
-            }
+            speicher::geraete_gruppen_neu(conn, &oid, &identitaet_fuer_db.gruppen)?;
             speicher::pruefspur_schreiben(
                 conn,
                 jetzt,
@@ -332,10 +339,13 @@ pub async fn faellige_pruefen(zustand: &Arc<Zustand>) -> usize {
 
 /// Der Hintergrundlauf: alle 60 Sekunden nachsehen, wer fällig ist.
 pub async fn hintergrund(zustand: Arc<Zustand>) {
+    // Einmal beim Start und dann täglich höchstens einmal (Aufgabe 23).
+    crate::entra_schluessel::tageshinweis(&zustand).await;
     let mut takt = tokio::time::interval(Duration::from_secs(60));
     takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         takt.tick().await;
+        crate::entra_schluessel::tageshinweis(&zustand).await;
         let anzahl = faellige_pruefen(&zustand).await;
         if anzahl > 0 {
             tracing::info!("Nachprüfen: {anzahl} Benutzer aufgefrischt");

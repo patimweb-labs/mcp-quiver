@@ -1,5 +1,7 @@
 <script setup lang="ts">
-// Eine Gruppe: Titel und die Sätze, die ihre Geräte bekommen.
+// Eine Gruppe: Titel und die Sätze, die ihre Geräte bekommen. Stammt sie aus
+// Entra ID (Aufgabe 23), ist ihre Kennung die Objekt-Id und nicht änderbar;
+// Titel und Sätze gehören dem Admin.
 import { computed, ref, watch } from "vue";
 import {
   WpButton,
@@ -12,6 +14,7 @@ import { tief_kopie } from "../logik/kopie";
 import { fehlertext, type Client } from "../api/client";
 import type { Gruppe, Satz } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import { ist_entra_gruppe, ohne_satz } from "../logik/ausweis";
 import {
   gruppe_pruefen,
   gruppe_saeubern,
@@ -90,7 +93,13 @@ async function speichern(): Promise<void> {
           <WpInput
             :id="id"
             :model-value="entwurf.id"
-            :state="fehler.id ? 'invalid' : 'default'"
+            :state="
+              !neu && entwurf.entra.length > 0
+                ? 'disabled'
+                : fehler.id
+                  ? 'invalid'
+                  : 'default'
+            "
             placeholder="team-entwicklung"
             @update:model-value="(wert) => (entwurf.id = wert)"
           />
@@ -109,6 +118,11 @@ async function speichern(): Promise<void> {
         </template>
       </Feld>
 
+      <p v-if="!neu && ist_entra_gruppe(entwurf)" class="hinweis">
+        Diese Gruppe stammt aus Entra ID. Kennung und Mitglieder pflegt Entra;
+        Titel und Sätze gehören Ihnen.
+      </p>
+
       <div class="auswahl">
         <WpMultiselect
           :model-value="entwurf.saetze"
@@ -118,6 +132,9 @@ async function speichern(): Promise<void> {
           @update:model-value="(werte) => (entwurf.saetze = werte)"
         />
         <p class="hinweis">Mehrfachauswahl; die Reihenfolge folgt der Priorität.</p>
+        <p v-if="ohne_satz(entwurf)" class="hinweis">
+          Noch kein Satz – diese Gruppe gibt noch keine Tools.
+        </p>
       </div>
 
       <p v-if="speicherfehler" class="fehler" role="alert">{{ speicherfehler }}</p>

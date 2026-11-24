@@ -29,6 +29,7 @@ describe("Vorlagen", () => {
       id: "team",
       titel: "",
       saetze: [],
+      entra: [],
     });
   });
 });
