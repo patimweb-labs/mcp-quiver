@@ -128,9 +128,14 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
         .with_inner_size([1000.0, 720.0])
         .with_min_inner_size([560.0, 460.0]);
     // Das App-Icon (Fensterkopf, Taskleiste, Dock beim Start aus dem Terminal).
-    match eframe::icon_data::from_png_bytes(include_bytes!(
-        "../../../assets/marke/quiver-dunkel-256.png"
-    )) {
+    // Im Dock zeichnet macOS das Bild randlos; Apples Raster lässt der Kachel
+    // 824 von 1024. Ohne den Rand wäre quiver größer als alle anderen.
+    let app_icon: &[u8] = if cfg!(target_os = "macos") {
+        include_bytes!("../../../assets/marke/quiver-dock.png")
+    } else {
+        include_bytes!("../../../assets/marke/quiver-dunkel-256.png")
+    };
+    match eframe::icon_data::from_png_bytes(app_icon) {
         Ok(icon) => viewport = viewport.with_icon(std::sync::Arc::new(icon)),
         Err(fehler) => tracing::warn!("App-Icon nicht lesbar: {fehler}"),
     }
