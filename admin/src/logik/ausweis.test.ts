@@ -31,15 +31,13 @@ describe("Gruppen aus Entra", () => {
     expect(ohne_satz(mit({ saetze: ["basis"] }))).toBe(false);
   });
 
-  it("nennt Herkunft und fehlenden Satz zusammen", () => {
+  it("nennt nur den fehlenden Satz", () => {
     expect(gruppe_hinweis(mit({ entra: ["id-1"] }))).toBe(
-      "Aus Entra ID · noch kein Satz – gibt noch keine Tools",
+      "Noch kein Satz – gibt noch keine Tools",
     );
-    expect(gruppe_hinweis(mit({ entra: ["id-1"], saetze: ["basis"] }))).toBe(
-      "Aus Entra ID",
-    );
+    expect(gruppe_hinweis(mit({ entra: ["id-1"], saetze: ["basis"] }))).toBeNull();
     expect(gruppe_hinweis(gruppe("team"))).toBe(
-      "noch kein Satz – gibt noch keine Tools",
+      "Noch kein Satz – gibt noch keine Tools",
     );
     expect(gruppe_hinweis(mit({ saetze: ["basis"] }))).toBeNull();
   });

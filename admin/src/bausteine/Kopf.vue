@@ -66,7 +66,7 @@ function waehleThema(wert: string): void {
       </WpMenu>
       <span v-if="ich" class="kopf__ich" :title="`${name} · ${rolle}`">
         <span class="kopf__name">{{ name }}</span>
-        <span class="kopf__rolle">{{ rolle }}</span>
+        <span v-if="rolle !== name" class="kopf__rolle">{{ rolle }}</span>
       </span>
       <WpButton
         label="Abmelden"

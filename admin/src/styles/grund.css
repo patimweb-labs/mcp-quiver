@@ -141,3 +141,32 @@ samp {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Nur für Vorleseprogramme: da, aber unsichtbar. */
+.nur-vorlesen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Ein kleines Merkmal neben einem Namen: so hoch wie die Schrift, nicht wie ein
+   Knopf, und nie umgebrochen. */
+.marke-chip {
+  flex: none;
+  padding-inline: var(--wp-space-1);
+  border: var(--wp-size-border) solid var(--wp-color-border-subtle);
+  background: var(--wp-color-bg-raised);
+  color: var(--wp-color-text-muted);
+  font-size: var(--wp-font-size-xs);
+  font-weight: var(--wp-font-weight-regular);
+  line-height: var(--wp-space-4);
+  white-space: nowrap;
+}
+
+.marke-chip--warnung {
+  border-color: var(--wp-color-status-warn);
+  color: var(--wp-color-status-warn);
+}

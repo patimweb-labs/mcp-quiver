@@ -20,10 +20,8 @@ export function ohne_satz(gruppe: Gruppe): boolean {
  * gibt aber noch nichts.
  */
 export function gruppe_hinweis(gruppe: Gruppe): string | null {
-  const teile: string[] = [];
-  if (ist_entra_gruppe(gruppe)) teile.push("Aus Entra ID");
-  if (ohne_satz(gruppe)) teile.push("noch kein Satz – gibt noch keine Tools");
-  return teile.length > 0 ? teile.join(" · ") : null;
+  // Die Herkunft steht als Merkmal neben dem Titel, hier nur, was zu tun ist.
+  return ohne_satz(gruppe) ? "Noch kein Satz – gibt noch keine Tools" : null;
 }
 
 /**

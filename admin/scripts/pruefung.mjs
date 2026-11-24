@@ -325,7 +325,6 @@ async function main() {
       "test@example.test",
       "Mitarbeiter",
       "Team",
-      "1 Gerät",
       "geprüft",
     ]) {
       if (!zeilentext.includes(teil)) {
@@ -333,7 +332,7 @@ async function main() {
       }
     }
     const rootZeile = seite.getByRole("row", { name: /root@example\.test/ });
-    await rootZeile.getByText("nicht änderbar").waitFor();
+    await rootZeile.getByText("Notzugang").waitFor();
     if ((await rootZeile.getByRole("button").count()) > 0) {
       throw new Error("der Root hat Aktionen, darf aber nicht änderbar sein");
     }
@@ -350,24 +349,35 @@ async function main() {
 
     // 12. Rolle ändern, sperren, entsperren, jetzt prüfen – jede mit Rückfrage.
     const rueckfrage = seite.getByRole("dialog");
-    await zeile.getByRole("button", { name: "Zum Admin" }).click();
+    const waehle = async (punkt) => {
+      await seite
+        .getByRole("row", { name: /Test Person/ })
+        .getByRole("button", { name: /^Aktionen für/ })
+        .click();
+      const eintrag = seite.getByRole("menuitem", { name: punkt, exact: true });
+      await eintrag.waitFor();
+      // Das Menü nimmt in den ersten 250 ms keinen Klick an.
+      await seite.waitForTimeout(300);
+      await eintrag.click();
+    };
+    await waehle("Zum Admin");
     await rueckfrage.waitFor();
     if (!((await rueckfrage.textContent()) ?? "").includes("wird Admin")) {
       throw new Error("die Rückfrage erklärt das Ernennen nicht");
     }
     await rueckfrage.getByRole("button", { name: "Zum Admin" }).click();
     await zeile.getByText("Admin", { exact: true }).first().waitFor();
-    await zeile.getByRole("button", { name: "Zum Mitarbeiter" }).click();
+    await waehle("Zum Mitarbeiter");
     await rueckfrage.waitFor();
     await rueckfrage.getByRole("button", { name: "Zum Mitarbeiter" }).click();
     await zeile.getByText("Mitarbeiter", { exact: true }).first().waitFor();
     console.log("ok: Admin ernannt und wieder entzogen");
 
-    await zeile.getByRole("button", { name: "Sperren" }).click();
+    await waehle("Sperren");
     await rueckfrage.waitFor();
     await rueckfrage.getByRole("button", { name: "Sperren" }).click();
     await zeile.getByText("gesperrt", { exact: true }).waitFor();
-    await zeile.getByRole("button", { name: "Entsperren" }).click();
+    await waehle("Entsperren");
     await rueckfrage.waitFor();
     await rueckfrage.getByRole("button", { name: "Entsperren" }).click();
     await wartenAuf(async () => (await zeile.getByText("gesperrt", { exact: true }).count()) === 0, {
@@ -376,7 +386,7 @@ async function main() {
     });
     console.log("ok: gesperrt und entsperrt");
 
-    await zeile.getByRole("button", { name: "Jetzt prüfen" }).click();
+    await waehle("Jetzt prüfen");
     await rueckfrage.waitFor();
     if (!((await rueckfrage.textContent()) ?? "").includes("nachgeprüft")) {
       throw new Error("die Rückfrage erklärt das Nachprüfen nicht");
@@ -460,10 +470,7 @@ async function main() {
     });
     await seite.getByRole("heading", { level: 1, name: "Benutzer" }).waitFor();
     await seite.getByRole("row", { name: /Test Person/ }).waitFor();
-    await seite
-      .getByRole("row", { name: /Test Person/ })
-      .getByRole("button", { name: "Löschen" })
-      .click();
+    await waehle("Löschen");
     await rueckfrage.waitFor();
     if (!((await rueckfrage.textContent()) ?? "").includes("wird gelöscht")) {
       throw new Error("die Rückfrage erklärt das Löschen nicht");

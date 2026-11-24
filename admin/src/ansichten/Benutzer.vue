@@ -7,23 +7,15 @@
 // änderbar. Rollen stehen als Daten in `logik/rollen.ts`; diese Ansicht zählt
 // keine Rollen auf (Aufgabe 24).
 import { computed, onMounted, ref, shallowRef } from "vue";
-import {
-  Lock,
-  LockOpen,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-  UserRound,
-  UserRoundMinus,
-} from "lucide-vue-next";
+import { Ellipsis, RefreshCw, UserRound } from "lucide-vue-next";
 import {
   WpButton,
   WpDialog,
-  WpIconButton,
   WpInput,
+  WpMenu,
   WpSelect,
 } from "@weppelmann/components";
-import type { ListOption } from "@weppelmann/components";
+import type { ListOption, MenuItem } from "@weppelmann/components";
 
 import {
   abmelden as sitzungBeenden,
@@ -155,6 +147,33 @@ function istSelbst(benutzer: BenutzerSicht): boolean {
 
 function gruppen(benutzer: BenutzerSicht) {
   return entra_gruppen(benutzer, daten.value?.gesehen ?? []);
+}
+
+/** Das Menü einer Zeile; leer beim Root, dann gibt es keinen Knopf. */
+function menue(benutzer: BenutzerSicht): MenuItem[] {
+  const erlaubt = aktionen(benutzer, daten.value?.entra ?? false);
+  const punkte: MenuItem[] = [];
+  if (erlaubt.rolle) punkte.push({ id: "rolle", label: rollenknopf(benutzer) });
+  if (erlaubt.pruefen) punkte.push({ id: "pruefen", label: "Jetzt prüfen" });
+  if (erlaubt.sperre) {
+    punkte.push({
+      id: "sperre",
+      label: benutzer.gesperrt ? "Entsperren" : "Sperren",
+    });
+  }
+  if (erlaubt.loeschen) {
+    punkte.push({
+      id: "loeschen",
+      label: "Löschen",
+      danger: true,
+      separatorBefore: true,
+    });
+  }
+  return punkte;
+}
+
+function waehle(id: string, benutzer: BenutzerSicht): void {
+  oeffne(id as Handlung, benutzer);
 }
 
 function oeffne(handlung: Handlung, benutzer: BenutzerSicht): void {
@@ -371,126 +390,102 @@ onMounted(laden);
       titel="Benutzer"
       :unter="`${gefiltert.length} von ${zustand.daten.liste.length} Benutzern · neue kommen mit ihrer ersten Anmeldung dazu`"
     >
-      <div class="tabelle__rahmen">
-        <table class="tabelle tabelle--personen">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">E-Mail</th>
-              <th scope="col">Rolle</th>
-              <th scope="col">Entra-Gruppen</th>
-              <th scope="col">Geräte</th>
-              <th scope="col">Prüfung</th>
-              <th scope="col">Zuletzt</th>
-              <th scope="col">Aktionen</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="benutzer in gefiltert" :key="benutzer.oid">
-              <td data-label="Name">
-                <div class="name">
-                  <UserRound class="name__zeichen" aria-hidden="true" />
-                  <span>{{ benutzer_name(benutzer) }}</span>
-                  <span v-if="istSelbst(benutzer)" class="marke-chip">du</span>
-                  <span
-                    v-if="benutzer.gesperrt"
-                    class="marke-chip marke-chip--warnung"
-                  >
-                    gesperrt
+      <table class="tabelle tabelle--personen">
+        <colgroup>
+          <col class="spalte--person" />
+          <col class="spalte--rolle" />
+          <col />
+          <col class="spalte--geraete" />
+          <col class="spalte--stand" />
+          <col class="spalte--menue" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col">Benutzer</th>
+            <th scope="col">Rolle</th>
+            <th scope="col">Gruppen</th>
+            <th scope="col">Geräte</th>
+            <th scope="col">Stand</th>
+            <th scope="col"><span class="nur-vorlesen">Aktionen</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="benutzer in gefiltert" :key="benutzer.oid">
+            <td>
+              <div class="person">
+                <UserRound class="person__zeichen" aria-hidden="true" />
+                <div class="person__text">
+                  <span class="person__name">
+                    <span class="kurz" :title="benutzer_name(benutzer)">{{
+                      benutzer_name(benutzer)
+                    }}</span>
+                    <span v-if="istSelbst(benutzer)" class="marke-chip">du</span>
+                    <span
+                      v-if="benutzer.gesperrt"
+                      class="marke-chip marke-chip--warnung"
+                      >gesperrt</span
+                    >
                   </span>
                   <span
-                    v-if="rolle_eintrag(benutzer.rolle).fest"
-                    class="marke-chip"
-                    :title="rolle_eintrag(benutzer.rolle).unter"
+                    v-if="benutzer.email"
+                    class="kurz leise klein"
+                    :title="benutzer.email"
+                    >{{ benutzer.email }}</span
                   >
-                    Notzugang
-                  </span>
                 </div>
-              </td>
-              <td data-label="E-Mail">
-                <span v-if="benutzer.email">{{ benutzer.email }}</span>
-                <span v-else class="blass">—</span>
-              </td>
-              <td data-label="Rolle">
+              </div>
+            </td>
+            <td data-label="Rolle">
+              <Status
+                :ton="rolle_eintrag(benutzer.rolle).ton"
+                :text="rollen_text(benutzer.rolle)"
+              />
+            </td>
+            <td data-label="Gruppen">
+              <ul v-if="gruppen(benutzer).length > 0" class="chips">
+                <li
+                  v-for="gruppe in gruppen(benutzer)"
+                  :key="gruppe.id"
+                  class="marke-chip kurz"
+                  :title="`${gruppe.name} · ${gruppe.id}`"
+                >
+                  {{ gruppe.name }}
+                </li>
+              </ul>
+              <span v-else class="blass">—</span>
+            </td>
+            <td data-label="Geräte">
+              <span :title="geraete_text(benutzer.geraete)">{{
+                benutzer.geraete
+              }}</span>
+            </td>
+            <td data-label="Stand">
+              <div
+                class="stand"
+                :title="pruefstand(benutzer, zustand.daten.entra).hinweis"
+              >
                 <Status
-                  :ton="rolle_eintrag(benutzer.rolle).ton"
-                  :text="rollen_text(benutzer.rolle)"
+                  :ton="pruefstand(benutzer, zustand.daten.entra).ton"
+                  :text="pruefstand(benutzer, zustand.daten.entra).text"
                 />
-              </td>
-              <td data-label="Entra-Gruppen">
-                <ul v-if="gruppen(benutzer).length > 0" class="chips">
-                  <li
-                    v-for="gruppe in gruppen(benutzer)"
-                    :key="gruppe.id"
-                    class="marke-chip"
-                    :title="gruppe.id"
-                  >
-                    {{ gruppe.name }}
-                  </li>
-                </ul>
-                <span v-else class="blass">—</span>
-              </td>
-              <td data-label="Geräte">{{ geraete_text(benutzer.geraete) }}</td>
-              <td data-label="Prüfung">
-                <span :title="pruefstand(benutzer, zustand.daten.entra).hinweis">
-                  <Status
-                    :ton="pruefstand(benutzer, zustand.daten.entra).ton"
-                    :text="pruefstand(benutzer, zustand.daten.entra).text"
-                  />
-                </span>
-              </td>
-              <td data-label="Zuletzt">{{ zeitpunkt(benutzer.zuletzt) }}</td>
-              <td data-label="Aktionen">
-                <div class="aktionen">
-                  <template v-if="aktionen(benutzer, zustand.daten.entra).rolle">
-                    <WpButton
-                      :label="rollenknopf(benutzer)"
-                      :icon="
-                        zielrolle(benutzer) === 'admin'
-                          ? ShieldCheck
-                          : UserRoundMinus
-                      "
-                      size="sm"
-                      @press="oeffne('rolle', benutzer)"
-                    />
-                  </template>
-                  <template v-if="aktionen(benutzer, zustand.daten.entra).sperre">
-                    <WpIconButton
-                      :icon="benutzer.gesperrt ? LockOpen : Lock"
-                      :label="benutzer.gesperrt ? 'Entsperren' : 'Sperren'"
-                      size="sm"
-                      @press="oeffne('sperre', benutzer)"
-                    />
-                  </template>
-                  <template v-if="aktionen(benutzer, zustand.daten.entra).pruefen">
-                    <WpIconButton
-                      :icon="RefreshCw"
-                      label="Jetzt prüfen"
-                      size="sm"
-                      @press="oeffne('pruefen', benutzer)"
-                    />
-                  </template>
-                  <template v-if="aktionen(benutzer, zustand.daten.entra).loeschen">
-                    <WpIconButton
-                      :icon="Trash2"
-                      label="Löschen"
-                      size="sm"
-                      variant="ghost"
-                      @press="oeffne('loeschen', benutzer)"
-                    />
-                  </template>
-                  <span
-                    v-if="rolle_eintrag(benutzer.rolle).fest"
-                    class="blass"
-                  >
-                    nicht änderbar
-                  </span>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+                <span class="leise klein einzeilig">{{
+                  zeitpunkt(benutzer.zuletzt)
+                }}</span>
+              </div>
+            </td>
+            <td class="zelle--menue">
+              <WpMenu
+                v-if="menue(benutzer).length > 0"
+                :items="menue(benutzer)"
+                :label="`Aktionen für ${benutzer_name(benutzer)}`"
+                @select="(id) => waehle(id, benutzer)"
+              >
+                <Ellipsis class="menuezeichen" aria-hidden="true" />
+              </WpMenu>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </Karte>
 
     <WpDialog
@@ -547,60 +542,86 @@ onMounted(laden);
   display: flex;
 }
 
-.tabelle__rahmen {
-  overflow-x: auto;
+/* Feste Spalten: die Breite folgt dem Fenster, nicht dem längsten Namen. Was
+   nicht passt, wird gekürzt und steht vollständig im Hinweis. */
+.tabelle--personen {
+  table-layout: fixed;
 }
 
-/* Unter `breakpoint.formular` wird aus der Tabelle eine Liste: jede Zeile
-   zeigt ihre Felder untereinander, mit dem Spaltennamen davor. Kein Inhalt
-   verschwindet, nur die Anordnung ändert sich (Aufgabe 18). */
-:root[data-breite="eng"] .tabelle--personen thead {
-  display: none;
+.tabelle--personen td {
+  vertical-align: middle;
 }
 
-:root[data-breite="eng"] .tabelle--personen,
-:root[data-breite="eng"] .tabelle--personen tbody,
-:root[data-breite="eng"] .tabelle--personen tr,
-:root[data-breite="eng"] .tabelle--personen td {
-  display: block;
-  width: auto;
+.spalte--person {
+  width: 34%;
 }
 
-:root[data-breite="eng"] .tabelle--personen tr {
-  padding-block: var(--wp-space-2);
-  border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
+.spalte--rolle {
+  width: calc(var(--wp-space-8) * 2);
 }
 
-:root[data-breite="eng"] .tabelle--personen tr:last-child {
-  border-bottom: 0;
+.spalte--geraete {
+  width: calc(var(--wp-space-8) * 1.25);
 }
 
-:root[data-breite="eng"] .tabelle--personen td {
-  display: grid;
-  grid-template-columns: calc(var(--wp-space-8) * 1.75) minmax(0, 1fr);
+.spalte--stand {
+  width: calc(var(--wp-space-8) * 2.25);
+}
+
+.spalte--menue {
+  width: var(--wp-space-8);
+}
+
+.zelle--menue {
+  text-align: end;
+}
+
+.person {
+  display: flex;
+  align-items: center;
   gap: var(--wp-space-2);
-  padding: var(--wp-space-1) var(--wp-space-2);
-  border: 0;
+  min-width: 0;
 }
 
-:root[data-breite="eng"] .tabelle--personen td::before {
-  content: attr(data-label);
-  color: var(--wp-color-text-faint);
+.person__zeichen {
+  flex: none;
+  width: var(--wp-space-4);
+  height: var(--wp-space-4);
+  color: var(--wp-color-text-muted);
+}
+
+.person__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.person__name {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-2);
+  min-width: 0;
+  font-weight: var(--wp-font-weight-medium);
+}
+
+.stand {
+  display: flex;
+  flex-direction: column;
+}
+
+.kurz {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.klein {
   font-size: var(--wp-font-size-sm);
 }
 
-.name {
-  display: flex;
-  align-items: center;
-  gap: var(--wp-space-1);
-  flex-wrap: wrap;
-}
-
-.name__zeichen {
-  flex: none;
-  width: var(--wp-font-size-md);
-  height: var(--wp-font-size-md);
-  color: var(--wp-color-text-muted);
+.einzeilig {
+  white-space: nowrap;
 }
 
 .chips {
@@ -612,24 +633,66 @@ onMounted(laden);
   list-style: none;
 }
 
-.marke-chip {
-  padding: 0 var(--wp-space-2);
-  border: var(--wp-size-border) solid var(--wp-color-border-subtle);
-  background: var(--wp-color-bg-raised);
+.chips .marke-chip {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.menuezeichen {
+  display: block;
+  width: var(--wp-space-4);
+  height: var(--wp-space-4);
+  margin: var(--wp-space-1);
   color: var(--wp-color-text-muted);
-  font-size: var(--wp-font-size-xs);
-  line-height: var(--wp-size-control-sm);
 }
 
-.marke-chip--warnung {
-  border-color: var(--wp-color-status-warn);
-  color: var(--wp-color-status-warn);
+/* Unter `breakpoint.formular` wird aus der Tabelle eine Liste: oben die Person
+   mit dem Menü, darunter die übrigen Angaben (Aufgabe 18). */
+:root[data-breite="eng"] .tabelle--personen colgroup,
+:root[data-breite="eng"] .tabelle--personen thead {
+  display: none;
 }
 
-.aktionen {
-  display: flex;
-  gap: var(--wp-space-1);
-  flex-wrap: wrap;
+:root[data-breite="eng"] .tabelle--personen,
+:root[data-breite="eng"] .tabelle--personen tbody {
+  display: block;
+}
+
+:root[data-breite="eng"] .tabelle--personen tr {
+  position: relative;
+  display: block;
+  padding-block: var(--wp-space-2);
+  border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
+}
+
+:root[data-breite="eng"] .tabelle--personen tr:last-child {
+  border-bottom: 0;
+}
+
+:root[data-breite="eng"] .tabelle--personen td {
+  display: grid;
+  grid-template-columns: calc(var(--wp-space-8) * 1.5) minmax(0, 1fr);
+  gap: var(--wp-space-2);
+  padding: var(--wp-space-1) 0;
+  border: 0;
+}
+
+:root[data-breite="eng"] .tabelle--personen td:first-child {
+  display: block;
+  padding-inline-end: var(--wp-space-8);
+}
+
+:root[data-breite="eng"] .tabelle--personen td[data-label]::before {
+  content: attr(data-label);
+  color: var(--wp-color-text-faint);
+  font-size: var(--wp-font-size-sm);
+}
+
+:root[data-breite="eng"] .tabelle--personen .zelle--menue {
+  position: absolute;
+  display: block;
+  inset-block-start: var(--wp-space-2);
+  inset-inline-end: 0;
 }
 
 .fehler {

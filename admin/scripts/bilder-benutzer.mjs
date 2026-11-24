@@ -32,8 +32,8 @@ const ROOT_PASSWORT = "ein-sehr-langes-testpasswort";
 
 const ANNA = {
   oid: "aaaaaaaa-9999-8888-7777-666666666666",
-  email: "anna@example.test",
-  name: "Anna Beispiel",
+  email: "Annemarie.Mustermann-Beispielhausen@beispielunternehmen.example.test",
+  name: "Annemarie Mustermann-Beispielhausen",
 };
 const BEN = {
   oid: "bbbbbbbb-9999-8888-7777-666666666666",
@@ -46,6 +46,7 @@ const SEITEN = [
   { id: "benutzer", datei: "benutzer", titel: "Benutzer" },
   { id: "pruefspur", datei: "pruefspur", titel: "Prüfspur" },
   { id: "geraete", datei: "geraete", titel: "Geräte" },
+  { id: "gruppen", datei: "gruppen", titel: "Gruppen" },
 ];
 
 function b64url(bytes) {
@@ -149,7 +150,7 @@ async function bild(browser, { thema, breite, hoehe, seite, datei, cookie, basis
       .waitFor({ timeout: 15000 });
     if (seite.id === "benutzer") {
       try {
-        await page.getByRole("row", { name: /Anna Beispiel/ }).waitFor();
+        await page.getByRole("row", { name: /Annemarie/ }).waitFor();
       } catch (fehler) {
         console.log("DEBUG Benutzer:\n" + (await page.locator("body").innerText()));
         throw fehler;
@@ -233,7 +234,7 @@ async function main() {
         methode: "PUT",
         cookie,
         kopf: { Origin: server.basis },
-        rumpf: { anzeigename: "Team" },
+        rumpf: { anzeigename: "Alle Mitarbeiter mit verwalteten Geräten" },
       },
     );
     await anfrage(server.basis, `/api/v1/admin/benutzer/${ANNA.oid}`, {
