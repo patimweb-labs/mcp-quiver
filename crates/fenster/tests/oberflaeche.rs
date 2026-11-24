@@ -264,6 +264,7 @@ fn eintrag(
         einrichtung: None,
         zugaenge: None,
         am_geraet_aus: false,
+        unzulaessig: None,
     }
 }
 
@@ -416,6 +417,8 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         server_url: None,
         anmeldewege: None,
         protokoll_fuer_agenten: false,
+        tresor_fehler: None,
+        profil_hinweis: None,
     }
 }
 
@@ -1462,7 +1465,7 @@ fn andere_art_hat_ein_namensfeld_und_meldet_doppelte() {
         &h.state().0.sicht.dialog,
         Dialog::Token { name, .. } if name == "mein-agent"
     ));
-    let json = quiver_fenster::logik::schnipsel_json(ENDPUNKT, TOKEN);
+    let json = quiver_fenster::logik::schnipsel_json(ENDPUNKT);
     assert!(h.query_by_label(&json).is_some(), "allgemeines JSON fehlt");
 }
 
@@ -2384,7 +2387,7 @@ fn bereit_zeigt_den_knopf_einrichten() {
 }
 
 #[test]
-fn laufende_einrichtung_hat_keinen_knopf() {
+fn laufende_einrichtung_laesst_sich_abbrechen() {
     let mut h = fenster(
         modell(
             verbunden(),
@@ -2404,6 +2407,20 @@ fn laufende_einrichtung_hat_keinen_knopf() {
             "„{knopf}“ darf während der Einrichtung nicht da sein"
         );
     }
+    // „Abbrechen“ beendet die Einrichtung (Paket 3).
+    h.get_by_role_and_label(Role::Button, "Abbrechen").click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EinrichtungAbbrechen {
+                eintrag: EintragId::neu("ssh")
+            }),
+        "{:?}",
+        h.state().1.aktionen.borrow()
+    );
 }
 
 #[test]
@@ -3626,4 +3643,77 @@ fn bildschirmfoto_der_abschaltung() {
             foto(&mut h, &ziel, "abschaltung", thema, groesse.px);
         }
     }
+}
+
+/// Eine unbrauchbare Kennung steht auf der Karte mit Grund (Paket 3) – der
+/// Eintrag startet nicht, und der User sieht warum.
+#[test]
+fn eine_unbrauchbare_kennung_ist_benannt() {
+    let mut kaputt = eintrag(
+        "quiver",
+        "Reserviert",
+        "",
+        EintragZustand::Startet,
+        Vec::new(),
+    );
+    kaputt.unzulaessig =
+        Some("Die Kennung quiver ist für die Werkzeuge des Clients selbst reserviert".into());
+    let mut h = fenster(
+        modell(verbunden(), vec![kaputt]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    let erwartet = "Diese Kennung taugt nicht als Werkzeug-Präfix: Die Kennung quiver ist für die \
+                    Werkzeuge des Clients selbst reserviert. Der Eintrag startet deshalb nicht – \
+                    bitte in der Verwaltung ändern.";
+    assert!(
+        h.query_by_label(erwartet).is_some(),
+        "der Grund steht auf der Karte"
+    );
+}
+
+/// Ist der Tresor nicht lesbar, sagt es der Hinweis oben – mit „Neu beginnen“
+/// hinter einer Rückfrage (Paket 3).
+#[test]
+fn ein_kaputter_tresor_bietet_neu_beginnen_an() {
+    let mut stand = modell(verbunden(), eintraege());
+    stand.tresor_fehler = Some("tresor.json ist beschädigt".into());
+    let mut h = fenster(stand, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    assert!(
+        h.query_by_label("Tresor nicht lesbar: tresor.json ist beschädigt")
+            .is_some(),
+        "der Hinweis steht oben"
+    );
+    // „Neu beginnen“ öffnet die Rückfrage, nicht die Tat.
+    h.get_by_role_and_label(Role::Button, "Neu beginnen")
+        .click();
+    h.run();
+    assert_eq!(
+        h.state().0.sicht.dialog,
+        Dialog::TresorNeuBeginnen,
+        "erst die Rückfrage"
+    );
+    assert!(
+        h.query_by_label("Tresor neu beginnen").is_some(),
+        "der Dialog erklärt, was bleibt"
+    );
+    // Bestätigt wird die Aktion abgegeben – der Knopf im Dialog (der Hinweis
+    // oben trägt denselben Namen).
+    let mut knoepfe: Vec<_> = h
+        .query_all_by_role_and_label(Role::Button, "Neu beginnen")
+        .collect();
+    knoepfe.pop().expect("der Knopf im Dialog").click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::TresorNeuBeginnen),
+        "{:?}",
+        h.state().1.aktionen.borrow()
+    );
 }

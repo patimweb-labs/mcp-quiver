@@ -28,7 +28,7 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
         .collect();
 
     bausteine::seite(ui, |ui| {
-        hinweis(ui, sicht);
+        hinweis(ui, sicht, aktionen);
         seitenkopf(
             ui,
             sicht,

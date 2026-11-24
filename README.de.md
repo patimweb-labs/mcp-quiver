@@ -321,9 +321,11 @@ Manche Tools verwalten ihre Zugänge in **Profilen** (mehrere Wikis, Postfächer
 Hosts, SAP-Systeme). Solche Einträge tragen eine *Einrichtung*; die Tools-Karte
 zeigt dann **Einrichten**. Der Client startet dafür dasselbe Programm mit
 derselben Umgebung und denselben `${feld}`-Platzhaltern wie die Laufzeit und
-wartet **ohne Frist**, bis der User die Seite im Browser abschließt: Exit 0 heißt
-eingerichtet und der Eintrag startet neu (neue Profile wirken sofort), Exit 1
-heißt abgebrochen, alles andere steht als Fehler in der Karte. Zugangsdaten
+wartet, bis der User die Seite im Browser abschließt: Exit 0 heißt eingerichtet
+und der Eintrag startet neu (neue Profile wirken sofort), Exit 1 heißt
+abgebrochen, alles andere steht als Fehler in der Karte. Während sie läuft,
+steht **Abbrechen** daneben; nach 15 Minuten endet sie von selbst, und beim
+Beenden des Clients wird sie aufgeräumt. Zugangsdaten
 durchlaufen dabei nie einen Agenten. In der Verwaltung steht der Befehl im
 Abschnitt *Einrichtung (optional)*, die Liste zeigt das Abzeichen *mit
 Einrichtung*.

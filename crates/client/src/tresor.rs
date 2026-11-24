@@ -14,10 +14,42 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 /// Ein Ablageort für Geheimnisse.
+///
+/// Neben Lesen, Schreiben und Löschen gibt es drei Dinge, die der Kern
+/// braucht, damit ein kaputter Tresor nicht den Start verhindert (Paket 3):
+/// [`Tresor::fehler`] sagt, was nicht lesbar war, [`Tresor::neu_beginnen`]
+/// räumt einen kaputten Tresor beiseite, und [`Tresor::werte_laden`] liest
+/// viele Schlüssel in **einem** Zugriff (ein Abgleich liest den Tresor genau
+/// einmal).
 pub trait Tresor: Send + Sync {
     fn lesen(&self, schluessel: &str) -> anyhow::Result<Option<String>>;
     fn schreiben(&self, schluessel: &str, wert: &str) -> anyhow::Result<()>;
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()>;
+
+    /// Warum der Tresor nicht lesbar ist – `None` heißt: alles in Ordnung.
+    /// Der Text ist für das Fenster gedacht und enthält nie einen Wert.
+    fn fehler(&self) -> Option<String> {
+        None
+    }
+
+    /// Nach „Neu beginnen“: den kaputten Stand endgültig beiseitelegen. Die
+    /// alten Dateien bleiben unter `.kaputt-<zeit>` erhalten.
+    fn neu_beginnen(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Alle angegebenen Schlüssel auf einmal lesen. Der Standard geht einzeln
+    /// vor; [`DateiTresor`] liest die Datei **einmal** und spart so je Wert
+    /// eine Sperre und einen Durchlauf.
+    fn werte_laden(&self, schluessel: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+        let mut werte = BTreeMap::new();
+        for name in schluessel {
+            if let Some(wert) = self.lesen(name)? {
+                werte.insert(name.clone(), wert);
+            }
+        }
+        Ok(werte)
+    }
 }
 
 pub use crate::dateitresor::DateiTresor;
@@ -38,6 +70,15 @@ impl Tresor for DateiTresor {
     }
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
         DateiTresor::loeschen(self, schluessel)
+    }
+    fn fehler(&self) -> Option<String> {
+        DateiTresor::fehler(self)
+    }
+    fn neu_beginnen(&self) -> anyhow::Result<()> {
+        DateiTresor::neu_beginnen(self)
+    }
+    fn werte_laden(&self, schluessel: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+        DateiTresor::werte_laden(self, schluessel)
     }
 }
 

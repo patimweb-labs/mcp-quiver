@@ -223,6 +223,14 @@ impl KernZugang for EchterKern {
                 Aktion::EintragSchalten { eintrag, an } => {
                     kern.eintrag_schalten(&eintrag, an).await
                 }
+                // Der Tresor ist nicht lesbar: mit einem leeren beginnen
+                // (Paket 3). Die alten Dateien bleiben liegen.
+                Aktion::TresorNeuBeginnen => kern.tresor_neu_beginnen(),
+                // Eine laufende Einrichtung abbrechen (Paket 3).
+                Aktion::EinrichtungAbbrechen { eintrag } => {
+                    kern.einrichtung_abbrechen(&eintrag);
+                    Ok(())
+                }
             };
             if let Err(fehler) = ergebnis {
                 meldungen

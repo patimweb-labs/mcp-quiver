@@ -309,10 +309,11 @@ but runs on no device; the client stops it on its next sync.
 Some tools keep their credentials in **profiles** (several wikis, mailboxes,
 hosts, SAP systems). Such entries carry a *setup*; the tools card then shows
 **Set up**. The client runs the same program with the same environment and the
-same `${feld}` placeholders as the runtime and waits **without a deadline**
-until the user closes the page in the browser: exit 0 means done and the entry
-restarts (new profiles take effect immediately), exit 1 means cancelled,
-anything else is shown as an error on the card. Credentials never pass through
+same `${feld}` placeholders as the runtime and waits until the user closes the
+page in the browser: exit 0 means done and the entry restarts (new profiles take
+effect immediately), exit 1 means cancelled, anything else is shown as an error
+on the card. While it runs, **Cancel** sits next to it; after 15 minutes it ends
+by itself, and quitting the client cleans it up. Credentials never pass through
 an agent. In the admin interface the command sits in the *Einrichtung
 (optional)* section and the list shows a *mit Einrichtung* badge.
 

@@ -15,6 +15,24 @@
 //!
 //! Jede Anfrage braucht `Authorization: Bearer <agent-token>`; geprüft wird
 //! der sha256-Hash in konstanter Zeit. Ohne gültiges Token: 401.
+//!
+//! Grenzen (Paket 3):
+//!
+//! - **Herkunft**: eine Anfrage mit `Origin` kommt nur von Loopback (ein
+//!   Browser auf diesem Rechner), der `Host` muss der eigene Port sein. Ohne
+//!   `Origin` ist sie erlaubt – dann ist es kein Browser.
+//! - **Auslastung**: höchstens [`crate::Auslastung::GESAMT_MAX`] Aufrufe
+//!   gleichzeitig und [`crate::Auslastung::EINTRAG_MAX`] je Eintrag; darüber
+//!   antwortet der Client sofort mit „ausgelastet“.
+//! - **Frist und Abbruch**: jeder Aufruf hat eine Frist, Fortschrittsmeldungen
+//!   verlängern sie, und ein Abbruch des Agenten bricht auch den Aufruf beim
+//!   Tool ab.
+//! - **Größe**: eine Antwort höchstens [`ANTWORT_BYTES`]; gezählt wird sie
+//!   ohne sie zusammenzukleben.
+//! - **Sitzungen**: höchstens [`crate::SITZUNGEN_MAX`], sie laufen nach
+//!   [`crate::SITZUNG_FRIST`] ohne Nutzung ab.
+//! - **Protokoll**: ein Agent sieht **nur eigene** Aufrufe, und `quiver__tool_log`
+//!   nur für Einträge, die er selbst benutzt hat.
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
@@ -25,7 +43,7 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use quiver_domain::{tool_name_zerlegen, EintragId};
+use quiver_domain::EintragId;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
@@ -41,7 +59,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::protokoll::{Aufruf, Aufzeichnung, Filter, LogFilter, Protokoll, Status};
-use crate::{Innen, Sitzung, CLIENT_VERSION};
+use crate::{Auslastung, Innen, Sitzung, CLIENT_VERSION};
+
+/// So groß darf die Antwort eines Werkzeugaufrufs höchstens sein.
+pub const ANTWORT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Der Pfad, unter dem die Agenten den Endpunkt ansprechen.
 pub const PFAD: &str = "/mcp";
@@ -92,6 +113,11 @@ pub(crate) fn router(innen: Arc<Innen>) -> Router {
 
 /// Nur mit gültigem Agent-Token durch; merkt sich, wer fragt.
 async fn wache(State(innen): State<Arc<Innen>>, mut anfrage: Request, weiter: Next) -> Response {
+    // Herkunft zuerst: eine Anfrage aus einem fremden Browser soll nicht
+    // einmal erfahren, ob ein Token stimmt.
+    if let Some(ablehnung) = herkunft_ablehnen(anfrage.headers(), innen.adresse) {
+        return ablehnung;
+    }
     let Some(token) = bearer(anfrage.headers()) else {
         return nicht_angemeldet();
     };
@@ -100,6 +126,77 @@ async fn wache(State(innen): State<Arc<Innen>>, mut anfrage: Request, weiter: Ne
     };
     anfrage.extensions_mut().insert(AgentKennung { id, name });
     weiter.run(anfrage).await
+}
+
+/// Ist der Host ein Loopback-Name?
+fn loopback_host(host: &str) -> bool {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    matches!(host, "127.0.0.1" | "::1" | "localhost")
+}
+
+/// `host[:port]` → (Host ohne Klammern, Port).
+fn host_und_port(wert: &str) -> (String, Option<u16>) {
+    // IPv6 in Klammern: `[::1]:8741`.
+    if let Some(rest) = wert.strip_prefix('[') {
+        if let Some((host, danach)) = rest.split_once(']') {
+            let port = danach.strip_prefix(':').and_then(|p| p.parse().ok());
+            return (host.to_string(), port);
+        }
+    }
+    match wert.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() => {
+            (host.to_string(), port.parse().ok())
+        }
+        _ => (wert.to_string(), None),
+    }
+}
+
+/// Prüft `Origin` und `Host` (Paket 3).
+///
+/// - Mit `Origin`: nur Loopback (`http://127.0.0.1:…`, `http://localhost:…`).
+///   Eine Seite von außen kann so keine Aufrufe auslösen, auch wenn sie das
+///   Token kennt.
+/// - Ohne `Origin`: erlaubt – dann ist es kein Browser (CLI-Agent).
+/// - `Host`: nur der eigene Port. So kann ein DNS-Rebinding nicht auf einen
+///   anderen Namen zeigen, der auf 127.0.0.1 auflöst.
+fn herkunft_ablehnen(kopf: &HeaderMap, adresse: std::net::SocketAddr) -> Option<Response> {
+    if let Some(origin) = kopf.get(header::ORIGIN).and_then(|wert| wert.to_str().ok()) {
+        let erlaubt = match origin {
+            "null" => false,
+            wert => match reqwest::Url::parse(wert) {
+                Ok(url) => {
+                    matches!(url.scheme(), "http" | "https")
+                        && url.host_str().is_some_and(loopback_host)
+                }
+                Err(_) => false,
+            },
+        };
+        if !erlaubt {
+            return Some(
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "fehler": "Nur Anfragen von diesem Rechner sind erlaubt" })),
+                )
+                    .into_response(),
+            );
+        }
+    }
+    if let Some(host) = kopf.get(header::HOST).and_then(|wert| wert.to_str().ok()) {
+        let (name, port) = host_und_port(host);
+        if !loopback_host(&name) || port != Some(adresse.port()) {
+            return Some(
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "fehler": "Unbekannter Host" })),
+                )
+                    .into_response(),
+            );
+        }
+    }
+    None
 }
 
 fn bearer(kopf: &HeaderMap) -> Option<String> {
@@ -139,6 +236,30 @@ impl Endpunkt {
             .unwrap_or_else(|vergiftet| vergiftet.into_inner())
     }
 
+    /// Diese Sitzung ist benutzt worden – sie läuft nicht mehr ab (Paket 3).
+    fn benutzt(&self) {
+        let mut sitzungen = self.sitzungen();
+        if let Some(sitzung) = sitzungen.get_mut(&self.schluessel) {
+            sitzung.zuletzt = Instant::now();
+        }
+    }
+
+    /// Einen Aufruf belegen; `None` heißt ausgelastet.
+    fn auslastung_belegen(&self, eintrag: &EintragId) -> Option<AuslastungWache> {
+        let mut auslastung = self
+            .innen
+            .auslastung
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+        if !auslastung.belegen(eintrag) {
+            return None;
+        }
+        Some(AuslastungWache {
+            innen: self.innen.clone(),
+            eintrag: eintrag.clone(),
+        })
+    }
+
     /// Einen Aufruf protokollieren (Aufgabe 17). Ein Fehler beim Schreiben
     /// darf den Aufruf nie scheitern lassen – das erledigt [`crate::protokoll`].
     fn aufzeichnen(&self, aufzeichnung: Aufzeichnung<'_>) {
@@ -164,19 +285,54 @@ impl Endpunkt {
         ))
     }
 
+    /// Dasselbe für einen Werkzeugnamen, der nicht mehr in der Tabelle steht:
+    /// ein abgeschalteter Eintrag bietet keine Werkzeuge mehr an, ist aber
+    /// **nicht** unbekannt (Aufgabe 19). Der Name wird hier nur für die
+    /// Meldung zugeordnet – die Zuordnung der Aufrufe bleibt die Tabelle.
+    fn abgeschaltet_fuer_name(&self, name: &str) -> Option<String> {
+        let treffer = {
+            let stand = self.innen.stand();
+            stand
+                .soll
+                .eintraege
+                .iter()
+                .find(|eintrag| {
+                    let id = &eintrag.eintrag.id;
+                    stand.am_geraet_aus.contains(id)
+                        && name
+                            .strip_prefix(&format!("{}__", id.als_str()))
+                            .is_some_and(|rest| !rest.is_empty())
+                })
+                .map(|eintrag| eintrag.eintrag.id.clone())
+        };
+        self.abgeschaltet_text(&treffer?)
+    }
+
     /// Die eigenen Werkzeuge von quiver (Aufgabe 17) – lesend, ohne Eintrag.
+    ///
+    /// Ein Agent sieht **nur eigene** Aufrufe (Paket 3): der Agenten-Filter
+    /// wird auf ihn gesetzt, egal was im Argument steht.
     fn eigenes_werkzeug(
         &self,
         name: &str,
         argumente: Option<&JsonObject>,
+        agent: Option<&AgentKennung>,
     ) -> Option<CallToolResult> {
         let schalter = self.innen.stand().protokoll_fuer_agenten;
+        let agent_name = agent.map(|kennung| kennung.name.clone());
         match name {
             TOOL_PROTOKOLL => Some(protokoll_lesen(
-                self.innen.protokoll.abfragen(&filter_aus(argumente)),
+                self.innen
+                    .protokoll
+                    .abfragen(&filter_aus(argumente, agent_name)),
                 schalter,
             )),
-            TOOL_LOG => Some(log_lesen(&self.innen.protokoll, argumente, schalter)),
+            TOOL_LOG => Some(log_lesen(
+                &self.innen.protokoll,
+                argumente,
+                schalter,
+                agent_name.as_deref(),
+            )),
             _ => None,
         }
     }
@@ -215,10 +371,15 @@ fn protokoll_lesen(aufrufe: Vec<Aufruf>, schalter: bool) -> CallToolResult {
 }
 
 /// Die Prozesszeilen eines Eintrags als Antwort für einen Agenten.
+///
+/// Ein Agent bekommt nur Zeilen von Einträgen, die **er selbst** benutzt hat
+/// (Paket 3): die Prozessausgabe eines fremden Werkzeugs kann Zugangsdaten
+/// oder Inhalte anderer Agenten enthalten.
 fn log_lesen(
     protokoll: &Protokoll,
     argumente: Option<&JsonObject>,
     schalter: bool,
+    agent: Option<&str>,
 ) -> CallToolResult {
     let eingabe: LogEingabe = match eingabe_aus(argumente) {
         Ok(eingabe) => eingabe,
@@ -229,6 +390,13 @@ fn log_lesen(
             "Es fehlt „eintrag“ – die Kennung des Eintrags.".to_string(),
         )]);
     };
+    let eintrag = EintragId::neu(eintrag.clone());
+    if !protokoll.von_agent_benutzt(agent, &eintrag) {
+        return CallToolResult::error(vec![ContentBlock::text(
+            "Diesen Eintrag hast du nicht benutzt – fremde Prozesszeilen sind nicht lesbar."
+                .to_string(),
+        )]);
+    }
     if !schalter {
         let antwort = json!({ "zeilen": [], "hinweis": HINWEIS_ZU });
         return CallToolResult::success(vec![ContentBlock::text(
@@ -241,11 +409,11 @@ fn log_lesen(
         anzahl: Some(eingabe.anzahl.unwrap_or(LOG_STANDARD).min(LOG_MAX)),
     };
     let zeilen: Vec<Value> = protokoll
-        .zeilen(&EintragId::neu(eintrag.clone()), &filter)
+        .zeilen(&eintrag, &filter)
         .into_iter()
         .map(|zeile| json!({ "zeit": zeile.zeit, "text": zeile.text }))
         .collect();
-    let antwort = json!({ "eintrag": eintrag, "zeilen": zeilen });
+    let antwort = json!({ "eintrag": eintrag.als_str(), "zeilen": zeilen });
     CallToolResult::success(vec![ContentBlock::text(
         serde_json::to_string_pretty(&antwort).unwrap_or_default(),
     )])
@@ -269,8 +437,6 @@ struct FilterEingabe {
     #[serde(default)]
     tool: Option<String>,
     #[serde(default)]
-    agent: Option<String>,
-    #[serde(default)]
     nur_fehler: bool,
     #[serde(default)]
     seit: Option<String>,
@@ -278,7 +444,7 @@ struct FilterEingabe {
     anzahl: Option<usize>,
 }
 
-fn filter_aus(argumente: Option<&JsonObject>) -> Filter {
+fn filter_aus(argumente: Option<&JsonObject>, agent: Option<String>) -> Filter {
     let eingabe: FilterEingabe = eingabe_aus(argumente).unwrap_or_default();
     Filter {
         eintrag: eingabe
@@ -286,7 +452,8 @@ fn filter_aus(argumente: Option<&JsonObject>) -> Filter {
             .filter(|wert| !wert.trim().is_empty())
             .map(EintragId::neu),
         tool: eingabe.tool.filter(|wert| !wert.trim().is_empty()),
-        agent: eingabe.agent.filter(|wert| !wert.trim().is_empty()),
+        // Immer der Agent dieser Sitzung – egal, was als Argument kam.
+        agent,
         nur_fehler: eingabe.nur_fehler,
         seit: eingabe.seit.filter(|wert| !wert.trim().is_empty()),
         anzahl: Some(
@@ -324,7 +491,6 @@ fn eigene_werkzeuge() -> Vec<Tool> {
     let filtern = json!({
         "eintrag": { "type": "string", "description": "Kennung des Eintrags, z. B. echo" },
         "tool": { "type": "string", "description": "Werkzeugname, wie der Agent ihn aufruft" },
-        "agent": { "type": "string", "description": "Name des Agenten" },
         "nur_fehler": { "type": "boolean", "description": "Nur Fehler und Ablehnungen" },
         "seit": { "type": "string", "description": "Anfang als RFC 3339, z. B. 2026-01-02T03:04:05Z" },
         "anzahl": { "type": "integer", "minimum": 1, "maximum": PROTOKOLL_MAX,
@@ -340,16 +506,17 @@ fn eigene_werkzeuge() -> Vec<Tool> {
     vec![
         Tool::new(
             TOOL_PROTOKOLL,
-            "Zeigt die letzten Werkzeug-Aufrufe der Agenten an diesem Gerät \
-             (Zeit, Agent, Werkzeug, Dauer, Ergebnis). Argumente und Antworten \
-             nur, wenn der Schalter „Agenten dürfen Inhalte im Protokoll sehen“ an ist.",
+            "Zeigt die letzten eigenen Werkzeug-Aufrufe dieses Agenten (Zeit, \
+             Agent, Werkzeug, Dauer, Ergebnis). Argumente und Antworten nur, \
+             wenn der Schalter „Agenten dürfen Inhalte im Protokoll sehen“ an ist.",
             objekt(filtern),
         )
         .with_annotations(ToolAnnotations::new().read_only(true)),
         Tool::new(
             TOOL_LOG,
-            "Zeigt die Prozesszeilen (stderr) eines Eintrags – zum Fehlersuchen. \
-             Ohne den Schalter „Agenten dürfen Inhalte im Protokoll sehen“ leer.",
+            "Zeigt die Prozesszeilen (stderr) eines Eintrags, den dieser Agent \
+             selbst benutzt hat – zum Fehlersuchen. Ohne den Schalter „Agenten \
+             dürfen Inhalte im Protokoll sehen“ leer.",
             objekt(log),
         )
         .with_annotations(ToolAnnotations::new().read_only(true)),
@@ -378,6 +545,48 @@ fn antwort_text(ergebnis: &CallToolResult) -> String {
     text
 }
 
+/// Wie groß eine Antwort ist – **ohne** sie zusammenzukleben (Paket 3).
+///
+/// Textblöcke zählen ihre Länge, alles andere wird gezählt, ohne eine Kopie
+/// der ganzen Antwort zu bauen.
+pub fn antwort_groesse(ergebnis: &CallToolResult) -> usize {
+    let mut groesse = 0usize;
+    for inhalt in &ergebnis.content {
+        match inhalt {
+            ContentBlock::Text(text) => groesse = groesse.saturating_add(text.text.len()),
+            anderes => {
+                let anzahl = serde_json::to_vec(anderes)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or(0);
+                groesse = groesse.saturating_add(anzahl);
+            }
+        }
+    }
+    if let Some(struktur) = &ergebnis.structured_content {
+        let anzahl = serde_json::to_vec(struktur)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
+        groesse = groesse.saturating_add(anzahl);
+    }
+    groesse
+}
+
+/// Gibt den belegten Aufruf wieder frei, auch wenn der Aufruf scheitert.
+struct AuslastungWache {
+    innen: Arc<Innen>,
+    eintrag: EintragId,
+}
+
+impl Drop for AuslastungWache {
+    fn drop(&mut self) {
+        self.innen
+            .auslastung
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+            .freigeben(&self.eintrag);
+    }
+}
+
 impl ServerHandler for Endpunkt {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(
@@ -396,13 +605,28 @@ impl ServerHandler for Endpunkt {
     ) -> Result<InitializeResult, McpError> {
         context.peer.set_peer_info(request.clone());
         let agent = agent_aus(&context).map(|kennung| kennung.id);
-        self.sitzungen().insert(
+        let mut sitzungen = self.sitzungen();
+        // Abgelaufene und zu viele Sitzungen weichen (Paket 3): höchstens
+        // 64, und keine bleibt länger als 10 Minuten ohne Nutzung.
+        loop {
+            let zeiten: std::collections::BTreeMap<u64, Instant> = sitzungen
+                .iter()
+                .map(|(schluessel, sitzung)| (*schluessel, sitzung.zuletzt))
+                .collect();
+            let Some(weicht) = crate::sitzung_weicht(&zeiten, Instant::now()) else {
+                break;
+            };
+            sitzungen.remove(&weicht);
+        }
+        sitzungen.insert(
             self.schluessel,
             Sitzung {
                 agent,
                 peer: context.peer.clone(),
+                zuletzt: Instant::now(),
             },
         );
+        drop(sitzungen);
         self.innen.modell_schicken();
         self.negotiate_initialize(&request)
     }
@@ -412,6 +636,7 @@ impl ServerHandler for Endpunkt {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        self.benutzt();
         let mut werkzeuge = self.innen.werkzeuge();
         werkzeuge.extend(eigene_werkzeuge());
         werkzeuge.sort_by(|a, b| a.name.cmp(&b.name));
@@ -423,16 +648,20 @@ impl ServerHandler for Endpunkt {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        self.benutzt();
         let name = request.name.to_string();
-        let agent = agent_aus(&context)
-            .map(|kennung| kennung.name)
+        let kennung = agent_aus(&context);
+        let agent = kennung
+            .as_ref()
+            .map(|kennung| kennung.name.clone())
             .unwrap_or_default();
         let beginn = Instant::now();
 
         // Die eigenen Werkzeuge von quiver: lesend, ohne Eintrag – und sie
         // landen **nicht** im Protokoll, sonst entsteht eine Rückkopplung.
         if name.starts_with(EIGEN_PRAEFIX) {
-            return match self.eigenes_werkzeug(&name, request.arguments.as_ref()) {
+            return match self.eigenes_werkzeug(&name, request.arguments.as_ref(), kennung.as_ref())
+            {
                 Some(ergebnis) => Ok(CallToolResponse::Complete(ergebnis)),
                 None => Err(McpError::invalid_params(
                     format!("Werkzeug {name} ist unbekannt"),
@@ -441,10 +670,13 @@ impl ServerHandler for Endpunkt {
             };
         }
 
-        let (eintrag, werkzeug) = match tool_name_zerlegen(&name) {
-            Some((eintrag, werkzeug)) => (eintrag, werkzeug.to_string()),
-            None => {
-                let text = format!("Werkzeug {name} ist unbekannt");
+        // Die Zuordnung steht in einer **Tabelle** (Paket 3) – kein Zerlegen
+        // am `__`, und doppelte Namen sind schon beim Aufbau verworfen.
+        let tabelle = self.innen.werkzeugtabelle();
+        let Some((eintrag, werkzeug)) = tabelle.get(&name).cloned() else {
+            // Kein laufendes Werkzeug – vielleicht ist der Eintrag nur
+            // abgeschaltet (Aufgabe 19). Das ist kein „unbekannt“.
+            if let Some(text) = self.abgeschaltet_fuer_name(&name) {
                 self.aufzeichnen(Aufzeichnung {
                     eintrag: &EintragId::neu(name.clone()),
                     tool: &name,
@@ -457,13 +689,19 @@ impl ServerHandler for Endpunkt {
                 });
                 return Err(McpError::invalid_params(text, None));
             }
+            let text = format!("Werkzeug {name} ist unbekannt");
+            self.aufzeichnen(Aufzeichnung {
+                eintrag: &EintragId::neu(name.clone()),
+                tool: &name,
+                agent: &agent,
+                dauer: beginn.elapsed(),
+                status: Status::Abgelehnt,
+                fehler: Some(&text),
+                argumente: request.arguments.as_ref(),
+                antwort: None,
+            });
+            return Err(McpError::invalid_params(text, None));
         };
-        let peer = self
-            .innen
-            .stand()
-            .laeufer
-            .get(&eintrag)
-            .and_then(|laeufer| laeufer.peer.clone());
         // Ein auf diesem Gerät abgeschalteter Eintrag ist **nicht** unbekannt:
         // er existiert, der User will ihn nur nicht (Aufgabe 19).
         if let Some(text) = self.abgeschaltet_text(&eintrag) {
@@ -479,6 +717,12 @@ impl ServerHandler for Endpunkt {
             });
             return Err(McpError::invalid_params(text, None));
         }
+        let peer = self
+            .innen
+            .stand()
+            .laeufer
+            .get(&eintrag)
+            .and_then(|laeufer| laeufer.peer.clone());
         let Some(peer) = peer else {
             let text = format!("Werkzeug {name} läuft gerade nicht");
             self.aufzeichnen(Aufzeichnung {
@@ -493,10 +737,62 @@ impl ServerHandler for Endpunkt {
             });
             return Err(McpError::invalid_params(text, None));
         };
+        // Auslastung (Paket 3): zu viele gleichzeitige Aufrufe werden sofort
+        // abgewiesen, statt alle zu verlangsamen.
+        let wache = match self.auslastung_belegen(&eintrag) {
+            Some(wache) => wache,
+            None => {
+                let text = format!(
+                    "Ausgelastet: höchstens {} Aufrufe gleichzeitig, je Eintrag {} – bitte später erneut",
+                    Auslastung::GESAMT_MAX,
+                    Auslastung::EINTRAG_MAX
+                );
+                self.aufzeichnen(Aufzeichnung {
+                    eintrag: &eintrag,
+                    tool: &name,
+                    agent: &agent,
+                    dauer: beginn.elapsed(),
+                    status: Status::Abgelehnt,
+                    fehler: Some(&text),
+                    argumente: request.arguments.as_ref(),
+                    antwort: None,
+                });
+                return Err(McpError::internal_error(text, None));
+            }
+        };
         let mut anfrage = CallToolRequestParams::new(werkzeug);
         anfrage.arguments = request.arguments.clone();
-        match peer.call_tool(anfrage).await {
+        let frist = self.innen.aufruf_frist(&eintrag);
+        let abbruch = context.ct.clone();
+        let ergebnis = crate::laufzeit::aufruf(
+            &peer,
+            anfrage,
+            frist,
+            crate::laufzeit::AUFRUF_FRIST_MAX,
+            async move { abbruch.cancelled().await },
+        )
+        .await;
+        drop(wache);
+        match ergebnis {
             Ok(ergebnis) => {
+                let groesse = antwort_groesse(&ergebnis);
+                if groesse > ANTWORT_BYTES {
+                    let text = format!(
+                        "Die Antwort von {name} ist zu groß ({groesse} Byte, erlaubt sind {ANTWORT_BYTES}). \
+                         Bitte die Menge einschränken."
+                    );
+                    self.aufzeichnen(Aufzeichnung {
+                        eintrag: &eintrag,
+                        tool: &name,
+                        agent: &agent,
+                        dauer: beginn.elapsed(),
+                        status: Status::Fehler,
+                        fehler: Some(&text),
+                        argumente: request.arguments.as_ref(),
+                        antwort: None,
+                    });
+                    return Err(McpError::internal_error(text, None));
+                }
                 let text = antwort_text(&ergebnis);
                 self.aufzeichnen(Aufzeichnung {
                     eintrag: &eintrag,
@@ -551,7 +847,7 @@ mod tests {
             "seit": "2026-01-02T03:04:05Z",
             "anzahl": 5
         });
-        let filter = filter_aus(argumente.as_object());
+        let filter = filter_aus(argumente.as_object(), Some("pi".to_string()));
         assert_eq!(filter.eintrag, Some(EintragId::neu("echo")));
         assert_eq!(filter.tool.as_deref(), Some("echo__echo"));
         assert_eq!(filter.agent.as_deref(), Some("pi"));
@@ -561,13 +857,16 @@ mod tests {
 
         // Ohne Angaben: die letzten 50.
         assert_eq!(
-            filter_aus(None).anzahl,
+            filter_aus(None, None).anzahl,
             Some(PROTOKOLL_STANDARD),
             "Standard sind die letzten 50"
         );
         // Mehr als 200 gibt es nicht.
         let zuviel = json!({ "anzahl": 5000 });
-        assert_eq!(filter_aus(zuviel.as_object()).anzahl, Some(PROTOKOLL_MAX));
+        assert_eq!(
+            filter_aus(zuviel.as_object(), None).anzahl,
+            Some(PROTOKOLL_MAX)
+        );
     }
 
     #[test]
@@ -629,7 +928,7 @@ mod tests {
             std::time::SystemTime::now()
         ));
         let protokoll = Protokoll::neu(&ordner);
-        let ergebnis = log_lesen(&protokoll, Some(&JsonObject::new()), true);
+        let ergebnis = log_lesen(&protokoll, Some(&JsonObject::new()), true, Some("pi"));
         let text = antwort_text(&ergebnis);
         assert!(text.contains("eintrag"), "{text}");
         assert_eq!(ergebnis.is_error, Some(true));

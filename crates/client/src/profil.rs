@@ -10,7 +10,7 @@
 //! Geheimnisse stehen **nicht** hier, sondern im [`Tresor`](crate::Tresor).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use quiver_domain::{Geraet, Soll, Werte};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,10 @@ pub struct Profil {
     /// Dateien lesbar.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub am_geraet_aus: BTreeSet<String>,
+    /// Frist je Werkzeugaufruf in Sekunden, je Eintrag (Paket 3). Fehlt ein
+    /// Eintrag, gelten 120 s; erlaubt sind 1–900 s.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aufruf_fristen: BTreeMap<String, u64>,
 }
 
 /// Nur schreiben, wenn der Schalter an ist.
@@ -66,21 +70,45 @@ fn is_false(wert: &bool) -> bool {
 }
 
 impl Profil {
-    /// Datei lesen; fehlt sie, ist der Stand leer.
-    pub fn laden(ordner: &Path) -> anyhow::Result<Self> {
+    /// Wie [`Profil::laden`], aber mit dem Grund, warum ein vorhandener Stand
+    /// nicht gelesen werden konnte. Der Client startet trotzdem – und sagt es
+    /// im Fenster. Die kaputte Datei bleibt unter `.kaputt-<zeit>` erhalten
+    /// und wird **nicht** stillschweigend durch einen leeren Stand ersetzt.
+    pub fn laden_mit_hinweis(ordner: &Path) -> (Self, Option<String>) {
         let pfad = ordner.join("zustand.json");
-        match std::fs::read_to_string(&pfad) {
-            Ok(text) => match serde_json::from_str(&text) {
-                Ok(profil) => Ok(profil),
-                Err(fehler) => {
-                    // Nicht scheitern: ein kaputter Stand darf den Client nicht
-                    // am Starten hindern. Wir fangen mit einem leeren Stand an.
-                    tracing::warn!("{pfad:?} ist unlesbar, fange leer an: {fehler}");
-                    Ok(Self::default())
-                }
-            },
-            Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(fehler) => Err(fehler.into()),
+        let text = match std::fs::read_to_string(&pfad) {
+            Ok(text) => text,
+            Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => {
+                return (Self::default(), None)
+            }
+            Err(fehler) => {
+                return (
+                    Self::default(),
+                    Some(format!("Der gespeicherte Stand ist nicht lesbar: {fehler}")),
+                )
+            }
+        };
+        match serde_json::from_str(&text) {
+            Ok(profil) => (profil, None),
+            Err(fehler) => {
+                // Beiseitelegen statt überschreiben: die alte Datei bleibt
+                // lesbar, und der nächste Speichervorgang beginnt auf einem
+                // leeren Blatt.
+                let ziel = kaputt_pfad(&pfad);
+                let hinweis = match std::fs::rename(&pfad, &ziel) {
+                    Ok(()) => format!(
+                        "Der gespeicherte Stand war nicht lesbar und liegt als {} daneben",
+                        ziel.file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    ),
+                    Err(rename) => format!(
+                        "Der gespeicherte Stand ist nicht lesbar ({fehler}); er ließ sich nicht beiseitelegen: {rename}"
+                    ),
+                };
+                tracing::warn!("{hinweis}");
+                (Self::default(), Some(hinweis))
+            }
         }
     }
 
@@ -95,23 +123,68 @@ impl Profil {
     }
 }
 
+/// `zustand.json.kaputt-20260102T030405Z`.
+fn kaputt_pfad(pfad: &Path) -> PathBuf {
+    let mut name = pfad.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".kaputt-{}", stempel()));
+    pfad.with_file_name(name)
+}
+
+/// Ein Zeitstempel für Dateinamen.
+fn stempel() -> String {
+    let sekunden = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|dauer| dauer.as_secs())
+        .unwrap_or_default();
+    let tage = i64::try_from(sekunden / 86_400).unwrap_or_default();
+    let rest = sekunden % 86_400;
+    let (jahr, monat, tag) = zivil(tage);
+    format!(
+        "{jahr:04}{monat:02}{tag:02}T{:02}{:02}{:02}Z",
+        rest / 3600,
+        (rest % 3600) / 60,
+        rest % 60
+    )
+}
+
+/// Tage seit 1970 → Jahr, Monat, Tag (Howard Hinnant).
+fn zivil(tage: i64) -> (i64, u32, u32) {
+    let z = tage + 719_468;
+    let aera = z.div_euclid(146_097);
+    let jahreszeit = z.rem_euclid(146_097);
+    let jahr_des_zeitalters =
+        (jahreszeit - jahreszeit / 1_460 + jahreszeit / 36_524 - jahreszeit / 146_096) / 365;
+    let jahr = jahr_des_zeitalters + aera * 400;
+    let tag_des_jahres = jahreszeit
+        - (365 * jahr_des_zeitalters + jahr_des_zeitalters / 4 - jahr_des_zeitalters / 100);
+    let monatsteil = (5 * tag_des_jahres + 2) / 153;
+    let tag = u32::try_from(tag_des_jahres - (153 * monatsteil + 2) / 5 + 1).unwrap_or_default();
+    let monat = u32::try_from(if monatsteil < 10 {
+        monatsteil + 3
+    } else {
+        monatsteil - 9
+    })
+    .unwrap_or_default();
+    (jahr + i64::from(monat <= 2), monat, tag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn ordner() -> PathBuf {
-        // Der Zeitstempel allein reicht nicht: die Uhr dieses Systems tickt in
-        // Mikrosekunden, und Tests, die gleichzeitig starten, bekommen denselben
-        // Wert. Ein Zähler macht den Namen eindeutig.
-        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        // Zähler **und** Zeitstempel: zwei Tests im selben Prozess dürfen sich
+        // niemals denselben Ordner teilen – sonst löscht einer dem anderen die
+        // Dateien unter den Händen weg.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static ZAEHLER: AtomicUsize = AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, Ordering::SeqCst);
         let stempel = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
-        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pfad = std::env::temp_dir().join(format!(
-            "quiver-client-profil-{}-{stempel}-{nummer}",
+            "quiver-client-profil-{}-{nummer}-{stempel}",
             std::process::id()
         ));
         std::fs::create_dir_all(&pfad).expect("Ordner");
@@ -121,7 +194,8 @@ mod tests {
     #[test]
     fn rundlauf() {
         let ordner = ordner();
-        let mut profil = Profil::laden(&ordner).expect("leer lesbar");
+        let (mut profil, hinweis) = Profil::laden_mit_hinweis(&ordner);
+        assert_eq!(hinweis, None, "ein leerer Ordner ist kein Fehler");
         assert_eq!(profil.server_url, None);
         profil.server_url = Some("http://127.0.0.1:8080".into());
         profil.benutzer = Some("test@example.test".into());
@@ -145,7 +219,8 @@ mod tests {
         profil.am_geraet_aus.insert("graph".into());
         profil.speichern(&ordner).expect("schreibbar");
 
-        let zurueck = Profil::laden(&ordner).expect("lesbar");
+        let (zurueck, hinweis) = Profil::laden_mit_hinweis(&ordner);
+        assert_eq!(hinweis, None, "ein lesbarer Stand meldet nichts");
         assert_eq!(zurueck.server_url, profil.server_url);
         assert_eq!(zurueck.benutzer, profil.benutzer);
         assert_eq!(zurueck.lokale_werte, profil.lokale_werte);
@@ -169,7 +244,8 @@ mod tests {
             r#"{"server_url":"http://127.0.0.1:8080","protokoll_fuer_agenten":true}"#,
         )
         .expect("schreibbar");
-        let profil = Profil::laden(&ordner).expect("lesbar");
+        let (profil, hinweis) = Profil::laden_mit_hinweis(&ordner);
+        assert_eq!(hinweis, None);
         assert_eq!(profil.server_url.as_deref(), Some("http://127.0.0.1:8080"));
         assert!(profil.am_geraet_aus.is_empty(), "nichts ist abgeschaltet");
         std::fs::remove_dir_all(&ordner).ok();
@@ -179,8 +255,71 @@ mod tests {
     fn kaputte_datei_stoppt_den_start_nicht() {
         let ordner = ordner();
         std::fs::write(ordner.join("zustand.json"), "kein json").expect("schreibbar");
-        let profil = Profil::laden(&ordner).expect("wird nicht zum Fehler");
+        let (profil, hinweis) = Profil::laden_mit_hinweis(&ordner);
+        let hinweis = hinweis.expect("der Grund steht im Hinweis");
+        assert!(hinweis.contains("nicht lesbar"), "{hinweis}");
         assert_eq!(profil.server_url, None);
+        std::fs::remove_dir_all(&ordner).ok();
+    }
+
+    // ---------------------------------------------------------- Paket 3
+
+    /// Der Zwischenname trägt PID **und** Zufall: zwei Aufgaben im selben
+    /// Prozess dürfen nie dieselbe Zwischendatei nutzen.
+    #[test]
+    fn der_zwischenname_hat_pid_und_zufall() {
+        let ziel = PathBuf::from("/tmp/zustand.json");
+        let a = crate::rechte::zwischenpfad(&ziel);
+        let b = crate::rechte::zwischenpfad(&ziel);
+        assert_ne!(a, b, "zwei Namen sind verschieden");
+        let name = a.file_name().unwrap().to_string_lossy().to_string();
+        assert!(
+            name.starts_with(&format!("zustand.json.{}.", std::process::id())),
+            "{name}"
+        );
+        assert!(name.ends_with(".neu"), "{name}");
+    }
+
+    /// Eine kaputte Datei wird beiseitegelegt (`.kaputt-<zeit>`) und **nicht**
+    /// stillschweigend durch einen leeren Stand ersetzt.
+    #[test]
+    fn eine_kaputte_datei_bleibt_als_kaputt_liegen() {
+        let ordner = ordner();
+        std::fs::write(ordner.join("zustand.json"), "kein json").expect("schreibbar");
+        let (profil, hinweis) = Profil::laden_mit_hinweis(&ordner);
+        let hinweis = hinweis.expect("Hinweis");
+        assert!(hinweis.contains("nicht lesbar"), "{hinweis}");
+        assert_eq!(profil.server_url, None);
+        assert!(
+            !ordner.join("zustand.json").exists(),
+            "die kaputte Datei steht nicht mehr im Weg"
+        );
+        let kaputt: Vec<_> = std::fs::read_dir(&ordner)
+            .unwrap()
+            .flatten()
+            .map(|eintrag| eintrag.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("zustand.json.kaputt-"))
+            .collect();
+        assert_eq!(kaputt.len(), 1, "{kaputt:?}");
+        assert_eq!(
+            std::fs::read_to_string(ordner.join(&kaputt[0])).unwrap(),
+            "kein json",
+            "der Inhalt bleibt erhalten"
+        );
+        std::fs::remove_dir_all(&ordner).ok();
+    }
+
+    /// Die Fristen je Aufruf stehen im Profil (Paket 3) und überleben einen
+    /// Neustart.
+    #[test]
+    fn aufruf_fristen_stehen_im_profil() {
+        let ordner = ordner();
+        let mut profil = Profil::default();
+        profil.aufruf_fristen.insert("echo".into(), 300);
+        profil.speichern(&ordner).expect("schreibbar");
+        let (zurueck, hinweis) = Profil::laden_mit_hinweis(&ordner);
+        assert_eq!(hinweis, None);
+        assert_eq!(zurueck.aufruf_fristen.get("echo"), Some(&300));
         std::fs::remove_dir_all(&ordner).ok();
     }
 }

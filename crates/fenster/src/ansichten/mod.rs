@@ -36,18 +36,35 @@ pub fn leer_mitte(ui: &mut egui::Ui, sicht: &Sicht, titel: &str, erklaerung: &st
 }
 
 /// Der Hinweis des Kerns (Fehler, Rückmeldung), oben auf jeder Seite.
-pub fn hinweis(ui: &mut egui::Ui, sicht: &Sicht) {
-    let Some(text) = &sicht.hinweis else {
+///
+/// Ist der Tresor nicht lesbar (Paket 3), steht daneben „Neu beginnen“: der
+/// Weg heraus führt über eine Rückfrage, nie über ein stilles Überschreiben.
+pub fn hinweis(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<crate::app::Aktion>) {
+    let Some(text) = sicht.hinweis.clone() else {
         return;
     };
-    let f = sicht.thema.farben();
-    bausteine::kasten(ui, f, |ui| {
+    let f = *sicht.thema.farben();
+    let sprache = sicht.sprache;
+    let tresor_kaputt = sicht.modell.tresor_fehler.is_some();
+    bausteine::kasten(ui, &f, |ui| {
         ui.horizontal(|ui| {
-            bausteine::icon(ui, f, Icon::Hinweis, Ton::Fehler);
-            ui.add(egui::Label::new(bausteine::text(f, text, Ton::Fehler)).wrap());
+            bausteine::icon(ui, &f, Icon::Hinweis, Ton::Fehler);
+            ui.add(egui::Label::new(bausteine::text(&f, &text, Ton::Fehler)).wrap());
+            if tresor_kaputt
+                && bausteine::knopf(
+                    ui,
+                    &f,
+                    Icon::Neuladen,
+                    &crate::texte::t(sprache, "tresor.neu_beginnen"),
+                )
+                .clicked()
+            {
+                sicht.dialog = crate::modell::Dialog::TresorNeuBeginnen;
+            }
         });
     });
     ui.add_space(crate::thema::SPACE_4);
+    let _ = aktionen;
 }
 
 /// Das Ergebnis der letzten Aktion (Export oder Import, Aufgabe 15), oben auf

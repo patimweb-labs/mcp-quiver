@@ -18,7 +18,8 @@
 use quiver_domain::{EintragId, SollEintrag, Werte};
 use serde::{Deserialize, Serialize};
 
-use crate::anmeldung::{befehl_aus_liste, befehl_laufen, Ausgang, Befehl};
+use crate::anmeldung::{befehl_aus_liste, befehl_laufen, Ausgang, Befehl, EINRICHT_FRIST};
+use crate::hilfen::Abbruch;
 
 /// Wie es um die Einrichtung eines Eintrags steht. Nur für das Fenster; der
 /// Server bekommt sie nie zu sehen. `None` im [`crate::EintragSicht`] heißt:
@@ -64,10 +65,17 @@ pub fn befehl_bauen(soll: &SollEintrag, lokal: &Werte, geheim: &Werte) -> anyhow
 
 /// Die Einrichtung eines Eintrags starten und auf ihr Ende warten.
 ///
-/// **Ohne Frist:** der Befehl öffnet die Seite im Browser und endet, wenn der
-/// User sie abschließt (Exit 0) oder abbricht (Exit 1).
-pub async fn laufen(id: &EintragId, befehl: &Befehl) -> anyhow::Result<Ausgang> {
-    befehl_laufen(id, befehl, None).await
+/// Der Befehl öffnet die Seite im Browser und endet, wenn der User sie
+/// abschließt (Exit 0) oder abbricht (Exit 1). Er hat zwei Grenzen
+/// (Paket 3): eine Frist von [`EINRICHT_FRIST`] und das Abbruchsignal des
+/// Fensters – „Abbrechen“ beendet den Prozess sofort, statt ihn stehen zu
+/// lassen.
+pub async fn laufen(
+    id: &EintragId,
+    befehl: &Befehl,
+    abbruch: Option<Abbruch>,
+) -> anyhow::Result<Ausgang> {
+    befehl_laufen(id, befehl, Some(EINRICHT_FRIST), abbruch).await
 }
 
 /// Was aus dem Ausgang eines Einrichtungs-Befehls folgt.
@@ -97,7 +105,6 @@ pub fn ergebnis_aus(ausgang: &Ausgang) -> Ergebnis {
         },
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

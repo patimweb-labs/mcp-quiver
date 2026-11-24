@@ -656,8 +656,8 @@
     "en": "Log"
   },
   "protokoll.sub": {
-    "de": "Aufrufe der Agenten und Ausgaben der Tools.",
-    "en": "Agent calls and tool output."
+    "de": "Aufrufe der Agenten und Ausgaben der Tools – je Agent nur die eigenen.",
+    "en": "Agent calls and tool output – each agent sees only its own."
   },
   "protokoll.reiter.aufrufe": {
     "de": "Aufrufe",
@@ -816,8 +816,8 @@
     "en": "Log"
   },
   "agenten.protokoll_sub": {
-    "de": "Was Agenten von den Aufrufen und Tool-Logs sehen dürfen.",
-    "en": "What agents may see of the calls and tool logs."
+    "de": "Agenten sehen nur ihre eigenen Aufrufe; Tool-Logs nur von Einträgen, die sie selbst benutzt haben. Ohne diesen Schalter gibt es nur Metadaten.",
+    "en": "Agents see only their own calls; tool logs only for entries they have used themselves. Without this switch there are metadata only."
   },
   "agenten.protokoll_haken": {
     "de": "Agenten dürfen Inhalte im Protokoll sehen",
@@ -1014,5 +1014,33 @@
   "verbindung.im_browser": {
     "de": "Anmeldung im Browser für {}",
     "en": "Signing in via browser for {}"
+  },
+  "tresor.nicht_lesbar": {
+    "de": "Tresor nicht lesbar:",
+    "en": "Vault not readable:"
+  },
+  "tresor.neu_beginnen": {
+    "de": "Neu beginnen",
+    "en": "Start over"
+  },
+  "tresor.neu_beginnen_titel": {
+    "de": "Tresor neu beginnen",
+    "en": "Start the vault over"
+  },
+  "tresor.neu_beginnen_text": {
+    "de": "Der Tresor lässt sich nicht lesen; an den Dateien wurde nichts geändert. Hast du eine Sicherung, spiele sie zurück und starte quiver neu. Mit „Neu beginnen“ entsteht ein leerer Tresor – alle hinterlegten Geheimnisse müssen dann neu eingegeben werden. Die alten Dateien bleiben als .kaputt-<zeit> liegen.",
+    "en": "The vault cannot be read; its files were left untouched. If you have a backup, restore it and restart quiver. “Start over” creates an empty vault – every stored secret then has to be entered again. The old files stay as .kaputt-<time>."
+  },
+  "tools.kennung_unbrauchbar": {
+    "de": "Diese Kennung taugt nicht als Werkzeug-Präfix: {}. Der Eintrag startet deshalb nicht – bitte in der Verwaltung ändern.",
+    "en": "This ID cannot be used as a tool prefix: {}. The entry therefore does not start – please change it in the administration."
+  },
+  "einrichtung.abbrechen": {
+    "de": "Abbrechen",
+    "en": "Cancel"
+  },
+  "agenten.token_hinweis": {
+    "de": "Die Befehle lesen das Token verdeckt ein (read -s): es steht nie als Argument in der Prozessliste oder in der Shell-Historie. Alternativ lässt es sich in einer Datei ablegen, die nur Sie lesen können (chmod 600), und mit $(cat …) einsetzen. Die Zwischenablage wird nach 60 Sekunden geleert, solange sie noch diesen Wert enthält.",
+    "en": "The commands read the token silently (read -s): it never appears as an argument in the process list or shell history. Alternatively, store it in a file only you can read (chmod 600) and use $(cat …). The clipboard is cleared after 60 seconds as long as it still holds this value."
   }
 }

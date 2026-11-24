@@ -8,7 +8,13 @@
 //! sind Kommentare (Keep-Alive) und werden übergangen.
 //!
 //! Der Leser nimmt beliebig zerteilte Stücke an, weil ein HTTP-Rumpf an jeder
-//! Byte-Grenze ankommen darf.
+//! Byte-Grenze ankommen darf. Eine Zeile darf höchstens [`ZEILE_MAX`] Byte
+//! lang sein: ein Server, der eine riesige Zeile ohne Zeilenende schickt, soll
+//! den Speicher des Clients nicht füllen. Längere Zeilen werden verworfen und
+//! gezählt.
+
+/// So lang darf eine Zeile eines Ereignis-Stroms höchstens sein.
+pub const ZEILE_MAX: usize = 64 * 1024;
 
 /// Ein Ereignis aus dem Strom.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,9 +30,18 @@ pub struct Leser {
     puffer: String,
     name: String,
     daten: Vec<String>,
+    /// Wie viele Zeilen die Längengrenze überschritten haben.
+    verworfen: u64,
+    /// Wird die zu lange Zeile gerade verworfen (bis zum Zeilenende)?
+    im_verwerfen: bool,
 }
 
 impl Leser {
+    /// Wie viele Zeilen die Längengrenze überschritten haben.
+    pub fn verworfene_zeilen(&self) -> u64 {
+        self.verworfen
+    }
+
     /// Ein Stück Text einspeisen; gibt die Ereignisse zurück, die damit fertig sind.
     pub fn schieben(&mut self, stueck: &str) -> Vec<Ereignis> {
         self.puffer.push_str(stueck);
@@ -34,10 +49,26 @@ impl Leser {
         while let Some(ende) = self.puffer.find('\n') {
             let mut zeile = self.puffer[..ende].to_string();
             self.puffer.drain(..=ende);
+            if self.im_verwerfen {
+                // Der Rest einer zu langen Zeile: bis zum Zeilenende vergessen.
+                self.im_verwerfen = false;
+                continue;
+            }
+            if zeile.len() > ZEILE_MAX {
+                // Eine Zeile, die in einem Stück kam und zu lang ist.
+                self.verworfen = self.verworfen.saturating_add(1);
+                continue;
+            }
             if zeile.ends_with('\r') {
                 zeile.pop();
             }
             self.zeile(&zeile, &mut fertig);
+        }
+        if self.puffer.len() > ZEILE_MAX {
+            // Kein Zeilenende in Sicht: wegwerfen, nicht weiter sammeln.
+            self.puffer.clear();
+            self.im_verwerfen = true;
+            self.verworfen = self.verworfen.saturating_add(1);
         }
         fertig
     }
@@ -143,5 +174,30 @@ mod tests {
         let fertig = leser.schieben("data: x\n\n");
         assert_eq!(fertig.len(), 1);
         assert_eq!(fertig[0].name, "message");
+    }
+
+    /// Eine Zeile über 64 KB wird verworfen und gezählt – der Speicher wächst
+    /// nicht mit (Paket 3).
+    #[test]
+    fn eine_zu_lange_zeile_wird_verworfen() {
+        let mut leser = Leser::default();
+        let lang = format!("data: {}\n\n", "x".repeat(ZEILE_MAX + 100));
+        assert!(leser.schieben(&lang).is_empty(), "kein Ereignis");
+        assert_eq!(leser.verworfene_zeilen(), 1);
+        // Danach wieder normale Ereignisse.
+        let fertig = leser.schieben("event: soll\ndata: r\n\n");
+        assert_eq!(fertig.len(), 1);
+        assert_eq!(fertig[0].daten, "r");
+    }
+
+    /// Auch in vielen kleinen Stücken wächst der Puffer nicht über die Grenze.
+    #[test]
+    fn der_puffer_waechst_nicht_ueber_die_grenze() {
+        let mut leser = Leser::default();
+        let stueck = "y".repeat(1024);
+        for _ in 0..(ZEILE_MAX / 1024 + 2) {
+            assert!(leser.schieben(&stueck).is_empty());
+        }
+        assert_eq!(leser.verworfene_zeilen(), 1);
     }
 }

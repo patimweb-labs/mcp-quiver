@@ -34,10 +34,10 @@ fn main() -> anyhow::Result<()> {
     if argumente.kopflos {
         return kopflos(konfig);
     }
-    // Nur eine Instanz je Gerät: Läuft schon eine, zeigt sie ihr Fenster und
-    // dieser Start endet. Der Kern bliebe sonst am belegten Port hängen.
-    let fensteradresse = instanz::adresse(konfig.mcp_adresse);
-    if instanz::zeigen_anfordern(fensteradresse).is_ok() {
+    // Nur eine Instanz je Profil (Paket 3): Läuft schon eine, zeigt sie ihr
+    // Fenster und dieser Start endet. Erkannt wird sie an der Sperrdatei im
+    // Profil; der Port darin ist nur zum Zeigen da.
+    if instanz::zeigen_anfordern(&konfig.profil).is_ok() {
         EndeGrund::ZweiteInstanz.protokollieren();
         return Ok(());
     }
@@ -102,16 +102,16 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
     // einer zweiten Instanz, das Fenster zu zeigen.
     let (befehl_sender, befehl_empfaenger) = mpsc::channel();
     let zustand = TrayZustand::neu(befehl_sender);
-    let waechter =
-        match instanz::Waechter::belegen(instanz::adresse(konfig.mcp_adresse), zustand.clone()) {
-            Ok(waechter) => Some(waechter),
-            Err(fehler) => {
-                // Der Port ist besetzt, antwortet aber nicht — dann läuft keine
-                // Instanz, die das Fenster zeigen könnte; quiver startet trotzdem.
-                tracing::warn!("kein Wächter für die zweite Instanz: {fehler}");
-                None
-            }
-        };
+    let waechter = match instanz::Waechter::belegen(&konfig.profil, zustand.clone()) {
+        Ok(waechter) => Some(waechter),
+        Err(fehler) => {
+            // Die Sperrdatei ist besetzt, antwortet aber nicht — dann läuft
+            // keine Instanz, die das Fenster zeigen könnte; quiver startet
+            // trotzdem.
+            tracing::warn!("kein Wächter für die zweite Instanz: {fehler}");
+            None
+        }
+    };
     // Der Wächter lebt bis zum Ende von `fenster()`; sein Faden horcht im
     // Hintergrund weiter auf „Fenster zeigen".
     if let Some(waechter) = &waechter {

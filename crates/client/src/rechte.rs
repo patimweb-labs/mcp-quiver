@@ -88,18 +88,35 @@ pub fn schreiben_atomar(pfad: &Path, inhalt: &[u8]) -> anyhow::Result<()> {
         datei.write_all(inhalt)?;
         datei.sync_all()?;
     }
-    std::fs::rename(&zwischen, pfad)?;
+    if let Err(fehler) = std::fs::rename(&zwischen, pfad) {
+        let _ = std::fs::remove_file(&zwischen);
+        return Err(fehler.into());
+    }
     setze_rechte(pfad, DATEI);
+    // Ohne `fsync` auf den Ordner kann der neue Name nach einem Stromausfall
+    // fehlen.
+    if let Some(ordner) = pfad.parent() {
+        if let Ok(ordner) = std::fs::File::open(ordner) {
+            let _ = ordner.sync_all();
+        }
+    }
     Ok(())
 }
 
-/// Ein Nebenname für die Zwischendatei: `<ziel>.<pid>.neu`.
-///
-/// Mit `create_new` belegt: liegt der Name schon, gibt es einen Fehler statt
-/// eines überschriebenen fremden Inhalts.
-fn zwischenpfad(ziel: &Path) -> PathBuf {
+/// Der Zwischenname: `<ziel>.<pid>.<zufall>.neu`. PID **und** Zufall: zwei
+/// Aufgaben im selben Prozess nutzen nie dieselbe Datei, und was nach einem
+/// Absturz liegen blieb, blockiert kein späteres Schreiben. Mit `create_new`
+/// belegt, damit nie ein fremder Inhalt überschrieben wird.
+pub(crate) fn zwischenpfad(ziel: &Path) -> PathBuf {
+    use rand::RngCore;
+    let mut zufall = [0u8; 8];
+    rand::rng().fill_bytes(&mut zufall);
     let mut name = ziel.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.neu", std::process::id()));
+    name.push(format!(
+        ".{}.{}.neu",
+        std::process::id(),
+        hex::encode(zufall)
+    ));
     ziel.with_file_name(name)
 }
 
