@@ -37,6 +37,24 @@ pub trait KernZugang {
     }
     /// Alles anhalten (Fenster zu, Strg+C). Standard: nichts zu tun.
     fn beenden(&self) {}
+    /// Die Aufrufe im Protokoll, die zum Filter passen (Aufgabe 17).
+    /// Standard: keine — die Attrappen der Oberflächentests liefern ihre
+    /// eigene Liste.
+    fn protokoll(&self, _filter: &quiver_client::protokoll::Filter) -> Vec<quiver_client::Aufruf> {
+        Vec::new()
+    }
+    /// Die Prozesszeilen eines Eintrags.
+    fn prozess_log(
+        &self,
+        _eintrag: &EintragId,
+        _filter: &quiver_client::protokoll::LogFilter,
+    ) -> Vec<quiver_client::Zeile> {
+        Vec::new()
+    }
+    /// Der Stand des Protokollzählers — ändert er sich, lädt das Fenster neu.
+    fn protokoll_stand(&self) -> u64 {
+        0
+    }
 }
 
 /// Eine Anweisung des Fensters an den Kern.
@@ -100,6 +118,11 @@ pub enum Aktion {
         pfad: PathBuf,
         passwort: Option<String>,
     },
+    /// Das Protokoll leeren — Speicher und Dateien (Aufgabe 17).
+    ProtokollLeeren,
+    /// Dürfen Agenten Inhalte im Protokoll sehen? Wird in `zustand.json`
+    /// gespeichert (Aufgabe 17).
+    ProtokollFuerAgenten { an: bool },
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -116,6 +139,7 @@ pub fn render(ui: &mut egui::Ui, sicht: &mut Sicht) -> Vec<Aktion> {
             Seite::Verbindung => ansichten::verbindung::zeigen(ui, sicht, &mut aktionen),
             Seite::Tools => ansichten::tools::zeigen(ui, sicht, &mut aktionen),
             Seite::Agenten => ansichten::agenten::zeigen(ui, sicht, &mut aktionen),
+            Seite::Protokoll => ansichten::protokoll::zeigen(ui, sicht, &mut aktionen),
         });
     ansichten::dialog::zeigen(ui.ctx(), sicht, &mut aktionen);
     aktionen
@@ -226,12 +250,52 @@ impl<K: KernZugang> Fenster<K> {
         }
     }
 
+    /// Die Protokollseite holt ihre Zeilen beim Kern (Aufgabe 17) — nur dort,
+    /// nur wenn sie offen ist und nur, wenn sich Zähler oder Filter geändert
+    /// haben. Hat der User gescrollt, bleibt die Liste stehen.
+    fn protokoll_nachladen(&mut self) {
+        if self.sicht.seite != Seite::Protokoll {
+            return;
+        }
+        let filter = crate::logik::protokoll_filter(&self.sicht.protokoll_eingaben);
+        let stand = self.kern.protokoll_stand();
+        let filter_neu = self.sicht.protokoll_gefiltert.as_ref() != Some(&filter);
+        let daten_neu = stand != self.sicht.protokoll_stand;
+        if filter_neu {
+            // Ein neuer Filter beginnt oben — die alte Scrollposition gilt nicht.
+            self.sicht.protokoll_gescrollt = false;
+        }
+        if filter_neu || (daten_neu && !self.sicht.protokoll_gescrollt) {
+            self.sicht.aufrufe = self.kern.protokoll(&filter);
+            self.sicht.protokoll_stand = stand;
+            self.sicht.protokoll_gefiltert = Some(filter);
+        }
+
+        // Die Prozesszeilen: nur im Reiter „Tool-Logs“ und nur für den
+        // gewählten Eintrag.
+        if self.sicht.protokoll_reiter != crate::modell::ProtokollReiter::ToolLogs {
+            return;
+        }
+        let log_filter = crate::logik::log_filter(&self.sicht.protokoll_eingaben.suche);
+        let paar = (self.sicht.log_eintrag.clone(), log_filter);
+        if self.sicht.log_gefiltert.as_ref() == Some(&paar) && self.sicht.log_stand == stand {
+            return;
+        }
+        self.sicht.log_zeilen = match &paar.0 {
+            Some(eintrag) => self.kern.prozess_log(eintrag, &paar.1),
+            None => Vec::new(),
+        };
+        self.sicht.log_gefiltert = Some(paar);
+        self.sicht.log_stand = stand;
+    }
+
     /// Ein Bild: Modell holen, Meldungen einsammeln, zeichnen, Aktionen abgeben.
     pub fn bild(&mut self, ui: &mut egui::Ui) {
         self.sicht.modell_setzen(self.kern.modell());
         for meldung in self.kern.meldungen() {
             self.sicht.melden(meldung);
         }
+        self.protokoll_nachladen();
         // Theme und Sprache gehören ins Profil, nicht nur in den Speicher.
         let jetzt = self.sicht.einstellungen();
         if self.gemerkt.as_ref() != Some(&jetzt) {

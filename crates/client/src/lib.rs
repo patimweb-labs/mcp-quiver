@@ -37,6 +37,7 @@ mod endpunkt;
 mod hilfen;
 mod laufzeit;
 mod profil;
+pub mod protokoll;
 mod sse;
 mod tresor;
 
@@ -61,6 +62,7 @@ pub use anmeldung::AnmeldeZustand;
 pub use einrichtung::EinrichtZustand;
 pub use einstellungen::{Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung};
 use hilfen::Abbruch;
+pub use protokoll::{Aufruf, LogFilter, Zeile};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
@@ -197,6 +199,10 @@ pub struct Modell {
     /// alle Tools sind gestoppt, das Gerät muss neu eingebunden werden.
     #[serde(default)]
     pub abgelehnt: bool,
+    /// Dürfen Agenten Inhalte des Protokolls sehen (Aufgabe 17)? Standard:
+    /// aus – dann gibt es nur Metadaten.
+    #[serde(default)]
+    pub protokoll_fuer_agenten: bool,
 }
 
 /// Der Stand eines Eintrags, ohne Verbindung (der Teil, der ins Modell geht).
@@ -257,6 +263,8 @@ struct Stand {
     einrichtung: BTreeMap<EintragId, EinrichtZustand>,
     /// Einträge, deren Einrichtung gerade läuft (höchstens einer je Eintrag).
     einrichtung_laufend: BTreeSet<EintragId>,
+    /// Dürfen Agenten Inhalte des Protokolls sehen (Aufgabe 17)?
+    protokoll_fuer_agenten: bool,
     verbindung: Verbindung,
     endpunkt: String,
 }
@@ -293,6 +301,7 @@ impl Stand {
                 .collect(),
             endpunkt: self.endpunkt.clone(),
             abgelehnt: self.abgelehnt,
+            protokoll_fuer_agenten: self.protokoll_fuer_agenten,
         }
     }
 
@@ -312,6 +321,7 @@ impl Stand {
                 .collect(),
             agenten: self.agenten.clone(),
             soll: Some(self.soll.clone()),
+            protokoll_fuer_agenten: self.protokoll_fuer_agenten,
         }
     }
 }
@@ -578,6 +588,8 @@ pub(crate) struct Innen {
     pub(crate) ende: Abbruch,
     pub(crate) erneut: Notify,
     pub(crate) aufgaben: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Aufrufe und Prozesszeilen (Aufgabe 17).
+    pub(crate) protokoll: Arc<protokoll::Protokoll>,
 }
 
 impl Innen {
@@ -606,6 +618,24 @@ impl Innen {
         if let Err(fehler) = profil.speichern(&self.konfig.profil) {
             tracing::warn!("Zustand lässt sich nicht speichern: {fehler}");
         }
+        // Die Maske des Protokolls folgt dem Tresor (Aufgabe 17).
+        self.protokoll.geheimnisse_setzen(self.geheimnisse());
+    }
+
+    /// Alle Geheimwerte, die gerade im Speicher stehen – die Maske des
+    /// Protokolls ersetzt sie überall (Aufgabe 17).
+    fn geheimnisse(&self) -> Vec<String> {
+        let stand = self.stand();
+        let mut werte: Vec<String> = stand.token.iter().cloned().collect();
+        for liste in stand.geheim.values() {
+            werte.extend(liste.values().cloned());
+        }
+        for je_eintrag in stand.zugang_geheim.values() {
+            for liste in je_eintrag.values() {
+                werte.extend(liste.values().cloned());
+            }
+        }
+        werte
     }
 
     /// Die Verbindung setzen, aber nur melden, wenn sie sich wirklich ändert.
@@ -871,10 +901,16 @@ impl Innen {
         alle
     }
 
-    /// Der Agent zu einem Token – Vergleich über die Hashes in konstanter Zeit.
-    pub(crate) fn agent_fuer_token(&self, token: &str) -> Option<String> {
+    /// Der Agent (Kennung, Name) zu einem Token – Vergleich über die Hashes in
+    /// konstanter Zeit.
+    pub(crate) fn agent_fuer_token(&self, token: &str) -> Option<(String, String)> {
         let stand = self.stand();
-        agent_fuer(&stand.agenten, token)
+        let id = agent_fuer(&stand.agenten, token)?;
+        stand
+            .agenten
+            .iter()
+            .find(|agent| agent.id == id)
+            .map(|agent| (agent.id.clone(), agent.name.clone()))
     }
 
     /// Einen Eintrag anhalten und mit den aktuellen Werten neu starten.
@@ -1066,6 +1102,23 @@ async fn anmeldung_lauf(innen: Arc<Innen>) {
     }
 }
 
+/// Einmal täglich alte Protokolldateien löschen und die Größengrenze
+/// durchsetzen (Aufgabe 17).
+async fn protokoll_aufraeumen(innen: Arc<Innen>) {
+    let mut tag = protokoll::tag_heute();
+    loop {
+        tokio::select! {
+            _ = innen.ende.warten() => return,
+            _ = tokio::time::sleep(Duration::from_secs(60 * 60)) => {}
+        }
+        let heute = protokoll::tag_heute();
+        if heute != tag {
+            tag = heute;
+            innen.protokoll.aufraeumen();
+        }
+    }
+}
+
 /// Der Eintrag startet: Zustand merken und die Aufsicht starten.
 ///
 /// Je Eintrag gibt es genau **einen** Läufer und damit genau eine wirksame
@@ -1167,7 +1220,7 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
             _ = abbruch.warten() => return,
             ergebnis = tokio::time::timeout(
                 laufzeit::AUFBAU_TIMEOUT,
-                laufzeit::verbinden(id.als_str(), &laufzeit),
+                laufzeit::verbinden(id.als_str(), &laufzeit, &innen.protokoll),
             ) => ergebnis,
         };
         let mut verbindung = match verbunden {
@@ -1443,6 +1496,7 @@ impl Kern {
             anmeldung: BTreeMap::new(),
             einrichtung: BTreeMap::new(),
             einrichtung_laufend: BTreeSet::new(),
+            protokoll_fuer_agenten: gespeichert.protokoll_fuer_agenten,
             verbindung,
             endpunkt: endpunkt.clone(),
         };
@@ -1458,6 +1512,7 @@ impl Kern {
             erneut: Notify::new(),
             aufgaben: Mutex::new(Vec::new()),
             generation: AtomicU64::new(0),
+            protokoll: Arc::new(protokoll::Protokoll::neu(&konfig.profil)),
         });
 
         // Geheimnisse wieder aufnehmen. Der gespeicherte Soll-Zustand läuft
@@ -1465,6 +1520,7 @@ impl Kern {
         // Lauf angenommen hat (erster erfolgreicher Abgleich).
         let soll = innen.stand().soll.clone();
         innen.geheim_laden(&soll);
+        innen.protokoll.geheimnisse_setzen(innen.geheimnisse());
         innen.modell_schicken();
 
         let router = endpunkt::router(innen.clone());
@@ -1478,6 +1534,7 @@ impl Kern {
         });
         let abgleich = tokio::spawn(abgleich::lauf(innen.clone()));
         let status = tokio::spawn(anmeldung_lauf(innen.clone()));
+        let aufraeumen = tokio::spawn(protokoll_aufraeumen(innen.clone()));
         {
             let mut aufgaben = innen
                 .aufgaben
@@ -1486,6 +1543,7 @@ impl Kern {
             aufgaben.push(server);
             aufgaben.push(abgleich);
             aufgaben.push(status);
+            aufgaben.push(aufraeumen);
         }
 
         tracing::info!("MCP-Endpunkt für Agenten: {endpunkt}");
@@ -1495,6 +1553,55 @@ impl Kern {
     /// Das aktuelle Modell; ändert sich bei jedem Ereignis.
     pub fn modell(&self) -> watch::Receiver<Modell> {
         self.innen.modell.subscribe()
+    }
+
+    /// Die Aufrufe im Protokoll, die zum Filter passen – die neuesten zuerst
+    /// (Aufgabe 17). Das Modell bekommt bewusst keine Liste.
+    pub fn protokoll(&self, filter: &protokoll::Filter) -> Vec<protokoll::Aufruf> {
+        self.innen.protokoll.abfragen(filter)
+    }
+
+    /// Die Prozesszeilen eines Eintrags, die zum Filter passen.
+    pub fn prozess_log(
+        &self,
+        eintrag: &EintragId,
+        filter: &protokoll::LogFilter,
+    ) -> Vec<protokoll::Zeile> {
+        self.innen.protokoll.zeilen(eintrag, filter)
+    }
+
+    /// Der Zähler des Protokolls: steigt bei jedem neuen Eintrag. Das Fenster
+    /// lädt dann neu und zeichnet.
+    pub fn protokoll_zaehler(&self) -> watch::Receiver<u64> {
+        self.innen.protokoll.zaehler()
+    }
+
+    /// Der aktuelle Stand des Zählers.
+    pub fn protokoll_stand(&self) -> u64 {
+        self.innen.protokoll.stand()
+    }
+
+    /// Speicher und Dateien des Protokolls leeren.
+    pub fn protokoll_leeren(&self) -> anyhow::Result<()> {
+        self.innen.protokoll.leeren()
+    }
+
+    /// Dürfen Agenten Inhalte im Protokoll sehen (Aufgabe 17)?
+    pub fn protokoll_fuer_agenten(&self) -> bool {
+        self.innen.stand().protokoll_fuer_agenten
+    }
+
+    /// Den Schalter setzen; er landet in `zustand.json`.
+    pub async fn protokoll_fuer_agenten_setzen(&self, an: bool) {
+        {
+            let mut stand = self.innen.stand();
+            if stand.protokoll_fuer_agenten == an {
+                return;
+            }
+            stand.protokoll_fuer_agenten = an;
+        }
+        self.innen.speichern();
+        self.innen.modell_schicken();
     }
 
     /// Gerät beim Server einbinden (Einmal-Code aus der Admin-Oberfläche).

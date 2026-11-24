@@ -179,6 +179,32 @@ Environment (all optional):
 | `QUIVER_AUTOSTART_DIR` | Folder for the autostart file (macOS and Linux; tests and other sessions) |
 | `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the vault file (for trying things out without traces) |
 
+## Protocol and privacy
+
+The window's **Protocol** page lists every tool call an agent triggers (time,
+agent, entry, tool, duration, result) and, in the *Tool logs* tab, what the tool
+printed on stderr. A click on a row opens the details: arguments, error text
+and a preview of the response. Filters narrow by entry, tool, agent, period
+(last hour, today, 7 days) and errors only.
+
+Everything stays on the device: `<profil>/protokoll/aufrufe-YYYY-MM-DD.jsonl` and
+`prozesse-YYYY-MM-DD.jsonl`, file mode 0600, deleted after 7 days and never more
+than 50 MB in total. The server receives no calls.
+
+**Masked, always:** keys whose name contains `pass`, `token`, `secret`, `key`,
+`pat`, `auth` or `cookie` become `<verborgen>`, and every value from the vault
+is replaced — also as a substring, in arguments, preview, error text and tool
+log lines. Truncation: 200 characters per value, 4 KB of arguments, 500
+characters of preview, 2000 of error text.
+
+Agents can read the protocol themselves through two read-only tools,
+`quiver__protokoll` and `quiver__tool_log`. Both return **only metadata** until
+“Agents may see log contents” is switched on under *Agents* (stored in
+`zustand.json`); error texts stay masked either way, and calls to these two
+tools never appear in the protocol themselves.
+
+![Protocol page](docs/bilder/fenster-dark-protokoll.png)
+
 Same layout as the admin interface: header, navigation on the left, content as
 cards, three themes from the same tokens. The screenshots are produced by the UI
 test (with a stand-in core, no server and no runtime):

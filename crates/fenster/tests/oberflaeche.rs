@@ -14,6 +14,7 @@ use std::rc::Rc;
 
 use egui_kittest::kittest::{By, NodeT, Queryable};
 use egui_kittest::Harness;
+use quiver_client::protokoll::{Aufruf, Filter, LogFilter, Status, Zeile};
 use quiver_client::{
     AgentSicht, AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, Vorschau,
     VorschauArt, VorschauEintrag, Zusammenfassung,
@@ -31,6 +32,81 @@ use quiver_protocol::EintragZustand;
 const TOKEN: &str = "qvr_7c1f0b2e4d5a";
 const ENDPUNKT: &str = "http://127.0.0.1:8741/mcp";
 
+/// Drei Aufrufe, drei Ergebnisse — so viele, wie die Protokollseite
+/// unterscheiden muss (Aufgabe 17).
+fn beispiel_aufrufe() -> Vec<Aufruf> {
+    let zeit = quiver_client::protokoll::jetzt();
+    let aufruf = |eintrag: &str,
+                  tool: &str,
+                  agent: &str,
+                  status: Status,
+                  fehler: Option<&str>,
+                  argumente: &str,
+                  vorschau: &str| Aufruf {
+        zeit: zeit.clone(),
+        agent: agent.to_string(),
+        eintrag: EintragId::neu(eintrag),
+        tool: tool.to_string(),
+        dauer_ms: 12,
+        status,
+        fehler: fehler.map(str::to_string),
+        argumente: argumente.to_string(),
+        antwort_groesse: vorschau.chars().count(),
+        vorschau: vorschau.to_string(),
+    };
+    vec![
+        aufruf(
+            "echo",
+            "echo__echo",
+            "pi",
+            Status::Ok,
+            None,
+            r#"{"text":"hallo"}"#,
+            "hallo",
+        ),
+        aufruf(
+            "dateien",
+            "dateien__lesen",
+            "hermes",
+            Status::Fehler,
+            Some("Der Prozess wurde beendet"),
+            r#"{"pfad":"/tmp"}"#,
+            "",
+        ),
+        aufruf(
+            "graph",
+            "graph__kalender",
+            "pi",
+            Status::Abgelehnt,
+            Some("Werkzeug graph__kalender wird nicht angeboten"),
+            "{}",
+            "",
+        ),
+    ]
+}
+
+/// Zwei Prozesszeilen des Eintrags „Echo“.
+fn beispiel_log() -> Vec<Zeile> {
+    let zeit = quiver_client::protokoll::jetzt();
+    vec![
+        Zeile {
+            zeit: zeit.clone(),
+            eintrag: EintragId::neu("echo"),
+            text: "gestartet, Werkzeuge: echo, ping".into(),
+        },
+        Zeile {
+            zeit: zeit.clone(),
+            eintrag: EintragId::neu("echo"),
+            text: "Aufruf echo {\"text\":\"hallo\"}".into(),
+        },
+        Zeile {
+            zeit,
+            eintrag: EintragId::neu("dateien"),
+            text: "Dateien gestartet".into(),
+        },
+    ]
+}
+
 /// Der Kern im Test: merkt sich Aktionen, gibt ein festes Modell zurück.
 #[derive(Clone)]
 struct Attrappe {
@@ -41,6 +117,11 @@ struct Attrappe {
     /// Führt die Sicherung im Test Geheimnisse? Dann wartet der Import-Dialog
     /// auf ein Passwort (Aufgabe 15).
     sicherung_mit_geheimnissen: Rc<Cell<bool>>,
+    /// Die Aufrufe und Prozesszeilen, die der Kern im Test liefert
+    /// (Aufgabe 17).
+    aufrufe: Rc<RefCell<Vec<Aufruf>>>,
+    log_zeilen: Rc<RefCell<Vec<Zeile>>>,
+    zaehler: Rc<Cell<u64>>,
 }
 
 impl Attrappe {
@@ -51,6 +132,9 @@ impl Attrappe {
             meldungen: Rc::default(),
             beendet: Rc::default(),
             sicherung_mit_geheimnissen: Rc::default(),
+            aufrufe: Rc::new(RefCell::new(beispiel_aufrufe())),
+            log_zeilen: Rc::new(RefCell::new(beispiel_log())),
+            zaehler: Rc::new(Cell::new(1)),
         }
     }
 }
@@ -99,6 +183,30 @@ impl KernZugang for Attrappe {
 
     fn beenden(&self) {
         self.beendet.set(true);
+    }
+
+    fn protokoll(&self, filter: &Filter) -> Vec<Aufruf> {
+        self.aufrufe
+            .borrow()
+            .iter()
+            .rev()
+            .filter(|aufruf| filter.passt(aufruf))
+            .cloned()
+            .collect()
+    }
+
+    fn prozess_log(&self, eintrag: &quiver_domain::EintragId, filter: &LogFilter) -> Vec<Zeile> {
+        self.log_zeilen
+            .borrow()
+            .iter()
+            .rev()
+            .filter(|zeile| &zeile.eintrag == eintrag && filter.passt(zeile))
+            .cloned()
+            .collect()
+    }
+
+    fn protokoll_stand(&self) -> u64 {
+        self.zaehler.get()
     }
 }
 
@@ -291,6 +399,7 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         }],
         endpunkt: ENDPUNKT.to_string(),
         abgelehnt: false,
+        protokoll_fuer_agenten: false,
     }
 }
 
@@ -1359,6 +1468,7 @@ fn alle_seiten_in_allen_themes() {
             ("verbindung", Seite::Verbindung),
             ("tools", Seite::Tools),
             ("agenten", Seite::Agenten),
+            ("protokoll", Seite::Protokoll),
         ] {
             // Die Verbindungsseite zeigt als Startseite das Formular.
             let daten = match seite {
@@ -2292,6 +2402,266 @@ fn bildschirmfoto_der_zugaenge() {
         );
         let bild = h.render().expect("zeichnen (wgpu)");
         bild.save(ziel.join(format!("fenster-{}-zugaenge.png", thema.name())))
+            .expect("Bild schreibbar");
+    }
+}
+
+// --------------------------------------------------- Protokoll (Aufgabe 17)
+
+/// Die Protokollseite mit den drei Beispielaufrufen.
+fn protokoll_fenster(thema: Thema) -> Harness<'static, Stand> {
+    fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Protokoll),
+        thema,
+        gross(),
+    )
+}
+
+#[test]
+fn die_protokollseite_ist_erreichbar_und_zeigt_die_aufrufe() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Protokoll").click();
+    h.run();
+    assert_eq!(h.state().0.sicht.seite, Seite::Protokoll);
+    // Die Spalten stehen da (Agent und Tool stehen auch an den Filtern).
+    for spalte in ["Zeit", "Agent", "Tool", "Dauer", "Status"] {
+        assert!(
+            h.query_all(By::new().value(spalte)).count() > 0,
+            "{spalte} fehlt"
+        );
+    }
+    // Je Aufruf eine Zeile, mit Werkzeug und Ergebnis.
+    let zeilen = h.query_all(By::new().role(Role::Button)).count();
+    assert!(zeilen >= 3, "die Aufrufe fehlen ({zeilen} Knöpfe)");
+    assert!(h.query_by_label("echo__echo").is_some());
+    assert!(h.query_by_label("dateien__lesen").is_some());
+    // Die Ergebnisspalte als Abzeichen.
+    assert!(h.query_by_label("OK").is_some());
+    assert!(h.query_by_label("Fehler").is_some());
+    assert!(h.query_by_label("Abgelehnt").is_some());
+}
+
+#[test]
+fn die_filter_der_protokollseite_wirken() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    h.run();
+    assert_eq!(h.state().0.sicht.aufrufe.len(), 3);
+
+    // Eintrag wählen: nur dessen Aufrufe bleiben.
+    h.state_mut().0.sicht.protokoll_eingaben.eintrag = "echo".into();
+    h.run();
+    let aufrufe = h.state().0.sicht.aufrufe.clone();
+    assert_eq!(aufrufe.len(), 1, "{aufrufe:?}");
+    assert_eq!(aufrufe[0].tool, "echo__echo");
+    assert!(h.query_by_label("dateien__lesen").is_none());
+
+    // Agent wählen: nur „hermes“.
+    h.state_mut().0.sicht.protokoll_eingaben.eintrag.clear();
+    h.state_mut().0.sicht.protokoll_eingaben.agent = "hermes".into();
+    h.run();
+    assert_eq!(h.state().0.sicht.aufrufe.len(), 1);
+    assert_eq!(h.state().0.sicht.aufrufe[0].agent, "hermes");
+
+    // Nur Fehler: der eine Fehler und die Ablehnung.
+    h.state_mut().0.sicht.protokoll_eingaben.agent.clear();
+    h.state_mut().0.sicht.protokoll_eingaben.nur_fehler = true;
+    h.run();
+    assert_eq!(
+        h.state().0.sicht.aufrufe.len(),
+        2,
+        "Fehler und Ablehnung zählen beide"
+    );
+
+    // Werkzeug wählen.
+    h.state_mut().0.sicht.protokoll_eingaben.nur_fehler = false;
+    h.state_mut().0.sicht.protokoll_eingaben.tool = "graph__kalender".into();
+    h.run();
+    assert_eq!(h.state().0.sicht.aufrufe.len(), 1);
+    assert_eq!(h.state().0.sicht.aufrufe[0].status, Status::Abgelehnt);
+}
+
+#[test]
+fn ein_klick_auf_einen_aufruf_oeffnet_die_einzelheiten() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    h.run();
+    // Die Zeile „dateien“ trägt den Fehlertext.
+    let name = h
+        .state()
+        .0
+        .sicht
+        .aufrufe
+        .iter()
+        .find(|aufruf| aufruf.tool == "dateien__lesen")
+        .map(|aufruf| {
+            format!(
+                "{} {} {} Fehler",
+                quiver_fenster::logik::zeit_text(&aufruf.zeit),
+                aufruf.agent,
+                aufruf.tool
+            )
+        })
+        .expect("Aufruf im Modell");
+    h.get_by_role_and_label(Role::Button, &name).click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Aufruf { aufruf } => {
+            assert_eq!(aufruf.tool, "dateien__lesen");
+            assert_eq!(aufruf.fehler.as_deref(), Some("Der Prozess wurde beendet"));
+        }
+        anderer => panic!("kein Aufruf-Dialog: {anderer:?}"),
+    }
+    // Der Dialog zeigt Argumente, Fehlertext und Vorschau.
+    assert!(h.query_by_label("Argumente").is_some());
+    assert!(h.query_by_label("Fehlertext").is_some());
+    assert!(h.query_by_label("Der Prozess wurde beendet").is_some());
+    assert!(h.query_by_label("hallo").is_none(), "anderer Aufruf");
+    // Schließen räumt den Dialog weg.
+    h.get_by_role_and_label(Role::Button, "Schließen").click();
+    h.run();
+    assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+#[test]
+fn hand_cursor_auf_alles_klickbarem_der_protokollseite() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    h.run();
+    let anzahl = h.query_all(By::new().role(Role::Button)).count();
+    assert!(anzahl >= 8, "nur {anzahl} Knöpfe gefunden");
+    for i in 0..anzahl {
+        let name = {
+            let knoten = h
+                .query_all(By::new().role(Role::Button))
+                .nth(i)
+                .expect("Knopf");
+            let name = NodeT::accesskit_node(&knoten)
+                .label()
+                .unwrap_or_else(|| "(ohne Namen)".to_string());
+            knoten.hover();
+            name
+        };
+        h.run();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            CursorIcon::PointingHand,
+            "„{name}“: kein Hand-Cursor"
+        );
+    }
+}
+
+#[test]
+fn protokoll_leeren_fragt_nach_und_schickt_die_aktion() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Protokoll leeren")
+        .click();
+    h.run();
+    assert_eq!(h.state().0.sicht.dialog, Dialog::ProtokollLeeren);
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ProtokollLeeren),
+        "ohne Bestätigung wird nichts gelöscht"
+    );
+    h.get_all_by_role_and_label(Role::Button, "Protokoll leeren")
+        .last()
+        .expect("Knopf im Dialog")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ProtokollLeeren),
+        "der bestätigte Klick leert das Protokoll"
+    );
+    assert_eq!(h.state().0.sicht.dialog, Dialog::Keiner);
+}
+
+#[test]
+fn der_reiter_tool_logs_zeigt_die_zeilen_in_monoschrift() {
+    let mut h = protokoll_fenster(Thema::Dunkel);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Tool-Logs").click();
+    h.run();
+    assert_eq!(
+        h.state().0.sicht.protokoll_reiter,
+        quiver_fenster::modell::ProtokollReiter::ToolLogs
+    );
+    // Der erste Eintrag ist vorgewählt; seine zwei Zeilen stehen da.
+    assert_eq!(h.state().0.sicht.log_eintrag, Some(EintragId::neu("echo")));
+    assert!(h
+        .query_by_label("gestartet, Werkzeuge: echo, ping")
+        .is_some());
+    assert!(
+        h.query_by_label("Dateien gestartet").is_none(),
+        "anderer Eintrag"
+    );
+}
+
+#[test]
+fn der_schalter_der_agentenseite_ist_eine_checkbox() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Agenten),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    let haken =
+        h.get_by_role_and_label(Role::CheckBox, "Agenten dürfen Inhalte im Protokoll sehen");
+    assert_eq!(
+        haken.accesskit_node().toggled(),
+        Some(Toggled::False),
+        "Standard ist aus"
+    );
+    haken.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf dem Schalter"
+    );
+    h.get_by_role_and_label(Role::CheckBox, "Agenten dürfen Inhalte im Protokoll sehen")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ProtokollFuerAgenten { an: true }),
+        "der Klick schaltet den Schalter ein: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+}
+
+/// Die Protokollseite in beiden Themes (`fenster-{dark,light}-protokoll.png`).
+#[test]
+fn bildschirmfoto_des_protokolls() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in [Thema::Dunkel, Thema::Hell] {
+        let mut h = protokoll_fenster(thema);
+        h.run();
+        assert!(
+            h.query_by_label("echo__echo").is_some(),
+            "{}: die Liste fehlt",
+            thema.name()
+        );
+        let bild = h.render().expect("zeichnen (wgpu)");
+        bild.save(ziel.join(format!("fenster-{}-protokoll.png", thema.name())))
             .expect("Bild schreibbar");
     }
 }

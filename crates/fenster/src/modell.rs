@@ -9,7 +9,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use quiver_client::{EintragSicht, Modell, Vorschau, Zusammenfassung};
+use quiver_client::protokoll::Zeitraum;
+use quiver_client::{Aufruf, EintragSicht, Modell, Vorschau, Zeile, Zusammenfassung};
 use quiver_domain::{EintragId, FeldArt, FeldLink};
 
 use crate::app::Aktion;
@@ -26,10 +27,16 @@ pub enum Seite {
     #[default]
     Tools,
     Agenten,
+    Protokoll,
 }
 
 impl Seite {
-    pub const ALLE: [Seite; 3] = [Seite::Verbindung, Seite::Tools, Seite::Agenten];
+    pub const ALLE: [Seite; 4] = [
+        Seite::Verbindung,
+        Seite::Tools,
+        Seite::Agenten,
+        Seite::Protokoll,
+    ];
 
     /// Name für die Bildschirmfotos und die Einstellungsdatei.
     pub fn name(self) -> &'static str {
@@ -37,6 +44,7 @@ impl Seite {
             Seite::Verbindung => "verbindung",
             Seite::Tools => "tools",
             Seite::Agenten => "agenten",
+            Seite::Protokoll => "protokoll",
         }
     }
 
@@ -46,6 +54,7 @@ impl Seite {
             Seite::Verbindung => "nav.verbindung",
             Seite::Tools => "nav.tools",
             Seite::Agenten => "nav.agenten",
+            Seite::Protokoll => "nav.protokoll",
         }
     }
 
@@ -55,6 +64,41 @@ impl Seite {
             Seite::Verbindung => Icon::Stecker,
             Seite::Tools => Icon::Paket,
             Seite::Agenten => Icon::Agent,
+            Seite::Protokoll => Icon::Protokoll,
+        }
+    }
+}
+
+/// Welcher Reiter auf der Protokollseite offen ist (Aufgabe 17).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ProtokollReiter {
+    #[default]
+    Aufrufe,
+    ToolLogs,
+}
+
+/// Was die Filterleiste der Protokollseite einstellt. Leere Namen heißen
+/// „alle“.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtokollEingaben {
+    pub eintrag: String,
+    pub tool: String,
+    pub agent: String,
+    pub nur_fehler: bool,
+    pub zeitraum: Zeitraum,
+    /// Freitext im Reiter „Tool-Logs“.
+    pub suche: String,
+}
+
+impl Default for ProtokollEingaben {
+    fn default() -> Self {
+        Self {
+            eintrag: String::new(),
+            tool: String::new(),
+            agent: String::new(),
+            nur_fehler: false,
+            zeitraum: Zeitraum::Stunde,
+            suche: String::new(),
         }
     }
 }
@@ -133,6 +177,10 @@ pub enum Dialog {
         vorschau: Vorschau,
         passwort: String,
     },
+    /// Ein Aufruf im Detail (Aufgabe 17): Argumente, Fehlertext, Vorschau.
+    Aufruf { aufruf: Aufruf },
+    /// Das Protokoll leeren — mit Rückfrage (Aufgabe 17).
+    ProtokollLeeren,
 }
 
 /// Was in den Eingabefeldern der Verbindungsseite steht.
@@ -154,6 +202,8 @@ pub enum Meldung {
         importiert: bool,
         zusammenfassung: Zusammenfassung,
     },
+    /// Das Protokoll ist geleert (Aufgabe 17): Speicher und Dateien.
+    ProtokollGeleert,
     /// Etwas ist schiefgegangen — der Text steht über der Seite.
     Fehler(String),
 }
@@ -183,6 +233,26 @@ pub struct Sicht {
     /// Startet quiver beim Anmelden? Der Wert kommt aus dem System
     /// ([`crate::autostart::aktiv`]) und wird dorthin zurückgeschrieben.
     pub autostart: bool,
+    /// Die Aufrufe, die der Filter gerade zulässt (Aufgabe 17) — gefüllt aus
+    /// [`crate::app::KernZugang::protokoll`], nie aus einer eigenen Quelle.
+    pub aufrufe: Vec<Aufruf>,
+    /// Die Prozesszeilen des gewählten Eintrags.
+    pub log_zeilen: Vec<Zeile>,
+    pub protokoll_eingaben: ProtokollEingaben,
+    pub protokoll_reiter: ProtokollReiter,
+    /// Welcher Eintrag im Reiter „Tool-Logs“ gewählt ist.
+    pub log_eintrag: Option<EintragId>,
+    /// Stand des Protokollzählers, zu dem `aufrufe` gehört.
+    pub protokoll_stand: u64,
+    /// Filter, zu dem `aufrufe` gehört.
+    pub protokoll_gefiltert: Option<quiver_client::protokoll::Filter>,
+    /// Eintrag und Filter, zu denen `log_zeilen` gehören.
+    pub log_gefiltert: Option<(Option<EintragId>, quiver_client::protokoll::LogFilter)>,
+    /// Stand des Protokollzählers, zu dem `log_zeilen` gehören.
+    pub log_stand: u64,
+    /// Hat der User in der Liste gescrollt? Dann bleiben die Zeilen stehen,
+    /// statt unter ihm wegzurutschen.
+    pub protokoll_gescrollt: bool,
 }
 
 impl Sicht {
@@ -200,6 +270,16 @@ impl Sicht {
             ergebnis: None,
             datei: None,
             autostart: false,
+            aufrufe: Vec::new(),
+            log_zeilen: Vec::new(),
+            protokoll_eingaben: ProtokollEingaben::default(),
+            protokoll_reiter: ProtokollReiter::Aufrufe,
+            log_eintrag: None,
+            protokoll_stand: u64::MAX,
+            protokoll_gefiltert: None,
+            log_gefiltert: None,
+            log_stand: u64::MAX,
+            protokoll_gescrollt: false,
         }
     }
 
@@ -228,6 +308,16 @@ impl Sicht {
                     importiert,
                     &zusammenfassung,
                 ));
+            }
+            Meldung::ProtokollGeleert => {
+                self.ergebnis = Some(crate::texte::t(self.sprache, "protokoll.geleert"));
+                // Ein leerer Speicher heißt: nichts mehr zu zeigen.
+                self.aufrufe.clear();
+                self.log_zeilen.clear();
+                self.protokoll_gefiltert = None;
+                self.log_gefiltert = None;
+                self.log_stand = u64::MAX;
+                self.protokoll_gescrollt = false;
             }
             Meldung::Fehler(text) => self.hinweis = Some(text),
         }
@@ -409,6 +499,8 @@ impl Sicht {
                         .then(|| passwort.trim().to_string()),
                 });
             }
+            Dialog::Aufruf { .. } => {}
+            Dialog::ProtokollLeeren => return Some(Aktion::ProtokollLeeren),
         }
         None
     }
@@ -426,6 +518,7 @@ mod tests {
             agenten: Vec::new(),
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
             abgelehnt: false,
+            protokoll_fuer_agenten: false,
         }
     }
 

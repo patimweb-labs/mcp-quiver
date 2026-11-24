@@ -187,6 +187,33 @@ Umgebung (alles optional):
 | `QUIVER_AUTOSTART_DIR` | Ordner für die Autostart-Datei (macOS und Linux; Tests und andere Sitzungen) |
 | `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt in der Tresor-Datei (Läufe ohne Spuren, zum Ausprobieren) |
 
+## Protokoll und Datenschutz
+
+Die Seite **Protokoll** im Fenster zeigt jeden Werkzeug-Aufruf eines Agenten
+(Zeit, Agent, Eintrag, Werkzeug, Dauer, Ergebnis) und im Reiter *Tool-Logs*, was
+das Tool auf stderr ausgegeben hat. Ein Klick auf eine Zeile öffnet die
+Einzelheiten: Argumente, Fehlertext und eine Vorschau der Antwort. Filter
+grenzen nach Eintrag, Werkzeug, Agent, Zeitraum (letzte Stunde, heute, 7 Tage)
+und „nur Fehler“ ein.
+
+Alles bleibt auf dem Gerät: `<profil>/protokoll/aufrufe-JJJJ-MM-TT.jsonl` und
+`prozesse-JJJJ-MM-TT.jsonl`, Dateirechte 0600, nach 7 Tagen gelöscht und
+insgesamt höchstens 50 MB. Der Server bekommt keine Aufrufe.
+
+**Immer maskiert:** Schlüssel, deren Name `pass`, `token`, `secret`, `key`,
+`pat`, `auth` oder `cookie` enthält, werden zu `<verborgen>`, und jeder Wert aus
+dem Tresor wird ersetzt — auch als Teilstring, in Argumenten, Vorschau,
+Fehlertext und Tool-Log-Zeilen. Gekürzt wird auf 200 Zeichen je Wert, 4 KB
+Argumente, 500 Zeichen Vorschau und 2000 Zeichen Fehlertext.
+
+Agenten können das Protokoll selbst lesen, über zwei lesende Werkzeuge:
+`quiver__protokoll` und `quiver__tool_log`. Beide liefern **nur Metadaten**, bis
+unter *Agenten* „Agenten dürfen Inhalte im Protokoll sehen“ eingeschaltet ist
+(gespeichert in `zustand.json`); Fehlertexte bleiben in jedem Fall maskiert, und
+die Aufrufe dieser beiden Werkzeuge stehen selbst nie im Protokoll.
+
+![Protokollseite](docs/bilder/fenster-dark-protokoll.png)
+
 Aufbau wie die Admin-Oberfläche: Kopf, Navigation links, Inhalt als Karten, drei
 Themes aus denselben Tokens. Die Bildschirmfotos erzeugt der Oberflächentest
 (mit Attrappe, ohne Server und ohne Laufzeit):

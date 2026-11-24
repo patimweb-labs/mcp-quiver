@@ -10,10 +10,11 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
+use quiver_domain::EintragId;
 use quiver_domain::Laufzeit;
 use rmcp::model::Tool;
 use rmcp::service::{ClientInitializeError, RunningService, RunningServiceCancellationToken};
@@ -23,6 +24,8 @@ use rmcp::transport::streamable_http_client::{
 use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
 use rmcp::{Peer, RoleClient, ServiceExt};
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+use crate::protokoll::Protokoll;
 
 /// Eine laufende Verbindung zu genau einem Eintrag.
 pub struct EintragVerbindung {
@@ -64,14 +67,19 @@ impl EintragVerbindung {
     }
 }
 
-/// Eine Laufzeit starten und die MCP-Verbindung aufbauen.
-pub async fn verbinden(name: &str, laufzeit: &Laufzeit) -> anyhow::Result<EintragVerbindung> {
+/// Eine Laufzeit starten und die MCP-Verbindung aufbauen. Was der Prozess auf
+/// stderr schreibt, landet im Protokoll (Aufgabe 17).
+pub async fn verbinden(
+    name: &str,
+    laufzeit: &Laufzeit,
+    protokoll: &Arc<Protokoll>,
+) -> anyhow::Result<EintragVerbindung> {
     match laufzeit {
         Laufzeit::Stdio {
             befehl,
             argumente,
             umgebung,
-        } => stdio(name, befehl, argumente, umgebung).await,
+        } => stdio(name, befehl, argumente, umgebung, protokoll).await,
         Laufzeit::Remote { url, kopfzeilen } => remote(url, kopfzeilen).await,
     }
 }
@@ -81,6 +89,7 @@ async fn stdio(
     befehl: &str,
     argumente: &[String],
     umgebung: &quiver_domain::Werte,
+    protokoll: &Arc<Protokoll>,
 ) -> anyhow::Result<EintragVerbindung> {
     let kommando = tokio::process::Command::new(befehl).configure(|cmd| {
         cmd.args(argumente);
@@ -94,7 +103,7 @@ async fn stdio(
         .spawn()
         .with_context(|| format!("{befehl} lässt sich nicht starten"))?;
     if let Some(stderr) = stderr {
-        stderr_ins_log(name.to_string(), stderr);
+        stderr_ins_log(name.to_string(), stderr, protokoll.clone());
     }
     aufbauen(().serve(transport)).await
 }
@@ -135,12 +144,15 @@ async fn aufbauen(
     })
 }
 
-/// Was der Kindprozess auf stderr schreibt, gehört ins Log – nicht in den MCP-Strom.
-fn stderr_ins_log(name: String, stderr: tokio::process::ChildStderr) {
+/// Was der Kindprozess auf stderr schreibt, gehört ins Protokoll (Aufgabe 17) –
+/// je Eintrag, ohne ANSI-Farbcodes und maskiert. Zusätzlich steht es im Log.
+fn stderr_ins_log(name: String, stderr: tokio::process::ChildStderr, protokoll: Arc<Protokoll>) {
+    let eintrag = EintragId::neu(name.clone());
     tokio::spawn(async move {
         let mut zeilen = BufReader::new(stderr).lines();
         while let Ok(Some(zeile)) = zeilen.next_line().await {
             tracing::info!(eintrag = %name, "{zeile}");
+            protokoll.zeile_schreiben(&eintrag, &zeile);
         }
     });
 }
@@ -159,7 +171,14 @@ mod tests {
             argumente: Vec::new(),
             umgebung: quiver_domain::Werte::new(),
         };
-        let ergebnis = verbinden("test", &laufzeit).await;
+        let ordner = std::env::temp_dir().join(format!(
+            "quiver-laufzeit-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let protokoll = Arc::new(Protokoll::neu(&ordner));
+        let ergebnis = verbinden("test", &laufzeit, &protokoll).await;
         assert!(ergebnis.is_err(), "Start muss scheitern");
+        std::fs::remove_dir_all(&ordner).ok();
     }
 }

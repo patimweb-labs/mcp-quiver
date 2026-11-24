@@ -45,6 +45,14 @@ pub struct Profil {
     /// Letzter Soll-Zustand – läuft offline weiter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soll: Option<Soll>,
+    /// Dürfen Agenten Inhalte im Protokoll sehen (Aufgabe 17)? Standard: aus.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub protokoll_fuer_agenten: bool,
+}
+
+/// Nur schreiben, wenn der Schalter an ist.
+fn is_false(wert: &bool) -> bool {
+    !*wert
 }
 
 impl Profil {
@@ -123,6 +131,7 @@ mod tests {
             name: "pi".into(),
             token_hash: "00".into(),
         });
+        profil.protokoll_fuer_agenten = true;
         profil.speichern(&ordner).expect("schreibbar");
 
         let zurueck = Profil::laden(&ordner).expect("lesbar");
@@ -130,6 +139,7 @@ mod tests {
         assert_eq!(zurueck.lokale_werte, profil.lokale_werte);
         assert_eq!(zurueck.zugaenge, profil.zugaenge);
         assert_eq!(zurueck.agenten, profil.agenten);
+        assert!(zurueck.protokoll_fuer_agenten, "der Schalter bleibt");
         std::fs::remove_dir_all(&ordner).ok();
     }
 

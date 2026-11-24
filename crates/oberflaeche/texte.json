@@ -642,5 +642,177 @@
   "tools.auswaehlen": {
     "de": "Auswählen …",
     "en": "Select …"
+  },
+  "nav.protokoll": {
+    "de": "Protokoll",
+    "en": "Log"
+  },
+  "protokoll.sub": {
+    "de": "Was die Agenten angefragt haben und was die Tools dabei ausgegeben haben.",
+    "en": "What the agents requested and what the tools printed along the way."
+  },
+  "protokoll.reiter.aufrufe": {
+    "de": "Aufrufe",
+    "en": "Calls"
+  },
+  "protokoll.reiter.logs": {
+    "de": "Tool-Logs",
+    "en": "Tool logs"
+  },
+  "protokoll.filter.eintrag": {
+    "de": "Eintrag",
+    "en": "Entry"
+  },
+  "protokoll.filter.tool": {
+    "de": "Tool",
+    "en": "Tool"
+  },
+  "protokoll.filter.agent": {
+    "de": "Agent",
+    "en": "Agent"
+  },
+  "protokoll.filter.zeitraum": {
+    "de": "Zeitraum",
+    "en": "Period"
+  },
+  "protokoll.filter.alle": {
+    "de": "Alle",
+    "en": "All"
+  },
+  "protokoll.filter.nur_fehler": {
+    "de": "nur Fehler",
+    "en": "errors only"
+  },
+  "protokoll.zeitraum.stunde": {
+    "de": "Letzte Stunde",
+    "en": "Last hour"
+  },
+  "protokoll.zeitraum.heute": {
+    "de": "Heute",
+    "en": "Today"
+  },
+  "protokoll.zeitraum.tage": {
+    "de": "7 Tage",
+    "en": "7 days"
+  },
+  "protokoll.spalte.zeit": {
+    "de": "Zeit",
+    "en": "Time"
+  },
+  "protokoll.spalte.agent": {
+    "de": "Agent",
+    "en": "Agent"
+  },
+  "protokoll.spalte.eintrag": {
+    "de": "Eintrag",
+    "en": "Entry"
+  },
+  "protokoll.spalte.tool": {
+    "de": "Tool",
+    "en": "Tool"
+  },
+  "protokoll.spalte.dauer": {
+    "de": "Dauer",
+    "en": "Duration"
+  },
+  "protokoll.spalte.status": {
+    "de": "Status",
+    "en": "Status"
+  },
+  "protokoll.status.ok": {
+    "de": "OK",
+    "en": "OK"
+  },
+  "protokoll.status.fehler": {
+    "de": "Fehler",
+    "en": "Error"
+  },
+  "protokoll.status.abgelehnt": {
+    "de": "Abgelehnt",
+    "en": "Rejected"
+  },
+  "protokoll.dauer": {
+    "de": "{} ms",
+    "en": "{} ms"
+  },
+  "protokoll.leer": {
+    "de": "Noch keine Aufrufe",
+    "en": "No calls yet"
+  },
+  "protokoll.leer_text": {
+    "de": "Sobald ein Agent ein Tool aufruft, steht es hier — im gewählten Zeitraum.",
+    "en": "As soon as an agent calls a tool it shows up here — within the chosen period."
+  },
+  "protokoll.leeren": {
+    "de": "Protokoll leeren",
+    "en": "Clear log"
+  },
+  "protokoll.leeren_titel": {
+    "de": "Protokoll leeren",
+    "en": "Clear log"
+  },
+  "protokoll.leeren_text": {
+    "de": "Aufrufe und Tool-Logs werden aus dem Speicher und von der Platte gelöscht. Das lässt sich nicht rückgängig machen.",
+    "en": "Calls and tool logs are deleted from memory and from disk. This cannot be undone."
+  },
+  "protokoll.geleert": {
+    "de": "Protokoll geleert",
+    "en": "Log cleared"
+  },
+  "protokoll.detail_titel": {
+    "de": "Aufruf",
+    "en": "Call"
+  },
+  "protokoll.argumente": {
+    "de": "Argumente",
+    "en": "Arguments"
+  },
+  "protokoll.fehlertext": {
+    "de": "Fehlertext",
+    "en": "Error text"
+  },
+  "protokoll.vorschau": {
+    "de": "Vorschau der Antwort",
+    "en": "Response preview"
+  },
+  "protokoll.antwort_groesse": {
+    "de": "Antwort",
+    "en": "Response"
+  },
+  "protokoll.zeichen": {
+    "de": "{} Zeichen",
+    "en": "{} characters"
+  },
+  "protokoll.log.eintrag": {
+    "de": "Eintrag",
+    "en": "Entry"
+  },
+  "protokoll.log.suche": {
+    "de": "Filter",
+    "en": "Filter"
+  },
+  "protokoll.log.suche_hinweis": {
+    "de": "Nur Zeilen mit diesem Text",
+    "en": "Only lines containing this text"
+  },
+  "protokoll.log.leer": {
+    "de": "Keine Zeilen",
+    "en": "No lines"
+  },
+  "protokoll.log.leer_text": {
+    "de": "Der Eintrag hat nichts auf stderr geschrieben (oder noch nicht gestartet).",
+    "en": "The entry has written nothing to stderr (or has not started yet)."
+  },
+  "agenten.protokoll_titel": {
+    "de": "Protokoll",
+    "en": "Log"
+  },
+  "agenten.protokoll_sub": {
+    "de": "Was Agenten von den Aufrufen und Tool-Logs sehen dürfen.",
+    "en": "What agents may see of the calls and tool logs."
+  },
+  "agenten.protokoll_haken": {
+    "de": "Agenten dürfen Inhalte im Protokoll sehen",
+    "en": "Agents may see log contents"
   }
 }

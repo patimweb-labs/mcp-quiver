@@ -7,6 +7,7 @@
 pub mod agenten;
 pub mod dialog;
 pub mod kopf;
+pub mod protokoll;
 pub mod seitenleiste;
 pub mod tools;
 pub mod verbindung;

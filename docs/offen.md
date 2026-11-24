@@ -21,6 +21,19 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Mehrere Zugänge: `QUIVER_ZUGAENGE` steht nur in der Laufzeit eines `Stdio`-Eintrags; Anmelde- und Einrichtungsbefehle bekommen die Variable nicht mit.
 - [ ] Mehrere Zugänge: ein Pflicht-Geheimnis lässt sich einzeln entfernen, ohne dass die Pflichtprüfung anschlägt (gewollt: Passwort weg, Schlüssel steht).
 - [ ] Mehrere Zugänge: das Entfernen der letzten Geheimnisse räumt nur die Felder der aktuellen Liste und die gesetzten Werte auf, keine verwaisten Schlüssel aus früheren Feldnamen.
+- [ ] Protokoll (Aufgabe 17): einen **Export** gibt es nicht — wer die Aufrufe
+      mitnehmen will, liest die JSONL-Dateien unter `<profil>/protokoll/` von Hand.
+- [ ] Protokoll: Fehlerzahlen werden **nicht** an den Server gemeldet; der Server
+      sieht nur den Zustand der Einträge (`laeuft`, `fehler`), keine Zähler.
+- [ ] Protokoll: die Maske erkennt Geheimnisse an Schlüsselnamen und am Tresor;
+      schreibt ein Tool einen Wert, der ihm selbst bekannt ist, unstrukturiert auf
+      stderr, bleibt er stehen, solange er nicht im Tresor liegt.
+- [ ] Protokoll: beim Scrollen hält die Liste an (keine neuen Zeilen oben), damit
+      die Position nicht springt; zurück nach oben lädt sie wieder live.
+- [ ] Protokoll: die Suche im Reiter „Tool-Logs“ wirkt nur auf den gewählten
+      Eintrag; über alle Einträge zu suchen gibt es nicht.
+- [ ] Protokoll: `quiver__protokoll` und `quiver__tool_log` filtern nicht nach
+      Agent — jeder Agent mit gültigem Token sieht, was alle Agenten aufriefen.
 
 ## Oberfläche
 - [ ] Hilfe-Link: Platzhalter auf reine Server-Felder bleiben gesperrt (`EintragSicht` kennt keine Server-Werte).

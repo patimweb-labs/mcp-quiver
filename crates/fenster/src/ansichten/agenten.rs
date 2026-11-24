@@ -13,12 +13,13 @@ use crate::modell::{Dialog, Sicht};
 use crate::texte::{t, Sprache};
 use crate::thema::{self, Ton};
 
-pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>) {
+pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
     let f = *sicht.thema.farben();
     let sprache = sicht.sprache;
     let mut koppeln = false;
     let mut entfernen: Option<(String, String)> = None;
     let mut erneuern: Option<(String, String)> = None;
+    let mut schalter: Option<bool> = None;
     let gekoppelte: Vec<String> = sicht
         .modell
         .agenten
@@ -123,7 +124,27 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>)
                 }
             },
         );
+        abstand(ui);
+
+        // Was Agenten vom Protokoll sehen dürfen (Aufgabe 17). Standard: aus.
+        let mut an = sicht.modell.protokoll_fuer_agenten;
+        bausteine::karte(
+            ui,
+            &f,
+            &t(sprache, "agenten.protokoll_titel"),
+            Some(&t(sprache, "agenten.protokoll_sub")),
+            |ui| {
+                ui.add_space(thema::SPACE_2);
+                if bausteine::haken(ui, &mut an, &t(sprache, "agenten.protokoll_haken")).changed() {
+                    schalter = Some(an);
+                }
+            },
+        );
     });
+
+    if let Some(an) = schalter {
+        aktionen.push(Aktion::ProtokollFuerAgenten { an });
+    }
 
     if koppeln {
         sicht.dialog = Dialog::Koppeln {

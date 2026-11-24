@@ -1,7 +1,7 @@
 # SPEC – mcp-quiver
 
 > Stand: Entwurf 0, 2026-11-23. Jede Festlegung mit Begründung und Preis.
-> Offene Punkte stehen in §10 und werden als ADR in `docs/adr/` entschieden.
+> Offene Punkte stehen in §11 und werden als ADR in `docs/adr/` entschieden.
 
 ## 0. MVP (Stand 2026-11-23)
 
@@ -173,13 +173,43 @@ Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
   Standard. Darum setzen die Bausteine `CursorIcon::PointingHand` zentral,
   und ein Oberflächentest prüft es. In Vue gilt `cursor: pointer` im Baustein.
 
-## 10. Offene Punkte
+## 10. Protokoll und Datenschutz
+
+Der Client führt ein Protokoll der Werkzeug-Aufrufe (Aufgabe 17): Zeit, Agent,
+Eintrag, Werkzeug, Dauer, Ergebnis, gekürzte Argumente und eine Vorschau der
+Antwort. Dazu kommen die stderr-Zeilen jedes stdio-Eintrags, je Eintrag.
+
+- **Festlegung: lokal, nicht zentral.** Das Protokoll bleibt auf dem Gerät
+  (`<profil>/protokoll/*.jsonl`, Rechte 0600, 7 Tage, höchstens 50 MB). Der
+  Server bekommt keine Aufrufe; er sieht nur den Zustand der Einträge (Abschnitt
+  3). Eine zentrale Auswertung wäre ein eigener Entwurf (Zustimmung, Aufbewahrung,
+  Zugriff) und ist nicht Teil des MVP.
+- **Festlegung: maskiert.** Schlüssel mit `pass`, `token`, `secret`, `key`,
+  `pat`, `auth` oder `cookie` im Namen bekommen `<verborgen>`; jeder Wert aus dem
+  Tresor wird ersetzt, auch als Teilstring. Kürzen: 200 Zeichen je Wert, 4 KB
+  Argumente, 500 Zeichen Vorschau, 2000 Zeichen Fehlertext.
+
+*Preis:* Wer die Dateien liest, sieht Tool-Namen, Zeiten und Fehlertexte; nach
+7 Tagen ist das meiste weg. Ein Geheimnis, das ein Tool **selbst** in eine
+stderr-Zeile schreibt und das nicht im Tresor steht, kann nur über den
+Schlüsselnamen erkannt werden.
+
+### Was Agenten sehen
+
+Zwei eigene Werkzeuge, `quiver__protokoll` und `quiver__tool_log`, sind lesend
+und stehen in `tools/list`. Standardmäßig liefern sie **nur Metadaten** (Zeit,
+Agent, Werkzeug, Dauer, Status, Fehlertext). Argumente, Antwort-Vorschauen und
+Prozesszeilen gibt es erst, wenn der User im Fenster unter „Agenten“
+„Agenten dürfen Inhalte im Protokoll sehen“ einschaltet (in `zustand.json`
+gespeichert). Fehlertexte sind auch dann maskiert. Die Aufrufe der beiden
+eigenen Werkzeuge landen nicht im Protokoll (keine Rückkopplung).
+
+## 11. Offene Punkte
 
 1. Formate für eigene Tools: nur WASM, oder von Anfang an auch native Binaries?
 2. Admin-Rechte: Wer darf die Bibliothek pflegen? Eigene Entra-Gruppe oder App-Rolle?
 3. Datenbank des Servers: SQLite im Volume (wie sprechwerk) oder Postgres?
 4. Soll der Client auch ohne Server nutzbar sein (nur lokale Einträge)?
-5. Protokoll: Werden Tool-Aufrufe zentral protokolliert (Audit) oder nur lokal?
-6. pi und Hermes: Schnittstellen der Plugins genau prüfen. pi 1.5 spricht MCP (`pi mcp`), für den MVP reicht das.
-7. Erster Umfang des Microsoft-Satzes: Mail, Kalender, Teams, SharePoint/OneDrive, Planner?
-8. Gemeinsames UI-Crate: aus den bestehenden Apps herauslösen, bevor der Client entsteht?
+5. pi und Hermes: Schnittstellen der Plugins genau prüfen. pi 1.5 spricht MCP (`pi mcp`), für den MVP reicht das.
+6. Erster Umfang des Microsoft-Satzes: Mail, Kalender, Teams, SharePoint/OneDrive, Planner?
+7. Gemeinsames UI-Crate: aus den bestehenden Apps herauslösen, bevor der Client entsteht?

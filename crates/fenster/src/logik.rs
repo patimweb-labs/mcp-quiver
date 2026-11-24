@@ -5,18 +5,21 @@
 //! welche Farbe ein Zustand hat, was in einem Feld steht, welche Schnipsel
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
+use quiver_client::protokoll::{Status, Zeitraum};
 use quiver_client::{
-    AnmeldeZustand, EinrichtZustand, EintragSicht, Modell, Verbindung, VorschauArt,
-    VorschauEintrag, ZugaengeSicht, ZugangSicht, Zusammenfassung,
+    protokoll, AnmeldeZustand, Aufruf, EinrichtZustand, EintragSicht, Modell, Verbindung,
+    VorschauArt, VorschauEintrag, ZugaengeSicht, ZugangSicht, Zusammenfassung,
 };
 use quiver_domain::{
-    link_aufloesen, zugangsname_gueltig, FehlendesFeld, Feld, FeldArt, FeldLink, Quelle, Werte,
+    link_aufloesen, zugangsname_gueltig, EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, Quelle,
+    Werte,
 };
 use quiver_protocol::EintragZustand;
 
-use crate::modell::{Feldeingabe, Seite};
+use crate::modell::{Feldeingabe, ProtokollEingaben, Seite};
 use crate::texte::{t, tf, Sprache};
 use crate::thema::Ton;
+use quiver_client::protokoll::Filter as ProtokollFilter;
 
 /// Die Startseite: solange kein Server eingebunden ist, führt der Weg über
 /// die Verbindung; danach steht die Arbeit (Tools) vorn.
@@ -937,6 +940,117 @@ pub fn geraetename_aus(lesen: impl Fn(&str) -> Option<String>) -> String {
     "quiver".to_string()
 }
 
+// ------------------------------------------------- Protokoll (Aufgabe 17)
+
+/// Was die Filterleiste einstellt, als Abfrage für den Kern. Leere Namen
+/// heißen „alle“.
+pub fn protokoll_filter(eingaben: &ProtokollEingaben) -> ProtokollFilter {
+    ProtokollFilter {
+        eintrag: (!eingaben.eintrag.trim().is_empty())
+            .then(|| EintragId::neu(eingaben.eintrag.trim())),
+        tool: nicht_leer(&eingaben.tool),
+        agent: nicht_leer(&eingaben.agent),
+        nur_fehler: eingaben.nur_fehler,
+        seit: Some(protokoll::seit(eingaben.zeitraum)),
+        anzahl: None,
+    }
+}
+
+/// Der Freitext des Reiters „Tool-Logs“ als Abfrage.
+pub fn log_filter(suche: &str) -> quiver_client::protokoll::LogFilter {
+    quiver_client::protokoll::LogFilter {
+        enthaelt: nicht_leer(suche),
+        seit: None,
+        anzahl: None,
+    }
+}
+
+fn nicht_leer(wert: &str) -> Option<String> {
+    let wert = wert.trim();
+    (!wert.is_empty()).then(|| wert.to_string())
+}
+
+/// Die Bedeutung eines Ergebnisses: gut, Fehler, Warnung.
+pub fn status_ton(status: Status) -> Ton {
+    match status {
+        Status::Ok => Ton::Gut,
+        Status::Fehler => Ton::Fehler,
+        Status::Abgelehnt => Ton::Warnung,
+    }
+}
+
+/// Das Abzeichen eines Aufrufs.
+pub fn status_text(sprache: Sprache, status: Status) -> String {
+    match status {
+        Status::Ok => t(sprache, "protokoll.status.ok"),
+        Status::Fehler => t(sprache, "protokoll.status.fehler"),
+        Status::Abgelehnt => t(sprache, "protokoll.status.abgelehnt"),
+    }
+}
+
+/// Die Uhrzeit eines Aufrufs (`2026-01-02T03:04:05Z` → `03:04:05`).
+pub fn zeit_text(zeit: &str) -> String {
+    let rest = zeit.split_once('T').map(|(_, rest)| rest).unwrap_or(zeit);
+    rest.chars().take(8).collect()
+}
+
+/// Wie lange ein Aufruf gedauert hat.
+pub fn dauer_text(sprache: Sprache, millisekunden: u64) -> String {
+    tf(sprache, "protokoll.dauer", &[&millisekunden])
+}
+
+/// Der Name eines Zeitraums in der Filterleiste.
+pub fn zeitraum_text(sprache: Sprache, zeitraum: Zeitraum) -> String {
+    match zeitraum {
+        Zeitraum::Stunde => t(sprache, "protokoll.zeitraum.stunde"),
+        Zeitraum::Heute => t(sprache, "protokoll.zeitraum.heute"),
+        Zeitraum::Tage => t(sprache, "protokoll.zeitraum.tage"),
+    }
+}
+
+/// Was „Kopieren“ im Detail-Dialog in die Zwischenablage legt: eine Zeile
+/// je Angabe, ohne Geheimes (die Argumente sind schon maskiert).
+pub fn aufruf_text(sprache: Sprache, aufruf: &Aufruf) -> String {
+    let mut zeilen = vec![
+        format!("{}: {}", t(sprache, "protokoll.spalte.zeit"), aufruf.zeit),
+        format!("{}: {}", t(sprache, "protokoll.spalte.agent"), aufruf.agent),
+        format!(
+            "{}: {}",
+            t(sprache, "protokoll.spalte.eintrag"),
+            aufruf.eintrag
+        ),
+        format!("{}: {}", t(sprache, "protokoll.spalte.tool"), aufruf.tool),
+        format!(
+            "{}: {}",
+            t(sprache, "protokoll.spalte.dauer"),
+            dauer_text(sprache, aufruf.dauer_ms)
+        ),
+        format!(
+            "{}: {}",
+            t(sprache, "protokoll.spalte.status"),
+            status_text(sprache, aufruf.status)
+        ),
+    ];
+    if !aufruf.argumente.is_empty() {
+        zeilen.push(format!(
+            "{}: {}",
+            t(sprache, "protokoll.argumente"),
+            aufruf.argumente
+        ));
+    }
+    if let Some(fehler) = &aufruf.fehler {
+        zeilen.push(format!("{}: {fehler}", t(sprache, "protokoll.fehlertext")));
+    }
+    if !aufruf.vorschau.is_empty() {
+        zeilen.push(format!(
+            "{}: {}",
+            t(sprache, "protokoll.vorschau"),
+            aufruf.vorschau
+        ));
+    }
+    zeilen.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -954,6 +1068,7 @@ mod tests {
             }],
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
             abgelehnt: false,
+            protokoll_fuer_agenten: false,
         }
     }
 
@@ -1853,6 +1968,97 @@ mod tests {
             server: "http://x".into(),
         });
         assert_eq!(tray_zeile(&verbindet, Sprache::De), "Verbinde …");
+    }
+
+    fn aufruf() -> Aufruf {
+        Aufruf {
+            zeit: "2026-01-02T03:04:05Z".into(),
+            agent: "pi".into(),
+            eintrag: EintragId::neu("echo"),
+            tool: "echo__echo".into(),
+            dauer_ms: 12,
+            status: Status::Ok,
+            fehler: None,
+            argumente: r#"{"text":"hallo"}"#.into(),
+            antwort_groesse: 5,
+            vorschau: "hallo".into(),
+        }
+    }
+
+    #[test]
+    fn protokoll_filter_deckt_die_leiste_ab() {
+        let eingaben = ProtokollEingaben::default();
+        let filter = protokoll_filter(&eingaben);
+        assert_eq!(filter.eintrag, None, "leer heißt alle");
+        assert_eq!(filter.tool, None);
+        assert_eq!(filter.agent, None);
+        assert!(!filter.nur_fehler);
+        let seit = filter.seit.clone().expect("Zeitraum");
+        assert!(seit.ends_with('Z'), "RFC 3339: {seit}");
+
+        let eingaben = ProtokollEingaben {
+            eintrag: " echo ".into(),
+            tool: "echo__echo".into(),
+            agent: "pi".into(),
+            nur_fehler: true,
+            zeitraum: Zeitraum::Tage,
+            suche: String::new(),
+        };
+        let filter = protokoll_filter(&eingaben);
+        assert_eq!(filter.eintrag, Some(EintragId::neu("echo")), "getrimmt");
+        assert_eq!(filter.tool.as_deref(), Some("echo__echo"));
+        assert_eq!(filter.agent.as_deref(), Some("pi"));
+        assert!(filter.nur_fehler);
+        assert_eq!(filter.anzahl, None, "das Fenster will alles im Zeitraum");
+        assert!(
+            filter.seit < protokoll_filter(&ProtokollEingaben::default()).seit,
+            "7 Tage reichen weiter zurück als eine Stunde"
+        );
+
+        // Der Freitext wird zum Enthält-Filter; leer heißt kein Filter.
+        assert_eq!(log_filter("  ").enthaelt, None);
+        assert_eq!(log_filter(" Fehler ").enthaelt.as_deref(), Some("Fehler"));
+    }
+
+    #[test]
+    fn status_zeit_dauer_und_kopiertext() {
+        assert_eq!(status_ton(Status::Ok), Ton::Gut);
+        assert_eq!(status_ton(Status::Fehler), Ton::Fehler);
+        assert_eq!(status_ton(Status::Abgelehnt), Ton::Warnung);
+        for (status, de, en) in [
+            (Status::Ok, "OK", "OK"),
+            (Status::Fehler, "Fehler", "Error"),
+            (Status::Abgelehnt, "Abgelehnt", "Rejected"),
+        ] {
+            assert_eq!(status_text(Sprache::De, status), de);
+            assert_eq!(status_text(Sprache::En, status), en);
+        }
+        assert_eq!(zeit_text("2026-01-02T03:04:05Z"), "03:04:05");
+        assert_eq!(zeit_text("ohne-t"), "ohne-t");
+        assert_eq!(dauer_text(Sprache::De, 12), "12 ms");
+        assert_eq!(zeitraum_text(Sprache::De, Zeitraum::Heute), "Heute");
+        assert_eq!(zeitraum_text(Sprache::En, Zeitraum::Tage), "7 days");
+
+        // Der Kopiertext nennt die Angaben und lässt Leeres weg.
+        let text = aufruf_text(Sprache::De, &aufruf());
+        for erwartet in [
+            "Zeit: 2026-01-02T03:04:05Z",
+            "Agent: pi",
+            "Tool: echo__echo",
+            "Dauer: 12 ms",
+            "Status: OK",
+            r#"Argumente: {"text":"hallo"}"#,
+            "Vorschau der Antwort: hallo",
+        ] {
+            assert!(text.contains(erwartet), "{erwartet} fehlt in {text}");
+        }
+        assert!(!text.contains("Fehlertext"), "kein Fehler, kein Text");
+        let mut mit_fehler = aufruf();
+        mit_fehler.fehler = Some("kaputt".into());
+        mit_fehler.vorschau.clear();
+        let text = aufruf_text(Sprache::En, &mit_fehler);
+        assert!(text.contains("Error text: kaputt"), "{text}");
+        assert!(!text.contains("Response preview"), "leer heißt weg");
     }
 
     #[test]

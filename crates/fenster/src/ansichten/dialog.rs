@@ -899,6 +899,52 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                         }
                     });
                 }
+                Dialog::Aufruf { aufruf } => {
+                    aufruf_details(ui, &f, sprache, aufruf, felder_hoehe);
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if bausteine::knopf(ui, &f, Icon::Kopieren, &t(sprache, "allg.kopieren"))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(logik::aufruf_text(sprache, aufruf));
+                        }
+                        if bausteine::knopf(
+                            ui,
+                            &f,
+                            Icon::Schliessen,
+                            &t(sprache, "allg.schliessen"),
+                        )
+                        .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
+                Dialog::ProtokollLeeren => {
+                    ui.label(RichText::new(t(sprache, "protokoll.leeren_titel")).heading());
+                    ui.add(
+                        egui::Label::new(text(&f, t(sprache, "protokoll.leeren_text"), Ton::Leise))
+                            .wrap(),
+                    );
+                    ui.add_space(thema::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if bausteine::knopf(
+                            ui,
+                            &f,
+                            Icon::Papierkorb,
+                            &t(sprache, "protokoll.leeren"),
+                        )
+                        .clicked()
+                        {
+                            bestaetigen = true;
+                        }
+                        if bausteine::knopf(ui, &f, Icon::Schliessen, &t(sprache, "allg.abbrechen"))
+                            .clicked()
+                        {
+                            abbrechen = true;
+                        }
+                    });
+                }
             }
             // Escape schließt jeden Dialog.
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -911,6 +957,105 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
     } else if abbrechen {
         sicht.dialog = Dialog::Keiner;
     }
+}
+
+/// Die Einzelheiten eines Aufrufs (Aufgabe 17): Zeit, Agent, Eintrag,
+/// Werkzeug, Dauer und Ergebnis; darunter Argumente, Fehlertext und die
+/// Vorschau der Antwort. Alles ist schon maskiert und gekürzt.
+fn aufruf_details(
+    ui: &mut egui::Ui,
+    f: &crate::thema::Farben,
+    sprache: crate::texte::Sprache,
+    aufruf: &quiver_client::Aufruf,
+    hoehe: f32,
+) {
+    ui.label(RichText::new(t(sprache, "protokoll.detail_titel")).heading());
+    ui.add(
+        egui::Label::new(text(
+            f,
+            format!(
+                "{} · {} · {}",
+                aufruf.eintrag,
+                aufruf.tool,
+                logik::status_text(sprache, aufruf.status)
+            ),
+            Ton::Leise,
+        ))
+        .wrap(),
+    );
+    ui.add_space(thema::SPACE_3);
+    let zeilen = vec![
+        (
+            t(sprache, "protokoll.spalte.zeit"),
+            aufruf.zeit.clone(),
+            true,
+        ),
+        (
+            t(sprache, "protokoll.spalte.agent"),
+            aufruf.agent.clone(),
+            false,
+        ),
+        (
+            t(sprache, "protokoll.spalte.dauer"),
+            logik::dauer_text(sprache, aufruf.dauer_ms),
+            false,
+        ),
+        (
+            t(sprache, "protokoll.antwort_groesse"),
+            tf(sprache, "protokoll.zeichen", &[&aufruf.antwort_groesse]),
+            false,
+        ),
+    ];
+    bausteine::fakten(ui, f, &zeilen);
+    ui.add_space(thema::SPACE_2);
+    egui::ScrollArea::vertical()
+        .id_salt("dialog-aufruf")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .max_height(hoehe)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            if !aufruf.argumente.is_empty() {
+                abschnitt(
+                    ui,
+                    f,
+                    sprache,
+                    "protokoll.argumente",
+                    &aufruf.argumente,
+                    true,
+                );
+            }
+            if let Some(fehler) = &aufruf.fehler {
+                abschnitt(ui, f, sprache, "protokoll.fehlertext", fehler, false);
+            }
+            if !aufruf.vorschau.is_empty() {
+                abschnitt(ui, f, sprache, "protokoll.vorschau", &aufruf.vorschau, true);
+            }
+        });
+}
+
+/// Eine Überschrift mit Inhalt und einem eigenen Kopier-Knopf daneben.
+fn abschnitt(
+    ui: &mut egui::Ui,
+    f: &crate::thema::Farben,
+    sprache: crate::texte::Sprache,
+    schluessel: &str,
+    inhalt: &str,
+    mono: bool,
+) {
+    ui.add_space(thema::SPACE_2);
+    ui.label(text(f, t(sprache, schluessel), Ton::Leise).small());
+    ui.horizontal_top(|ui| {
+        if bausteine::icon_knopf(ui, f, Icon::Kopieren, &t(sprache, "allg.kopieren"), false)
+            .clicked()
+        {
+            ui.ctx().copy_text(inhalt.to_string());
+        }
+        let mut wert = RichText::new(inhalt);
+        if mono {
+            wert = wert.monospace();
+        }
+        ui.add(egui::Label::new(wert).wrap());
+    });
 }
 
 /// Fokus beim ersten Bild des Dialogs ins erste Feld.

@@ -690,6 +690,19 @@ pub fn auswahl(
     platzhalter: &str,
 ) -> egui::Response {
     let breite = feldbreite(ui);
+    auswahl_mit(ui, f, wert, optionen, platzhalter, breite)
+}
+
+/// Wie [`auswahl`], aber mit fester Breite — für Filterleisten, in denen
+/// mehrere Auswahlen nebeneinander stehen (Protokoll, Aufgabe 17).
+pub fn auswahl_mit(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    wert: &mut String,
+    optionen: &[(String, String)],
+    platzhalter: &str,
+    breite: f32,
+) -> egui::Response {
     let anzeige = optionen
         .iter()
         .find(|(option, _)| option == wert)

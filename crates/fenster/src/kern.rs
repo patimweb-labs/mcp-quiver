@@ -9,7 +9,9 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use quiver_client::{Kern, KernKonfig, Modell};
+use quiver_client::protokoll::{Filter, LogFilter};
+use quiver_client::{Aufruf, Kern, KernKonfig, Modell, Zeile};
+use quiver_domain::EintragId;
 
 use crate::app::{Aktion, KernZugang};
 use crate::logik;
@@ -25,6 +27,8 @@ pub struct EchterKern {
     meldungen: Arc<Mutex<Vec<Meldung>>>,
     /// Womit sich das Fenster für „neuer Stand" wecken lässt.
     wecker: Arc<Mutex<Option<egui::Context>>>,
+    /// Zählt jede neue Protokollzeile – das Fenster lädt bei Änderung neu.
+    zaehler: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl EchterKern {
@@ -62,12 +66,38 @@ impl EchterKern {
             }
         });
 
+        // Neue Protokollzeilen wecken das Fenster ebenfalls (Aufgabe 17): der
+        // Zähler zählt, die Zeilen holt sich die Seite beim Kern.
+        let zaehler = Arc::new(std::sync::atomic::AtomicU64::new(kern.protokoll_stand()));
+        let mut protokoll_empfaenger = kern.protokoll_zaehler();
+        let zaehler_lauf = zaehler.clone();
+        let wecker_protokoll = wecker.clone();
+        laufzeit.spawn(async move {
+            loop {
+                zaehler_lauf.store(
+                    *protokoll_empfaenger.borrow_and_update(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                if let Some(ctx) = wecker_protokoll
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                {
+                    ctx.request_repaint();
+                }
+                if protokoll_empfaenger.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+
         Ok(Self {
             laufzeit,
             kern,
             stand,
             meldungen,
             wecker,
+            zaehler,
         })
     }
 
@@ -167,6 +197,17 @@ impl KernZugang for EchterKern {
                 // Den Browser öffnet das Fenster selbst (siehe `Fenster::bild`):
                 // hier gibt es nichts zu tun.
                 Aktion::LinkOeffnen(_) => Ok(()),
+                // Protokoll (Aufgabe 17).
+                Aktion::ProtokollLeeren => kern.protokoll_leeren().map(|()| {
+                    meldungen
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(Meldung::ProtokollGeleert);
+                }),
+                Aktion::ProtokollFuerAgenten { an } => {
+                    kern.protokoll_fuer_agenten_setzen(an).await;
+                    Ok(())
+                }
             };
             if let Err(fehler) = ergebnis {
                 meldungen
@@ -186,6 +227,18 @@ impl KernZugang for EchterKern {
 
     fn meldungen(&self) -> Vec<Meldung> {
         std::mem::take(&mut *self.meldungen.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    fn protokoll(&self, filter: &Filter) -> Vec<Aufruf> {
+        self.kern.protokoll(filter)
+    }
+
+    fn prozess_log(&self, eintrag: &EintragId, filter: &LogFilter) -> Vec<Zeile> {
+        self.kern.prozess_log(eintrag, filter)
+    }
+
+    fn protokoll_stand(&self) -> u64 {
+        self.zaehler.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn beenden(&self) {

@@ -297,8 +297,12 @@ async fn werkzeug_ist_nach_fuenf_sekunden_beim_agenten() {
         .list_tools(Some(PaginatedRequestParams::default()))
         .await
         .expect("tools/list");
+    // Nur die eigenen Werkzeuge von quiver stehen da (Aufgabe 17), kein Eintrag.
     assert!(
-        vorher.tools.iter().all(|tool| !tool.name.contains("__")),
+        vorher
+            .tools
+            .iter()
+            .all(|tool| !tool.name.contains("__") || tool.name.starts_with("quiver__")),
         "vor der Zuweisung läuft nichts: {:?}",
         vorher
             .tools
