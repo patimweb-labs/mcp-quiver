@@ -31,9 +31,10 @@ Jedes Programm hat einen eigenen **`DateiTresor`** in seinem Ordner:
   schützt das Benutzerprofil.
 - Mehrere Prozesse dürfen gleichzeitig zugreifen. Jede Änderung liest unter einer
   Dateisperre (`File::lock`, Standardbibliothek) neu und ersetzt die Datei atomar.
-- **Umzug:** Unter macOS sieht der Tresor einmal im alten Schlüsselbund nach, wenn ein Wert
-  noch nicht in der Datei steht, und übernimmt ihn. `keyring` ist dafür nur noch eine
-  macOS-Abhängigkeit.
+- **Kein Umzug, kein Schlüsselbund mehr:** Ein erster Entwurf hat fehlende Werte einmal im
+  alten Schlüsselbund gesucht. Weil `quiver-zep status` alle paar Sekunden als eigener
+  Prozess läuft, kam der Dialog dadurch immer wieder. Deshalb ist `keyring` ganz entfernt.
+  Geheimnisse werden einmal neu eingegeben, Anmeldungen einmal über den Knopf wiederholt.
 - `QUIVER_TRESOR=speicher`, `M365_TRESOR=speicher` und `ZEP_TRESOR=speicher` bleiben für
   Tests und Läufe ohne Spuren.
 
@@ -47,4 +48,3 @@ Jedes Programm hat einen eigenen **`DateiTresor`** in seinem Ordner:
 - Später möglich: ein Hauptpasswort beim Start, das den Schlüssel ableitet (Argon2), oder
   wahlweise wieder ein Schlüsselbund als eigener `Tresor`. Beides passt hinter die bestehende
   `Tresor`-Schnittstelle.
-- Den Umzugsweg entfernen, sobald alle Geräte umgezogen sind (`docs/offen.md`).

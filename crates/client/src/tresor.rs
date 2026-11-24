@@ -13,9 +13,6 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-/// Der Dienstname im alten Schlüsselbund (nur noch für den Umzug).
-pub const DIENST: &str = "mcp-quiver";
-
 /// Ein Ablageort für Geheimnisse.
 pub trait Tresor: Send + Sync {
     fn lesen(&self, schluessel: &str) -> anyhow::Result<Option<String>>;
@@ -27,18 +24,8 @@ pub use crate::dateitresor::DateiTresor;
 
 impl DateiTresor {
     /// Der Tresor des Clients in `<profil>/tresor`.
-    ///
-    /// Unter macOS wird ein Wert, der noch nicht in der Datei steht, einmal
-    /// im alten Schlüsselbund gesucht und übernommen (Umzug ohne neue
-    /// Eingabe). Ein anderes Profil (`QUIVER_PROFIL`) zieht nicht um.
-    pub fn fuer_profil(profil: &std::path::Path, umziehen: bool) -> Self {
-        let tresor = DateiTresor::im_ordner(profil.join("tresor"));
-        if umziehen {
-            if let Some(altbestand) = altbestand() {
-                return tresor.mit_altbestand(altbestand);
-            }
-        }
-        tresor
+    pub fn fuer_profil(profil: &std::path::Path) -> Self {
+        DateiTresor::im_ordner(profil.join("tresor"))
     }
 }
 
@@ -52,22 +39,6 @@ impl Tresor for DateiTresor {
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
         DateiTresor::loeschen(self, schluessel)
     }
-}
-
-/// Der alte Schlüsselbund als Altbestand – nur unter macOS.
-#[cfg(target_os = "macos")]
-fn altbestand() -> Option<crate::dateitresor::Altbestand> {
-    Some(Box::new(|schluessel: &str| {
-        keyring::Entry::new(DIENST, schluessel)
-            .ok()?
-            .get_password()
-            .ok()
-    }))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn altbestand() -> Option<crate::dateitresor::Altbestand> {
-    None
 }
 
 /// Ein Tresor im Arbeitsspeicher – für Tests und für Läufe ohne Spuren.

@@ -56,4 +56,4 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] `QUIVER_TRESOR=speicher` ist ein Entwicklerweg (Geheimnisse gehen beim
       Beenden verloren); gedacht für Läufe ohne Spuren.
 
-- [ ] Tresor-Datei (ADR mcp-quiver 0001): Umzug aus dem macOS-Schlüsselbund entfernen, sobald alle Geräte umgezogen sind; optional Hauptpasswort (Argon2) beim Start.
+- [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.

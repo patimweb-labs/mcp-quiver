@@ -58,11 +58,9 @@ fn einrichten_log() {
 fn kernkonfig(mut konfig: KernKonfig, lesen: impl Fn(&str) -> Option<String>) -> KernKonfig {
     if let Some(pfad) = lesen("QUIVER_PROFIL").filter(|pfad| !pfad.trim().is_empty()) {
         konfig.profil = PathBuf::from(pfad.trim());
-        // Ein eigenes Profil hat seinen eigenen Tresor – ohne Umzug.
-        konfig.tresor = std::sync::Arc::new(quiver_client::DateiTresor::fuer_profil(
-            &konfig.profil,
-            false,
-        ));
+        // Ein eigenes Profil hat seinen eigenen Tresor.
+        konfig.tresor =
+            std::sync::Arc::new(quiver_client::DateiTresor::fuer_profil(&konfig.profil));
     }
     if let Some(wert) = lesen("QUIVER_MCP_ADRESSE") {
         match wert.trim().parse::<SocketAddr>() {

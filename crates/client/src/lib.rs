@@ -87,7 +87,7 @@ impl KernKonfig {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("mcp-quiver");
         Self {
-            tresor: Arc::new(DateiTresor::fuer_profil(&profil, true)),
+            tresor: Arc::new(DateiTresor::fuer_profil(&profil)),
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
         }
