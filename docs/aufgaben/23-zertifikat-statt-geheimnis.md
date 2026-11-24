@@ -11,3 +11,11 @@ Nach 20. Viele Tenants verbieten Client-Geheimnisse per Richtlinie. Der Server w
 - Doku (en/de): Anleitung allgemein, ohne Firmendaten. ADR 0002 ergänzen.
 
 Dazu ein Befund aus 20: Ein Test, der hängt, muss nach einer Frist scheitern (Zeitlimit um jeden Test, der auf Server oder Client wartet).
+
+## Entra-Gruppen von selbst in quiver
+
+- Jede Gruppen-Id, die in einem geprüften ID-Token steht (Anmeldung, Nachprüfen), legt der Server **einmal** als quiver-Gruppe an, falls noch keine Gruppe diese Id trägt: `entra: [id]`, Titel „Entra-Gruppe <erste 8 Zeichen>“, **ohne Sätze**. Sie gibt also erst Tools, wenn ein Admin einen Satz zuordnet. Prüfspur „angelegt durch Anmeldung“.
+- Titel und Sätze gehören danach dem Admin, kein Abgleich überschreibt sie. Löscht der Admin die Gruppe, bleibt sie gelöscht (Id gemerkt); die Verwaltung kann sie wieder aufnehmen.
+- Mitgliedschaften pflegt **nur** Entra: ersetzt bei Anmeldung und bei jedem Nachprüfen, auch das Entfernen. Änderungen wirken sofort auf die verbundenen Geräte. Von Hand sind sie für Entra-Gruppen nicht änderbar.
+- Höchstens 200 so angelegte Gruppen. Tests: erste Anmeldung, zweite ohne Doppel, Umbenennen bleibt, Entzug nimmt Tools am verbundenen Gerät weg, gelöscht bleibt gelöscht, neue Gruppe ohne Satz gibt nichts, gleichzeitige Anmeldungen legen genau eine an.
+- Verwaltung (Aufgabe 21): Gruppen aus Entra gekennzeichnet, Titel änderbar, Hinweis „noch kein Satz“.
