@@ -37,7 +37,7 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht) {
         ui,
         &f,
         |ui| {
-            bausteine::marke(ui, &f);
+            bausteine::marke(ui, &f, sicht.thema);
             ui.add_space(thema::SPACE_3);
             // Im schmalen Fenster wird der Stand gekürzt, statt umzubrechen.
             if kompakt {

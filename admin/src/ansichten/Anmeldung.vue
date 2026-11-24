@@ -5,11 +5,12 @@ import { computed, ref } from "vue";
 import { WpButton, WpInput } from "@weppelmann/components";
 
 import { ApiFehler, Client, fehlertext } from "../api/client";
+import type { Thema } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
 import Karte from "../bausteine/Karte.vue";
 import Marke from "../bausteine/Marke.vue";
 
-const props = defineProps<{ fehler?: string }>();
+const props = defineProps<{ fehler?: string; thema: Thema }>();
 const emit = defineEmits<{ angemeldet: [string] }>();
 
 const token = ref("");
@@ -43,7 +44,7 @@ async function anmelden(): Promise<void> {
 <template>
   <main class="anmeldung">
     <div class="anmeldung__kopf">
-      <Marke />
+      <Marke :thema="thema" />
       <p class="anmeldung__unter">Verwaltung</p>
     </div>
     <div class="anmeldung__breite">

@@ -5,7 +5,7 @@
 //! Fläche, Kürzel, Formularzeilen. Sie bekommen Farben aus dem Theme, nie
 //! Werte.
 
-use crate::thema::{self, fett, Farben, Ton};
+use crate::thema::{self, fett, Farben, Thema, Ton};
 use egui::{Color32, RichText, Sense, Stroke};
 
 /// Text in einer Bedeutungsfarbe.
@@ -177,10 +177,25 @@ pub fn kuerzel(ui: &mut egui::Ui, f: &Farben, name: &str, ich: bool, hervorgehob
     );
 }
 
-/// Die Marke im Kopf. Ein Zeichen gibt es noch nicht (kommt vom Nutzer, siehe
-/// AGENTS.md §8); bis dahin steht die Wortmarke als Text in der fetten
-/// Schrift, in der Textfarbe. Beide Fenster zeichnen sie so.
-pub fn marke(ui: &mut egui::Ui, f: &Farben) {
+/// Das Zeichen zum Farbschema (`assets/marke`, freigestellt).
+fn logo(thema: Thema) -> egui::ImageSource<'static> {
+    match thema {
+        Thema::Dunkel => egui::include_image!("../../../assets/marke/logo-dunkel.png"),
+        Thema::Hell => egui::include_image!("../../../assets/marke/logo-hell.png"),
+        Thema::Mono => egui::include_image!("../../../assets/marke/logo-mono.png"),
+    }
+}
+
+/// Die Marke im Kopf: Zeichen und Wortmarke, wie `Marke.vue` in der Verwaltung.
+/// Das Zeichen ist Schmuck, den Namen trägt die Wortmarke.
+pub fn marke(ui: &mut egui::Ui, f: &Farben, thema: Thema) {
+    ui.add(
+        egui::Image::new(logo(thema))
+            .fit_to_exact_size(egui::Vec2::splat(thema::SIZE_LOGO))
+            .alt_text(""),
+    );
+    // Genau `SPACE_2` wie in `Marke.vue`, unabhängig vom Abstand der Zeile.
+    ui.add_space(thema::SPACE_2 - ui.spacing().item_spacing.x);
     ui.label(
         RichText::new("mcp-quiver")
             .font(egui::FontId::new(thema::FONT_SIZE_LG, fett()))
