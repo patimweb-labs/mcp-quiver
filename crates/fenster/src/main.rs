@@ -170,7 +170,7 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
             }
             // Signale (Strg+C, SIGTERM) beenden geordnet und stehen mit
             // Ursache im Protokoll.
-            ende::signal_faden(cc.egui_ctx.clone(), ende_fahne.clone());
+            ende::signal_faden(cc.egui_ctx.clone(), ende_fahne.clone(), kern.anhalter());
             let fenster = Fenster::neu(kern, sicht, Some(profil))
                 .mit_autostart(Box::new(autostart::setzen))
                 .mit_tray(tray, befehl_empfaenger)

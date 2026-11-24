@@ -113,10 +113,21 @@ async fn warter() -> EndeGrund {
     EndeGrund::StrgC
 }
 
+/// So lange darf das Fenster brauchen, um nach einem Signal selbst zu enden.
+pub const FENSTER_FRIST: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Im Fensterbetrieb: Signale in einem eigenen Faden abwarten und die
 /// Oberfläche wecken. `ctx` kommt von eframe; ohne ihn bliebe das Fenster
 /// stehen, bis der User es anfasst.
-pub fn signal_faden(ctx: eframe::egui::Context, fahne: EndeFahne) {
+///
+/// Ein weggelegtes Fenster zeichnet je nach System gar nicht mehr und sähe die
+/// Fahne nie. Nach [`FENSTER_FRIST`] hält deshalb `anhalten` den Kern selbst an
+/// und der Prozess endet.
+pub fn signal_faden(
+    ctx: eframe::egui::Context,
+    fahne: EndeFahne,
+    anhalten: impl FnOnce() + Send + 'static,
+) {
     std::thread::spawn(move || {
         let laufzeit = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -130,7 +141,14 @@ pub fn signal_faden(ctx: eframe::egui::Context, fahne: EndeFahne) {
         };
         let grund = laufzeit.block_on(warte_auf_signal());
         fahne.setzen(grund);
-        ctx.request_repaint();
+        let beginn = std::time::Instant::now();
+        while beginn.elapsed() < FENSTER_FRIST {
+            ctx.request_repaint();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        tracing::info!("Das Fenster ist weggelegt — der Kern wird direkt angehalten");
+        anhalten();
+        std::process::exit(0);
     });
 }
 
