@@ -127,6 +127,13 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
         .with_app_id("de.weppelmann.mcp-quiver")
         .with_inner_size([1000.0, 720.0])
         .with_min_inner_size([560.0, 460.0]);
+    // Das App-Icon (Fensterkopf, Taskleiste, Dock beim Start aus dem Terminal).
+    match eframe::icon_data::from_png_bytes(include_bytes!(
+        "../../../assets/marke/quiver-dunkel-256.png"
+    )) {
+        Ok(icon) => viewport = viewport.with_icon(std::sync::Arc::new(icon)),
+        Err(fehler) => tracing::warn!("App-Icon nicht lesbar: {fehler}"),
+    }
     if hintergrund {
         viewport = viewport.with_visible(false).with_active(false);
     }

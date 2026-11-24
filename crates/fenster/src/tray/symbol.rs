@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Das Symbol des Tray-Eintrags. Ein Logo gibt es noch nicht (AGENTS.md §8);
-//! bis dahin ist es das Lucide-Zeichen `package` aus `oberflaeche/icons` —
-//! dasselbe Bild wie die Seite „Tools". Gerastert wird mit `resvg` in 32 und
-//! 64 px. Später wird nur die Bilddatei getauscht, nicht dieser Code.
+//! Das Symbol des Tray-Eintrags, abgeleitet aus dem Logo (`assets/marke`).
+//!
+//! - **macOS:** `oberflaeche/icons/quiver-tray.svg` – einfarbig nach der
+//!   Mono-Variante, als Template; die Menüleiste färbt es hell oder dunkel.
+//!   Gerastert mit `resvg`.
+//! - **Windows und Linux:** das farbige App-Icon (dunkle Variante). Ein
+//!   schwarzes Template wäre auf einer dunklen Taskleiste unsichtbar.
 
-/// Das Zeichen als SVG, wie es die Oberfläche benutzt.
-pub const SVG: &str = include_str!("../../../oberflaeche/icons/package.svg");
+/// Das einfarbige Tray-Zeichen als SVG.
+pub const SVG: &str = include_str!("../../../oberflaeche/icons/quiver-tray.svg");
 
 /// Die beiden Größen, die die Plattformen wollen: macOS nimmt das kleine Bild,
 /// Windows und Linux skalieren selbst.
@@ -16,6 +19,27 @@ pub const KANTEN: [u32; 2] = [32, 64];
 /// Das Zeichen als rohe RGBA-Werte (gerade, nicht vormultipliziert), wie
 /// `tray-icon` und `ksni` es erwarten.
 pub fn raster(kante: u32) -> anyhow::Result<Vec<u8>> {
+    if cfg!(target_os = "macos") {
+        template(kante)
+    } else {
+        farbig(kante)
+    }
+}
+
+/// Das farbige App-Icon in 32 oder 64 px (fertig verkleinert im Repo).
+pub fn farbig(kante: u32) -> anyhow::Result<Vec<u8>> {
+    let png: &[u8] = match kante {
+        32 => include_bytes!("../../../../assets/marke/quiver-dunkel-32.png"),
+        64 => include_bytes!("../../../../assets/marke/quiver-dunkel-64.png"),
+        _ => anyhow::bail!("farbiges Tray-Symbol gibt es nur in 32 und 64 px"),
+    };
+    let bild = eframe::icon_data::from_png_bytes(png)
+        .map_err(|fehler| anyhow::anyhow!("Tray-Symbol nicht lesbar: {fehler}"))?;
+    Ok(bild.rgba)
+}
+
+/// Das einfarbige Template (macOS) aus dem SVG.
+pub fn template(kante: u32) -> anyhow::Result<Vec<u8>> {
     let baum = resvg::usvg::Tree::from_str(SVG, &resvg::usvg::Options::default())
         .map_err(|fehler| anyhow::anyhow!("Tray-Symbol ist kein SVG: {fehler}"))?;
     let mut bild = resvg::tiny_skia::Pixmap::new(kante, kante)
@@ -96,3 +120,4 @@ mod tests {
         assert_eq!(entmultipliziert(&[9, 8, 7, 255]), vec![9, 8, 7, 255]);
     }
 }
+
