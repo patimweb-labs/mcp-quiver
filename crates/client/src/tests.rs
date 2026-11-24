@@ -592,3 +592,16 @@ fn ein_zweiter_abgleich_startet_denselben_eintrag_nicht_noch_einmal() {
     ));
     assert!(!ueberholt(&Aktion::Stoppen(id.clone()), &gleich, &soll));
 }
+
+#[test]
+fn ein_schema_ohne_typ_wird_zum_objekt() {
+    let leer = std::sync::Arc::new(JsonObject::new());
+    let neu = crate::schema_mit_typ(&leer);
+    assert_eq!(neu.get("type"), Some(&serde_json::json!("object")));
+    assert_eq!(neu.get("properties"), Some(&serde_json::json!({})));
+
+    // Vorhandene Schemas bleiben, wie sie sind.
+    let werkzeug = werkzeug("lesen");
+    let gleich = crate::schema_mit_typ(&werkzeug.input_schema);
+    assert_eq!(*gleich, *werkzeug.input_schema);
+}

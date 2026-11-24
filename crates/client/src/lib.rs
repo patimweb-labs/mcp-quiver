@@ -778,6 +778,7 @@ impl Innen {
             for tool in &laeufer.stand.tools {
                 let mut kopie = tool.clone();
                 kopie.name = quiver_domain::tool_name(id, &tool.name).into();
+                kopie.input_schema = schema_mit_typ(&tool.input_schema);
                 alle.push(kopie);
             }
         }
@@ -891,6 +892,23 @@ pub(crate) fn geheim_schluessel(id: &EintragId, feld: &str) -> String {
 }
 
 /// Schlüssel eines Geheimwerts eines Zugangs im Tresor (Aufgabe 14).
+/// Das Eingabeschema eines Tools, wie MCP es verlangt: ein JSON-Schema mit
+/// `"type": "object"`. Manche Server schicken `{}` – pi nimmt das hin, Hermes
+/// (pydantic) lehnt dann die **ganze** Tool-Liste ab. Fehlt der Typ, ergänzt
+/// der Client `"type": "object"` (und leere `properties`).
+pub(crate) fn schema_mit_typ(
+    schema: &std::sync::Arc<serde_json::Map<String, serde_json::Value>>,
+) -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
+    if schema.get("type").is_some() {
+        return schema.clone();
+    }
+    let mut neu = (**schema).clone();
+    neu.insert("type".to_string(), serde_json::Value::from("object"));
+    neu.entry("properties".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    std::sync::Arc::new(neu)
+}
+
 pub(crate) fn zugang_geheim_schluessel(id: &EintragId, name: &str, feld: &str) -> String {
     format!("zugang/{id}/{name}/{feld}")
 }
