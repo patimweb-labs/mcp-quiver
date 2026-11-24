@@ -33,3 +33,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 hex = "0.4"
+
+# Kryptografie auch in Entwicklung und Tests optimieren: Argon2id (64 MiB) und
+# RSA brauchen unoptimiert Sekunden je Aufruf und machen die Tests zäh.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.rsa]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
