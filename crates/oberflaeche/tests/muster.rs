@@ -70,7 +70,7 @@ impl Muster {
             ui,
             &f,
             |ui| {
-                bausteine::marke(ui, &f);
+                bausteine::marke(ui, &f, self.thema);
                 ui.add_space(thema::SPACE_3);
                 bausteine::status(ui, &f, Ton::Gut, "Verbunden mit http://quiver.example:8080");
             },

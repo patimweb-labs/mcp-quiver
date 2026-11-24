@@ -40,7 +40,7 @@ function waehleThema(wert: string): void {
 
 <template>
   <header class="kopf">
-    <Marke />
+    <Marke :thema="thema" />
     <div class="kopf__rechts">
       <Segmentauswahl
         v-if="breite !== 'eng'"

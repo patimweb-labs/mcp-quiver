@@ -122,6 +122,7 @@ onBeforeUnmount(() => {
     <Anmeldung
       v-else
       :fehler="anmeldefehler"
+      :thema="thema"
       @angemeldet="angemeldet"
     />
   </div>
