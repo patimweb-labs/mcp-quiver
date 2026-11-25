@@ -4,7 +4,7 @@
 #   Tag v1.2.3           -> 1.2.3, 1.2, latest, sha-<commit>
 #   „Run workflow“       -> sha-<commit>
 #
-# Bis PR #1 gemergt ist, baut auch `feat/grundgeruest` (für den ersten Server).
+# Bis der Branch gemergt ist, baut auch `feat/grundgeruest` (für den ersten Server).
 # Angemeldet wird mit den Repo-Secrets DOCKERHUB_USERNAME und DOCKERHUB_TOKEN;
 # fehlen sie, wird nichts gebaut und der Lauf sagt es.
 name: Abbild
