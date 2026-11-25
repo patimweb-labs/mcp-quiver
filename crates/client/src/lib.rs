@@ -2038,11 +2038,13 @@ async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
         if !darf_laufen(&stand, &id) {
             return;
         }
+        // Mit dem Programm: ändert es sich, startet der Eintrag neu.
+        let fingerabdruck = stand.soll.fingerabdruck(eintrag);
         stand.laeufer.insert(
             id.clone(),
             Laeufer {
                 generation,
-                fingerabdruck: eintrag.fingerabdruck(),
+                fingerabdruck,
                 stand: LaeuferStand::neu(EintragZustand::Startet),
                 peer: None,
                 abbruch: abbruch.clone(),
@@ -2069,6 +2071,33 @@ fn stoppe_in(innen: &Arc<Innen>, id: &EintragId) {
     if let Some(laeufer) = laeufer {
         laeufer.abbruch.abbrechen();
     }
+}
+
+/// Alte Fassungen eines Programms löschen, sobald ihr Prozess sie freigibt.
+/// Was nach zehn Sekunden noch liegt, nimmt der nächste Start mit.
+fn alte_fassungen_nachholen(innen: &Arc<Innen>, name: String) {
+    let hier = innen.clone();
+    let aufgabe = tokio::spawn(async move {
+        for _ in 0..20 {
+            tokio::select! {
+                _ = hier.ende.warten() => return,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+            }
+            // Nicht neben einem laufenden Laden, und immer nach dem Soll von
+            // jetzt.
+            let _wache = hier.programm_wache.lock().await;
+            let sha = hier.stand().soll.programm(&name).map(|p| p.sha256.clone());
+            match sha {
+                Some(sha) if !hier.ablage.alte_fassungen(&name, &sha) => {}
+                _ => return,
+            }
+        }
+    });
+    innen
+        .aufgaben
+        .lock()
+        .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+        .push(aufgabe);
 }
 
 /// Die Aufsicht eines Eintrags: starten, Werkzeuge holen, warten, neu starten.
@@ -2212,7 +2241,11 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
         // entbehrlich.
         if let Some(name) = tools::verteilt_name(&eintrag.eintrag.laufzeit) {
             if let Some(sha) = innen.stand().soll.programm(&name).map(|p| p.sha256.clone()) {
-                innen.ablage.alte_fassungen(&name, &sha);
+                // Ein gestoppter Prozess gibt seine Datei unter Windows erst
+                // einen Augenblick später frei: der Rest läuft nebenher.
+                if !innen.ablage.alte_fassungen(&name, &sha) {
+                    alte_fassungen_nachholen(&innen, name);
+                }
             }
         }
 
@@ -2342,7 +2375,7 @@ pub(crate) fn ueberholt(
             .eintraege
             .iter()
             .find(|eintrag| &eintrag.eintrag.id == id)
-            .is_some_and(|eintrag| ist.get(id) == Some(&eintrag.fingerabdruck())),
+            .is_some_and(|eintrag| ist.get(id) == Some(&soll.fingerabdruck(eintrag))),
     }
 }
 
@@ -2386,6 +2419,17 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
         match aktion {
             quiver_domain::Aktion::Stoppen(id) => stoppe_in(innen, &id),
             quiver_domain::Aktion::Neustarten(id) => {
+                // Nur das Programm ist anders: laufende Aufrufe zu Ende
+                // bringen, bevor getauscht wird.
+                let nur_programm = soll
+                    .eintraege
+                    .iter()
+                    .find(|eintrag| eintrag.eintrag.id == id)
+                    .zip(ist.get(&id))
+                    .is_some_and(|(eintrag, fa)| fa.starts_with(&eintrag.fingerabdruck()));
+                if nur_programm {
+                    innen.tausch_abwarten(&id).await;
+                }
                 stoppe_in(innen, &id);
                 starte_aus_soll(innen, &soll, &id).await;
             }

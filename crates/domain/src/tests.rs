@@ -181,6 +181,41 @@ fn abgleich_reihenfolge() {
     assert_eq!(abgleichen(&soll, &ist), [Aktion::Neustarten(mail)]);
 }
 
+/// Kommt ein Programm dazu, ändert es sich oder fällt es weg, startet der
+/// Eintrag neu – auch wenn seine Konfiguration gleich bleibt.
+#[test]
+fn ein_anderes_programm_ist_ein_neustart() {
+    let (g, gr, s, e) = welt(vec![satz("a", 0, &[("tenant", "x")])]);
+    let mut soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    soll.eintraege[0].eintrag.laufzeit = Laufzeit::Stdio {
+        befehl: "quiver-mail".into(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    let id = soll.eintraege[0].eintrag.id.clone();
+    let mit = |sha: &str| {
+        soll.clone().mit_programmen(vec![Programm {
+            name: "quiver-mail".into(),
+            version: "1".into(),
+            groesse: 1,
+            sha256: sha.repeat(64),
+            system: "linux".into(),
+            arch: "x64".into(),
+        }])
+    };
+    let laeuft =
+        |soll: &Soll| BTreeMap::from([(id.clone(), soll.fingerabdruck(&soll.eintraege[0]))]);
+    let neu = [Aktion::Neustarten(id.clone())];
+    assert_eq!(abgleichen(&mit("a"), &laeuft(&soll)), neu, "kommt dazu");
+    assert_eq!(
+        abgleichen(&mit("b"), &laeuft(&mit("a"))),
+        neu,
+        "ändert sich"
+    );
+    assert_eq!(abgleichen(&soll, &laeuft(&mit("a"))), neu, "fällt weg");
+    assert_eq!(abgleichen(&mit("a"), &laeuft(&mit("a"))), []);
+}
+
 #[test]
 fn revision_ist_stabil_und_aendert_sich() {
     let (g, gr, s, e) = welt(vec![satz("a", 0, &[("tenant", "x")])]);

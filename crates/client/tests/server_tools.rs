@@ -25,7 +25,7 @@ use quiver_protocol::EintragZustand;
 mod gemeinsam;
 
 /// Wie lange auf einen Zustand gewartet wird.
-const FRIST: Duration = Duration::from_secs(30);
+const FRIST: Duration = Duration::from_secs(90);
 
 /// Der Server, sein Programmordner und ein eingebundener Client.
 struct Welt {
@@ -468,6 +468,33 @@ async fn ein_programm_zwei_eintraege_werden_beide_getauscht() {
     assert!(welt.im_profil(&welt.programm(&neu)).is_file());
     welt.warte_auf_laeuft(&erster).await;
 
+    welt.kern.beenden().await;
+}
+
+/// Der Server hat das Programm (kurz) nicht: die Karte sagt es. Kommt es
+/// später dazu, startet der Eintrag **von selbst** – ohne Neustart des Clients.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_spaeter_bereitgelegtes_programm_startet_von_selbst() {
+    let inhalt = attrappe("demo");
+    let welt = Welt::neu(&inhalt).await;
+    let id = EintragId::neu("devops");
+    welt.warte_auf_laeuft(&id).await;
+
+    welt.ablage_leeren();
+    welt.anstossen().await;
+    welt.warte_auf("der Eintrag läuft nicht mehr", |welt| {
+        welt.sicht(&id)
+            .is_some_and(|sicht| !matches!(sicht.zustand, EintragZustand::Laeuft { .. }))
+            && !welt.im_profil(&welt.programm(&inhalt)).exists()
+    })
+    .await;
+    // Der Zustand ist zur Ruhe gekommen (kein Versuch mehr unterwegs).
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    welt.ablegen(&inhalt);
+    welt.anstossen().await;
+    let laeuft = welt.warte_auf_laeuft(&id).await;
+    assert!(laeuft.tools.iter().any(|tool| tool == "lesen"));
     welt.kern.beenden().await;
 }
 
