@@ -207,7 +207,7 @@ Repository ist derselbe Aufruf und kann lokal bauen:
 | Windows x86_64 | `quiver-<version>-windows-x86_64.msi` | Doppelklick — installiert für den aktuellen Benutzer, kein Administrator |
 | Windows x86_64, portabel | `quiver-<version>-windows-x86_64.zip` | entpacken, `quiver.exe` starten |
 | Debian, Ubuntu | `mcp-quiver_<version>_<amd64\|arm64>.deb` | `sudo apt install ./mcp-quiver_<version>_amd64.deb` |
-| Fedora, openSUSE | `mcp-quiver-<version>.<x86_64\|aarch64>.rpm` | `sudo dnf install ./mcp-quiver-<version>.x86_64.rpm` |
+| Fedora, openSUSE | `mcp-quiver-<version>-1.<x86_64\|aarch64>.rpm` | `sudo dnf install ./mcp-quiver-<version>-1.x86_64.rpm` |
 | jedes Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, starten |
 | jedes Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | auspacken, `bin/quiver` starten |
 

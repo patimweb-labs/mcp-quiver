@@ -10,8 +10,8 @@
 //! * Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, Wert `mcp-quiver`
 //! * Linux: `~/.config/autostart/<kennung>.desktop`
 //!
-//! `QUIVER_AUTOSTART_DIR` verlegt das Zielverzeichnis (Tests, andere Sitzungen)
-//! — auf macOS und Linux. Die Inhalte entstehen in reinen Funktionen
+//! `QUIVER_AUTOSTART_DIR` verlegt das Ziel in eine Datei (Tests, andere Sitzungen),
+//! auf allen Systemen. Die Inhalte entstehen in reinen Funktionen
 //! ([`plist`], [`desktop`]), damit sie sich ohne System prüfen lassen.
 
 use std::ffi::OsString;
@@ -69,29 +69,30 @@ pub fn programm() -> PathBuf {
 /// Ist der Autostart eingetragen? Gefragt wird das System, nicht das Fenster.
 pub fn aktiv() -> bool {
     #[cfg(target_os = "windows")]
-    {
-        windows::aktiv()
+    if !verlegt() {
+        return windows::aktiv();
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        datei().is_some_and(|pfad| pfad.is_file())
-    }
+    datei().is_some_and(|pfad| pfad.is_file())
+}
+
+/// Nennt [`UMGEBUNG`] einen anderen Ort? Dann gilt auch unter Windows die Datei
+/// dort: ein Test darf nie in die Registry des Rechners schreiben.
+#[cfg(target_os = "windows")]
+fn verlegt() -> bool {
+    std::env::var_os(UMGEBUNG).is_some_and(|wert| !wert.is_empty())
 }
 
 /// Autostart ein- oder ausschalten.
 ///
-/// Auf Windows steht der Eintrag in der Registry, sonst in einer Datei;
-/// deshalb ein Block je Plattform statt eines `return` dazwischen.
+/// Auf Windows steht der Eintrag in der Registry, sonst (und mit [`UMGEBUNG`])
+/// in einer Datei.
 pub fn setzen(an: bool) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
-    {
-        windows::setzen(an)
+    if !verlegt() {
+        return windows::setzen(an);
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let pfad = datei().ok_or_else(|| anyhow::anyhow!("kein Zuhause für den Autostart"))?;
-        setzen_in(&pfad, an, cfg!(target_os = "macos"), &programm())
-    }
+    let pfad = datei().ok_or_else(|| anyhow::anyhow!("kein Zuhause für den Autostart"))?;
+    setzen_in(&pfad, an, cfg!(target_os = "macos"), &programm())
 }
 
 /// Schreibt oder entfernt die Autostart-Datei an `pfad`. `plist` wählt das

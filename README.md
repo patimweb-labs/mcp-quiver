@@ -199,7 +199,7 @@ call and can build locally: `docker compose up -d --build`.
 | Windows x86_64 | `quiver-<version>-windows-x86_64.msi` | double click — installs for the current user, no administrator |
 | Windows x86_64, portable | `quiver-<version>-windows-x86_64.zip` | unzip, run `quiver.exe` |
 | Debian, Ubuntu | `mcp-quiver_<version>_<amd64\|arm64>.deb` | `sudo apt install ./mcp-quiver_<version>_amd64.deb` |
-| Fedora, openSUSE | `mcp-quiver-<version>.<x86_64\|aarch64>.rpm` | `sudo dnf install ./mcp-quiver-<version>.x86_64.rpm` |
+| Fedora, openSUSE | `mcp-quiver-<version>-1.<x86_64\|aarch64>.rpm` | `sudo dnf install ./mcp-quiver-<version>-1.x86_64.rpm` |
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, run it |
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | unpack, run `bin/quiver` |
 

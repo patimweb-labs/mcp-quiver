@@ -375,11 +375,19 @@ fn laeuft(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(unix))]
-fn laeuft(_pid: u32) -> bool {
-    // Ohne `kill -0` zählt die PID-Datei: der Demo-MCP entfernt sie beim
-    // sauberen Beenden.
-    true
+/// Windows: `tasklist` fragt nach der PID. Der Programmname muss passen, sonst
+/// zählte ein fremder Prozess mit wiederverwendeter PID. Scheitert die Abfrage,
+/// ist das ein Testfehler und kein „läuft nicht“.
+#[cfg(windows)]
+fn laeuft(pid: u32) -> bool {
+    let ausgabe = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .output()
+        .expect("tasklist");
+    assert!(ausgabe.status.success(), "tasklist: {}", ausgabe.status);
+    String::from_utf8_lossy(&ausgabe.stdout)
+        .to_ascii_lowercase()
+        .contains("quiver-demo-mcp")
 }
 
 // --------------------------------------------------------------- Testdaten
