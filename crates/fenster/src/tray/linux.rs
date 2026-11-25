@@ -94,6 +94,9 @@ impl ksni::Tray for Symbol {
 
 pub struct Tray {
     handle: Handle<Symbol>,
+    /// Dieselbe Quelle, aus der auch das Symbol sein Menü liest: die Anwendung
+    /// schreibt hier hinein, `update` lässt `ksni` sie neu abfragen.
+    z: TrayZustand,
 }
 
 impl Tray {
@@ -112,8 +115,10 @@ impl Tray {
                 })
             })
             .collect();
-        match (Symbol { z, icon }).spawn() {
-            Ok(handle) => Some(Tray { handle }),
+        // Das Symbol bekommt eine eigene Hand auf den Zustand: es lebt im
+        // D-Bus-Faden, `Tray` im Fensterfaden.
+        match (Symbol { z: z.clone(), icon }).spawn() {
+            Ok(handle) => Some(Tray { handle, z }),
             Err(fehler) => {
                 tracing::warn!("kein Tray: {fehler}");
                 None

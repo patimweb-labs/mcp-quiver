@@ -9,10 +9,16 @@
 //!
 //! Erkannt wird die laufende Instanz an einer **Sperrdatei** im Profil
 //! (`<profil>/instanz.sperre`, Paket 3): wer sie sperren kann, ist die erste
-//! Instanz. Darin steht der Port, auf dem sie lauscht — der wird **frei
-//! gewählt** (Port 0) und ist nur zum Zeigen da, nicht zum Erkennen. Der
-//! frühere Weg über „MCP-Port + 1“ war falsch: er kollidierte mit einem
-//! anderen Programm auf diesem Port und sagte nichts über das Profil.
+//! Instanz. Daneben steht `<profil>/instanz.port` mit dem Port, auf dem sie
+//! lauscht — der wird **frei gewählt** (Port 0) und ist nur zum Zeigen da,
+//! nicht zum Erkennen. Der frühere Weg über „MCP-Port + 1“ war falsch: er
+//! kollidierte mit einem anderen Programm auf diesem Port und sagte nichts
+//! über das Profil.
+//!
+//! Der Port steht in einer **eigenen** Datei, nicht in der gesperrten: Windows
+//! sperrt verpflichtend, und zwar für jede fremde Hand — auch im selben
+//! Prozess. Wer in die gesperrte Datei schriebe oder sie läse, bekäme dort
+//! eine Sperrverletzung; die zweite Instanz könnte den Port also nie lesen.
 //!
 //! Über den Port kommt genau eine Zeile Text („zeigen“), keine Token-Wache,
 //! kein Zugriff auf Werkzeuge oder Daten. Je Verbindung gibt es eine Frist von
@@ -33,8 +39,11 @@ use crate::tray::TrayZustand;
 pub const ANNAHME_FRIST: Duration = Duration::from_millis(500);
 /// So viele Verbindungen werden gleichzeitig angenommen.
 pub const VERBINDUNGEN_MAX: usize = 8;
-/// Die Sperrdatei im Profil.
+/// Die Sperrdatei im Profil: sie ist die Kennung „hier läuft eine Instanz“.
 pub const SPERRE: &str = "instanz.sperre";
+/// Der Port der laufenden Instanz. Bewusst **nicht** gesperrt: nur so kommt
+/// die zweite Instanz an ihn heran (siehe Modulkopf).
+pub const PORT: &str = "instanz.port";
 
 /// Was die zweite Instanz schickt.
 const ANFORDERUNG: &str = "zeigen";
@@ -67,10 +76,11 @@ impl Waechter {
                 "es läuft schon eine Instanz für dieses Profil",
             ));
         }
-        // Port frei wählen: nur zum Zeigen, nie zum Erkennen.
+        // Port frei wählen: nur zum Zeigen, nie zum Erkennen. Er landet in
+        // einer eigenen Datei — die gesperrte bleibt unberührt (Modulkopf).
         let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
         let adresse = listener.local_addr()?;
-        schreibe_port(&pfad, adresse.port())?;
+        schreibe_port(&portpfad(profil), adresse.port())?;
 
         let offen = Arc::new(AtomicUsize::new(0));
         std::thread::spawn(move || {
@@ -138,16 +148,16 @@ pub fn zeigen_anfordern(profil: &Path) -> std::io::Result<()> {
             ))
         }
         Err(std::fs::TryLockError::WouldBlock) => {
-            let port = port_aus_datei(&pfad)?;
+            let port = port_aus_datei(&portpfad(profil))?;
             zeigen_an(port)
         }
         Err(std::fs::TryLockError::Error(fehler)) => Err(fehler),
     }
 }
 
-/// Den Port aus der Sperrdatei lesen.
+/// Den Port aus der Portdatei lesen.
 pub fn port_aus_sperre(profil: &Path) -> Option<u16> {
-    port_aus_datei(&sperrpfad(profil)).ok()
+    port_aus_datei(&portpfad(profil)).ok()
 }
 
 fn zeigen_an(port: u16) -> std::io::Result<()> {
@@ -181,18 +191,20 @@ fn sperrpfad(profil: &Path) -> PathBuf {
     profil.join(SPERRE)
 }
 
-/// Den Port in die Sperrdatei schreiben (nur den Port, sonst nichts).
+fn portpfad(profil: &Path) -> PathBuf {
+    profil.join(PORT)
+}
+
+/// Den Port schreiben (nur den Port, sonst nichts). Über eine Zwischendatei
+/// und ein Umbenennen: eine halb geschriebene Zahl läse niemand gern.
 fn schreibe_port(pfad: &Path, port: u16) -> std::io::Result<()> {
-    use std::io::{Seek, SeekFrom};
-    let mut datei = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(pfad)?;
-    datei.seek(SeekFrom::Start(0))?;
-    datei.set_len(0)?;
-    datei.write_all(format!("{port}\n").as_bytes())?;
-    datei.flush()
+    let zwischen = pfad.with_extension("port.neu");
+    std::fs::write(&zwischen, format!("{port}\n"))?;
+    if let Err(fehler) = std::fs::rename(&zwischen, pfad) {
+        let _ = std::fs::remove_file(&zwischen);
+        return Err(fehler);
+    }
+    Ok(())
 }
 
 fn port_aus_datei(pfad: &Path) -> std::io::Result<u16> {
@@ -234,7 +246,7 @@ mod tests {
         assert_eq!(
             port_aus_sperre(&profil),
             Some(waechter.adresse().port()),
-            "der Port steht in der Sperrdatei"
+            "der Port steht in der Portdatei"
         );
 
         assert!(zeigen_anfordern(&profil).is_ok());
@@ -269,8 +281,28 @@ mod tests {
             "ohne Sperrdatei läuft keine Instanz"
         );
         // Eine freie Sperrdatei (niemand hält sie) ist auch keine Instanz.
-        std::fs::write(sperrpfad(&profil), "65000\n").expect("schreibbar");
+        std::fs::write(portpfad(&profil), "65000\n").expect("schreibbar");
+        std::fs::write(sperrpfad(&profil), "").expect("schreibbar");
         assert!(zeigen_anfordern(&profil).is_err());
+        std::fs::remove_dir_all(&profil).ok();
+    }
+
+    /// Der Port steht in einer **eigenen** Datei, nicht in der gesperrten:
+    /// unter Windows gilt eine Sperre für jede fremde Hand (auch im selben
+    /// Prozess), ein Port darin wäre für die zweite Instanz unlesbar. Dass er
+    /// **während** der Sperre lesbar ist, prüfen die Tests davor.
+    #[test]
+    fn der_port_steht_in_der_portdatei() {
+        let profil = ordner();
+        let (zustand, _empfaenger) = zustand();
+        let waechter = Waechter::belegen(&profil, zustand).expect("Sperre frei");
+        assert!(sperrpfad(&profil).is_file(), "die Sperrdatei gibt es");
+        let text = std::fs::read_to_string(portpfad(&profil)).expect("lesbar");
+        assert_eq!(
+            text,
+            format!("{}\n", waechter.adresse().port()),
+            "in der Portdatei steht nur der Port"
+        );
         std::fs::remove_dir_all(&profil).ok();
     }
 

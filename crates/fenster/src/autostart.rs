@@ -79,10 +79,13 @@ pub fn aktiv() -> bool {
 }
 
 /// Autostart ein- oder ausschalten.
+///
+/// Auf Windows steht der Eintrag in der Registry, sonst in einer Datei;
+/// deshalb ein Block je Plattform statt eines `return` dazwischen.
 pub fn setzen(an: bool) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        return windows::setzen(an);
+        windows::setzen(an)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -192,9 +195,7 @@ mod windows {
     }
 
     pub fn aktiv() -> bool {
-        key()
-            .and_then(|key| Ok(key.get_value::<String, _>(WERT).is_ok()))
-            .unwrap_or(false)
+        key().is_ok_and(|key| key.get_value::<String, _>(WERT).is_ok())
     }
 
     pub fn setzen(an: bool) -> anyhow::Result<()> {

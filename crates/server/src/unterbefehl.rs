@@ -8,6 +8,8 @@
 
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
+// Nur Unix: `stty` schaltet die Anzeige der Eingabe ab; Windows kennt es nicht.
+#[cfg(unix)]
 use std::process::Command;
 
 use anyhow::Context;
