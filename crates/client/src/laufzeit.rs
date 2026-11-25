@@ -623,14 +623,12 @@ mod tests {
             argumente: Vec::new(),
             umgebung: quiver_domain::Werte::new(),
         };
-        let ordner = std::env::temp_dir().join(format!(
-            "quiver-laufzeit-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|dauer| dauer.as_nanos())
-                .unwrap_or(0)
-        ));
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Prozessnummer und Zähler statt einer Zeitangabe: ein Name mit
+        // Doppelpunkt taugt unter Windows nicht als Pfad.
+        let ordner =
+            std::env::temp_dir().join(format!("quiver-laufzeit-{}-{nummer}", std::process::id()));
         let protokoll = Arc::new(Protokoll::neu(&ordner));
         let ergebnis = verbinden(&EintragId::neu("test"), &laufzeit, &protokoll).await;
         assert!(ergebnis.is_err(), "Start muss scheitern");

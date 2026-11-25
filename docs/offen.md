@@ -166,22 +166,8 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.
 
 ## Werkzeuge vom Server (Aufgabe 37)
-- [ ] Ein geändertes Programm im Ordner des Servers ändert die Revision, aber
-      niemand wird benachrichtigt: Geräte merken es beim nächsten Abgleich
-      (Ereignis, spätestens nach fünf Minuten). Ein Wächter, der den Ordner
-      beobachtet und `melde_aenderung` auslöst, fehlt.
-- [ ] Die Drossel für Programm-Abrufe ist der allgemeine Zähler
-      (`treffer`, 30 frei, dann wachsende Sperre) statt eines eigenen Budgets
-      je Gerät und Stunde. Für den Normalbetrieb reicht das; ein Gerät, das
-      viele Programme auf einmal braucht, kann kurz warten müssen.
 - [ ] End-to-End **nicht** geprüft: „Platte voll“ (ENOSPC beim Schreiben der
-      Zwischendatei), die Windows-Sperre einer laufenden Datei (der Code
-      stoppt vor dem Ersetzen, aber es gibt keinen Windows-Lauf dafür) und
-      „Entzug genau während des Ladens“ (der Abruf bekommt dann 403; der Test
-      deckt nur den Abruf nach dem Entzug ab).
-- [ ] Zwei Abgleiche zugleich sind über eine Sperre im Client serialisiert;
-      ein Test, der zwei gleichzeitig startet, fehlt (die Sperre ist die
-      einzige Absicherung).
+      Zwischendatei).
 - [ ] `QUIVER_TOOLS_DIR` zeigt auf einen Entwicklungsordner mit flach
       liegenden Programmen; ein ausgecheckter Stand wird nicht gegen eine
       Prüfsumme geprüft (so gewollt, aber es steht nirgends im Fenster).
@@ -191,22 +177,14 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] „Weniger Bewegung“ ist über egui genähert: dreht die Animation nicht
       (`animation_time` = 0), steht der Text ohne Ring. Eine Plattform-Anfrage
       (macOS/Windows-Einstellung) liest der Client nicht.
-- [ ] Der Knopf „Tools aktualisieren“ fragt beim Server nach; das Ändern einer
-      Datei im Programmordner löst von selbst **kein** Ereignis aus (siehe
-      oben), deshalb ist der Knopf der schnelle Weg.
 - [ ] Laufende Werkzeugaufrufe werden vor einem Programmtausch bis zu 10 s
       abgewartet; danach wird getauscht und der Grund steht im Protokoll des
       Eintrags. Ein Hinweis im Fenster („wartet auf 2 laufende Aufrufe“) fehlt,
       und ein Test dafür gibt es nicht (er bräuchte einen hängenden Aufruf).
 
 ## Release der Werkzeuge (Aufgabe 38, anderes Repo)
-- [ ] Solange es kein Release von quiver-tools gibt, baut das Abbild ohne
-      Programme (es sagt es beim Bauen). `vars.QUIVER_TOOLS_VERSION` muss im
-      Repo gesetzt werden, sobald das Release da ist.
-- [ ] Der Bau prüft die Archive gegen `SHA256SUMS`; die Prüfsummen **je
-      Programm** aus `LISTE.json` rechnet der Server beim Ausliefern selbst
-      nach. Ein Abgleich „LISTE.json gegen die entpackten Programme“ beim
-      Bauen fehlt.
+- [ ] Die Fassung der Programme im Abbild steht im `Dockerfile`
+      (`QUIVER_TOOLS_VERSION`) und wird von Hand angehoben.
 
 ## Anmeldung eines Tools (Aufgabe 35, §5)
 - [ ] Der Weg auf einem echten Windows-Gerät (Konsolenfenster, Standardbrowser,

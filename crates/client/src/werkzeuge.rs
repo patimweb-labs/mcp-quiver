@@ -80,6 +80,10 @@ pub enum Aufloesung {
 /// Der einzige Weg, auf dem ein verteiltes Programm zu einem Pfad wird. Ein
 /// Programmname vom Server wird nie als Pfad benutzt: der Pfad entsteht aus
 /// [`Ablage::pfad`], und die Datei muss die Prüfsumme aus dem Soll tragen.
+///
+/// Führt der Server das Programm nicht, bleibt ein **vorhandener** fester
+/// Pfad: das ist dann das eigene Programm des Betreibers, das wie bisher läuft
+/// (Aufgabe 37).
 pub fn aufloesen(ablage: &Ablage, programme: &[Programm], laufzeit: &Laufzeit) -> Aufloesung {
     let Some(name) = crate::tools::verteilt_name(laufzeit) else {
         return Aufloesung::Fremd;
@@ -89,12 +93,34 @@ pub fn aufloesen(ablage: &Ablage, programme: &[Programm], laufzeit: &Laufzeit) -
         return Aufloesung::Pfad(pfad);
     }
     let Some(programm) = programme.iter().find(|programm| programm.name == name) else {
+        // Der Server führt dieses Programm nicht. Steht im Eintrag ein Pfad,
+        // den es auf diesem Gerät gibt, ist das das eigene Programm des
+        // Betreibers – es läuft, wie es dasteht.
+        if let Some(pfad) = eigener_pfad(laufzeit) {
+            return Aufloesung::Pfad(pfad);
+        }
         return Aufloesung::NichtFuerSystem(name);
     };
     match ablage.pruefen(programm) {
         Ok(pfad) => Aufloesung::Pfad(pfad),
         Err(_) => Aufloesung::Beschaedigt(name),
     }
+}
+
+/// Ein fester Pfad aus dem Eintrag, wenn er auf diesem Gerät eine Datei ist.
+///
+/// Führt der Server das Programm nicht, läuft dieser Pfad wie bisher – das ist
+/// das eigene Programm des Betreibers (Aufgabe 37).
+pub(crate) fn eigener_pfad(laufzeit: &Laufzeit) -> Option<PathBuf> {
+    let Laufzeit::Stdio { befehl, .. } = laufzeit else {
+        return None;
+    };
+    let befehl = befehl.trim();
+    if !crate::tools::ist_pfad(befehl) {
+        return None;
+    }
+    let pfad = Path::new(befehl);
+    pfad.is_file().then(|| pfad.to_path_buf())
 }
 
 /// Eine Laufzeit mit einem festen Programmpfad (Argumente und Umgebung
@@ -129,6 +155,16 @@ pub enum StartFehler {
 
 /// So groß darf ein Programm höchstens sein (dieselbe Grenze wie im Server).
 const PROGRAMM_BYTES_MAX: u64 = 128 * 1024 * 1024;
+
+/// So lange wird nach dem Stoppen auf das Ende des Prozesses gewartet, bevor
+/// ein Programm gelöscht wird (Aufgabe 37).
+///
+/// Unter Windows hält ein laufender Prozess seine Datei fest: ein Löschen
+/// daneben scheitert **still**, und beim nächsten Start läuft die alte Fassung
+/// weiter. Deshalb wird es bis zu dieser Frist erneut versucht.
+pub const LOESCHEN_FRIST: Duration = Duration::from_secs(10);
+/// Der Abstand zwischen zwei Löschversuchen.
+const LOESCHEN_TAKT: Duration = Duration::from_millis(50);
 
 /// Taugt die Angabe des Servers? Name und Prüfsumme werden Teile eines Pfades,
 /// deshalb wird beides geprüft, **bevor** ein Ordner angelegt oder angefasst
@@ -311,6 +347,43 @@ impl Ablage {
         Ok(ziel)
     }
 
+    /// Ein Programm löschen und dabei auf das Ende des Prozesses warten.
+    ///
+    /// `stoppe_in` bricht nur ab; der Prozess lebt noch einen Augenblick (und
+    /// unter Windows hält er seine Datei so lange fest). Deshalb wird bis
+    /// [`LOESCHEN_FRIST`] erneut versucht. `false` heißt: es liegt noch da –
+    /// der nächste Abgleich und der nächste Start versuchen es wieder.
+    pub async fn loeschen_warten(&self, name: &str) -> bool {
+        if !quiver_domain::ist_verteilt(name) {
+            return true;
+        }
+        self.ordner_warten(&self.ordner(name), name).await
+    }
+
+    /// Einen Ordner löschen, bis er weg ist (oder die Frist um ist).
+    async fn ordner_warten(&self, ordner: &Path, name: &str) -> bool {
+        let ende = std::time::Instant::now() + LOESCHEN_FRIST;
+        loop {
+            match std::fs::remove_dir_all(ordner) {
+                Ok(()) => {
+                    tracing::info!("Programm {name} gelöscht");
+                    return true;
+                }
+                Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => return true,
+                Err(fehler) => {
+                    if std::time::Instant::now() >= ende {
+                        tracing::warn!(
+                            "Programm {name} ließ sich nicht löschen ({fehler}); \
+                             der nächste Abgleich versucht es erneut"
+                        );
+                        return false;
+                    }
+                    tokio::time::sleep(LOESCHEN_TAKT).await;
+                }
+            }
+        }
+    }
+
     /// Alte Fassungen eines Programms löschen – nach dem ersten erfolgreichen
     /// Start (Aufgabe 37).
     pub fn alte_fassungen(&self, name: &str, behalten: &str) {
@@ -337,31 +410,35 @@ impl Ablage {
     /// Die Konfiguration bleibt: was der User eingetragen hat, hängt an der
     /// Kennung des Eintrags und nicht an der Datei. Es werden nur Ordner
     /// angefasst, die wie verteilte Programme heißen – nichts anderes.
-    pub fn aufraeumen(&self, behalten: &BTreeSet<String>) {
+    ///
+    /// Je Programm wird gewartet, bis der Prozess seine Datei freigibt; was
+    /// nach [`LOESCHEN_FRIST`] noch da ist, kommt beim nächsten Abgleich und
+    /// beim nächsten Start wieder dran.
+    pub async fn aufraeumen(&self, behalten: &BTreeSet<String>) -> usize {
         let Ok(eintraege) = std::fs::read_dir(&self.wurzel) else {
-            return;
+            return 0;
         };
+        let mut offen = 0;
         for eintrag in eintraege.flatten() {
             let name = eintrag.file_name().to_string_lossy().to_string();
             if !quiver_domain::ist_verteilt(&name) || behalten.contains(&name) {
                 continue;
             }
-            if std::fs::remove_dir_all(eintrag.path()).is_ok() {
-                tracing::info!("Programm {name} gelöscht (nicht mehr zugewiesen)");
+            if !self.loeschen_warten(&name).await {
+                offen += 1;
             }
         }
+        offen
     }
 
-    /// Ein Programm löschen (alle Fassungen).
-    pub fn loeschen(&self, name: &str) {
-        if quiver_domain::ist_verteilt(name) {
-            let _ = std::fs::remove_dir_all(self.ordner(name));
-        }
+    /// Ein Programm löschen (alle Fassungen) – wartet auf das Prozessende.
+    pub async fn loeschen(&self, name: &str) {
+        self.loeschen_warten(name).await;
     }
 
     /// Alles löschen (Abmelden am Gerät, Aufgabe 37). Die Konfiguration bleibt.
-    pub fn alles_loeschen(&self) {
-        self.aufraeumen(&BTreeSet::new());
+    pub async fn alles_loeschen(&self) {
+        self.aufraeumen(&BTreeSet::new()).await;
     }
 }
 
@@ -450,13 +527,13 @@ mod tests {
     use super::*;
 
     fn baum(name: &str) -> PathBuf {
+        // Prozessnummer **und** Zähler: eindeutig je Test, und ohne Zeichen,
+        // die unter Windows in einem Pfad nicht vorkommen dürfen.
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let ordner = std::env::temp_dir().join(format!(
-            "quiver-ablage-{}-{name}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|dauer| dauer.as_nanos())
-                .unwrap_or(0)
+            "quiver-ablage-{}-{nummer}-{name}",
+            std::process::id()
         ));
         std::fs::remove_dir_all(&ordner).ok();
         std::fs::create_dir_all(&ordner).expect("Testordner");
@@ -660,8 +737,8 @@ mod tests {
         assert_eq!(ablage.pruefen(&programm), Err(PruefFehler::KeinProgramm));
     }
 
-    #[test]
-    fn alte_fassungen_und_nicht_zugewiesene_programme_werden_geloescht() {
+    #[tokio::test]
+    async fn alte_fassungen_und_nicht_zugewiesene_programme_werden_geloescht() {
         let wurzel = baum("aufraeumen");
         let ablage = Ablage::neu(&wurzel);
         let alt = programm("quiver-devops", b"alt");
@@ -685,15 +762,56 @@ mod tests {
         assert!(!ablage.pfad(&andere).exists(), "die alte Fassung ist weg");
 
         // Nur noch quiver-devops ist zugewiesen: quiver-m365 verschwindet.
-        ablage.aufraeumen(&BTreeSet::from(["quiver-devops".to_string()]));
+        ablage
+            .aufraeumen(&BTreeSet::from(["quiver-devops".to_string()]))
+            .await;
         assert!(ablage.ordner("quiver-devops").is_dir());
         assert!(!ablage.ordner("quiver-m365").exists());
 
         // Abmelden: alles weg, nichts anderes im Ordner wird angefasst.
         let fremd = wurzel.join("tools").join("meine-notizen");
         std::fs::create_dir_all(&fremd).expect("Ordner");
-        ablage.alles_loeschen();
+        ablage.alles_loeschen().await;
         assert!(!ablage.ordner("quiver-devops").exists());
         assert!(fremd.exists(), "fremde Ordner bleiben");
+    }
+
+    /// Nach dem Stoppen ist der Prozess nicht sofort tot: unter Windows hält er
+    /// seine Datei fest. Das Löschen wartet deshalb und versucht es erneut –
+    /// statt still zu scheitern und die alte Fassung liegen zu lassen.
+    ///
+    /// Nachgestellt mit einem Ordner, der für einen Augenblick nicht löschbar
+    /// ist (`0o500`): ein einzelner Versuch scheiterte, das Warten kommt durch.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn das_loeschen_versucht_es_bis_zum_ende_des_prozesses_erneut() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let wurzel = baum("loeschen-warten");
+        let ablage = Ablage::neu(&wurzel);
+        let programm = programm("quiver-devops", b"hallo");
+        let pfad = ablage.pfad(&programm);
+        let ordner = pfad.parent().expect("Ordner").to_path_buf();
+        std::fs::create_dir_all(&ordner).expect("Ordner");
+        std::fs::write(&pfad, b"hallo").expect("Datei");
+
+        // Solange der Ordner nur lesbar ist, lässt sich nichts darin löschen
+        // (unter Windows: solange der Prozess die Datei hält).
+        std::fs::set_permissions(&ordner, std::fs::Permissions::from_mode(0o500)).expect("Rechte");
+        let frei = ordner.clone();
+        let geber = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            std::fs::set_permissions(&frei, std::fs::Permissions::from_mode(0o700))
+                .expect("Rechte");
+        });
+        let weg = ablage.loeschen_warten("quiver-devops").await;
+        geber.join().expect("Geber");
+        assert!(weg, "das Programm ist gelöscht");
+        assert!(!ablage.ordner("quiver-devops").exists());
+
+        // Und wenn es schon weg ist, ist das kein Fehler.
+        assert!(ablage.loeschen_warten("quiver-devops").await);
+        // Fremde Namen werden nicht angefasst.
+        assert!(ablage.loeschen_warten("meine-notizen").await);
     }
 }

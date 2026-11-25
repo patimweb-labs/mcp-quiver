@@ -139,7 +139,9 @@ appimagetool_holen
 appdir="$dist/AppDir"
 rm -rf "$appdir"
 mkdir -p "$appdir/usr"
-cp -R "$baum/bin" "$baum/share" "$baum/lib" "$appdir/usr/"
+# Nur, was der Baum wirklich hat: `bin` und `share`. Der Client bringt keine
+# Programme mehr mit (Aufgabe 37) – ein `lib` gibt es nicht.
+cp -R "$baum/bin" "$baum/share" "$appdir/usr/"
 # Der Text von `AppRun` soll genau so in der Datei stehen — deshalb einfache
 # Anführungszeichen: `$0`, `$@` und `$(…)` sind für die App gemeint, nicht für
 # dieses Skript.

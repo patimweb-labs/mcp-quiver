@@ -354,6 +354,48 @@ fn nur_eigene_namen_werden_verteilt() {
     }
 }
 
+/// Aufgabe 37: Der **Name** eines verteilten Programms kommt aus dem Befehl –
+/// als bloßer Name oder als Dateiname eines Pfades, ohne `.exe`. So bekommt
+/// auch ein Altbestand mit festem Pfad sein Programm, und Server und Client
+/// urteilen gleich.
+#[test]
+fn der_programmname_kommt_aus_dem_befehl() {
+    for (befehl, name) in [
+        ("quiver-devops", "quiver-devops"),
+        ("  quiver-devops  ", "quiver-devops"),
+        ("quiver-devops.exe", "quiver-devops"),
+        ("/pfad/auf/anderem/rechner/quiver-devops", "quiver-devops"),
+        ("/usr/lib/mcp-quiver/tools/quiver-m365", "quiver-m365"),
+        (r"C:\Programme\mcp-quiver\quiver-m365.exe", "quiver-m365"),
+        ("relativ/quiver-ssh", "quiver-ssh"),
+    ] {
+        assert_eq!(
+            verteiltes_programm(befehl).as_deref(),
+            Some(name),
+            "{befehl}"
+        );
+    }
+    // Fremde Programme bleiben fremd – auch als Pfad.
+    for fremd in [
+        "npx",
+        "uvx",
+        "docker",
+        "/opt/eigenes-programm",
+        "/pfad/zu/quiver-tools/npx",
+        "quiver-",
+        "",
+        "   ",
+        // Ein Name mit Leerzeichen am Rand ist **kein** Programmname (er wird
+        // Teil eines Ordners). Im Befehl eines Eintrags sind Leerzeichen
+        // dagegen harmlos und werden abgeschnitten.
+    ] {
+        assert_eq!(verteiltes_programm(fremd), None, "{fremd}");
+    }
+    for mit_rand in ["quiver-devops ", " quiver-devops"] {
+        assert!(!ist_verteilt(mit_rand), "{mit_rand}");
+    }
+}
+
 /// Aufgabe 37: Ein Programm gehört in die Revision. Ändert sich seine
 /// Prüfsumme, ist das eine neue Revision – sonst fragte kein Client nach.
 #[test]

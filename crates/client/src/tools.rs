@@ -178,23 +178,21 @@ impl Suche {
 ///
 /// `Some(name)` heißt: der Eintrag erwartet ein Programm vom Server, und zwar
 /// unter diesem Namen – auch dann, wenn er noch als alter Pfad dasteht
-/// (Altbestand). `None` heißt: der Eintrag startet ein fremdes Programm
-/// (`npx`, `uvx`, `docker`, ein Pfad zu einem eigenen Programm).
+/// (Altbestand). Ein verteilter Name geht **immer** über den Server, selbst
+/// wenn derselbe Pfad auf diesem Gerät noch existiert. `None` heißt: der
+/// Eintrag startet ein fremdes Programm (`npx`, `uvx`, `docker`, ein Pfad zu
+/// einem eigenen Programm).
 pub fn verteilt_name(laufzeit: &Laufzeit) -> Option<String> {
     let Laufzeit::Stdio { befehl, .. } = laufzeit else {
         return None;
     };
-    let befehl = befehl.trim();
-    if quiver_domain::ist_verteilt(befehl) {
-        return Some(befehl.to_string());
-    }
-    if ist_pfad(befehl) && !Path::new(befehl).is_file() {
-        let name = dateiname(befehl);
-        if quiver_domain::ist_verteilt(&name) {
-            return Some(name);
-        }
-    }
-    None
+    quiver_domain::verteiltes_programm(befehl)
+}
+
+/// Ist das ein Pfad und kein bloßer Name? (auch `C:\…`, das auf einem anderen
+/// System kein absoluter Pfad ist)
+pub(crate) fn ist_pfad(programm: &str) -> bool {
+    programm.contains('/') || programm.contains('\\')
 }
 
 /// Ein Programm für einen Eintrag suchen.
@@ -249,12 +247,6 @@ pub(crate) fn fehlt(laufzeit: &Laufzeit) -> Option<String> {
         Err(NichtGefunden::OhneNamen) => None,
         Err(NichtGefunden::Nirgends(name)) => Some(name),
     }
-}
-
-/// Ist das ein Pfad und kein bloßer Name? (auch `C:\…`, das auf einem anderen
-/// System kein absoluter Pfad ist)
-fn ist_pfad(programm: &str) -> bool {
-    programm.contains('/') || programm.contains('\\')
 }
 
 /// Die Namen, unter denen ein Programm in einem Ordner liegen kann: der Name
@@ -334,15 +326,15 @@ mod tests {
     use std::fs;
 
     /// Ein eigener Ordner je Test unter `temp` — kein Aufräumen nötig, und
-    /// kein Test sieht die Bäume eines anderen.
+    /// kein Test sieht die Bäume eines anderen. Prozessnummer **und** Zähler:
+    /// ein Name mit Doppelpunkt (etwa aus einer Zeitangabe) taugt unter Windows
+    /// nicht als Pfad.
     fn baum(name: &str) -> PathBuf {
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let ordner = std::env::temp_dir().join(format!(
-            "quiver-tools-{}-{name}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|dauer| dauer.as_nanos())
-                .unwrap_or(0)
+            "quiver-tools-{}-{nummer}-{name}",
+            std::process::id()
         ));
         fs::remove_dir_all(&ordner).ok();
         fs::create_dir_all(&ordner).expect("Testordner");

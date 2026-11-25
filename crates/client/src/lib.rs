@@ -655,10 +655,14 @@ fn eintraege_sicht(
             // Anmeldung an (Aufgabe 37). Ein abgeschalteter Eintrag braucht
             // die Frage nicht: er startet ohnehin nichts.
             let verteilt = tools::verteilt_name(&eintrag.eintrag.laufzeit);
+            // „Für dieses System gibt es das Tool nicht“ gilt nur, wenn auch
+            // kein eigener Pfad auf diesem Gerät liegt: der läuft weiter
+            // (Altbestand, eigenes Programm des Betreibers, Aufgabe 37).
             let nicht_fuer_system = !aus
-                && verteilt
-                    .as_deref()
-                    .is_some_and(|name| soll.programm(name).is_none());
+                && verteilt.as_deref().is_some_and(|name| {
+                    soll.programm(name).is_none()
+                        && werkzeuge::eigener_pfad(&eintrag.eintrag.laufzeit).is_none()
+                });
             let nicht_installiert = (!aus && !nicht_fuer_system)
                 .then(|| tools::fehlt(&eintrag.eintrag.laufzeit))
                 .flatten();
@@ -1213,8 +1217,10 @@ impl Innen {
             stoppe_in(self, &id);
         }
         // Aufgabe 37: Abmelden am Gerät löscht die Programme. Die
-        // Konfiguration bleibt – sie hängt an der Kennung des Eintrags.
-        self.ablage.alles_loeschen();
+        // Konfiguration bleibt – sie hängt an der Kennung des Eintrags. Das
+        // Löschen wartet auf das Ende der Prozesse (Windows hält die Datei
+        // sonst fest); was dann noch liegt, nimmt der nächste Start mit.
+        self.ablage.alles_loeschen().await;
         self.stand().ladezustand.clear();
         let geloescht = self.konfig.tresor.loeschen("geraet-token");
         {
@@ -1843,10 +1849,12 @@ async fn status_pruefen(innen: &Arc<Innen>, id: &EintragId) -> Option<AnmeldeZus
     if tools::fehlt(&soll.eintrag.laufzeit).is_some() {
         return None;
     }
-    // Für dieses System gibt es das Programm nicht: nichts zu prüfen.
-    if tools::verteilt_name(&soll.eintrag.laufzeit)
-        .is_some_and(|name| innen.stand().soll.programm(&name).is_none())
-    {
+    // Für dieses System gibt es das Programm nicht (und keinen eigenen Pfad):
+    // nichts zu prüfen.
+    if tools::verteilt_name(&soll.eintrag.laufzeit).is_some_and(|name| {
+        innen.stand().soll.programm(&name).is_none()
+            && werkzeuge::eigener_pfad(&soll.eintrag.laufzeit).is_none()
+    }) {
         return None;
     }
     innen.anmeldung_setzen(id, AnmeldeZustand::Pruefe);
@@ -2415,93 +2423,108 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
 /// - Was nicht mehr zugewiesen ist, wird gelöscht (die Konfiguration bleibt).
 /// - Ist der Server weg, laufen die bereits geladenen Programme weiter.
 ///
-/// Vor dem Ersetzen wird der Eintrag gestoppt: unter Windows hält ein
-/// laufendes Programm seine Datei fest. Ein zweiter Abgleich zugleich wartet
-/// auf [`Innen::programm_wache`]. Das Soll wird hier noch **nicht** übernommen –
-/// der Vergleich der Fingerabdrücke kommt gleich danach.
+/// **Je Programm einmal:** mehrere Einträge dürfen dasselbe Programm starten.
+/// Dann wird das Programm **einmal** geladen, **alle** diese Einträge werden
+/// gestoppt (und ihre laufenden Aufrufe abgewartet), das Programm wird
+/// ersetzt, und der Abgleich startet alle wieder. Vorher wurde nur der eine
+/// Eintrag aus der Liste gestoppt – der andere lief mit der alten Datei weiter
+/// und hielt sie unter Windows fest.
+///
+/// Ein zweiter Abgleich zugleich wartet auf [`Innen::programm_wache`]. Das Soll
+/// wird hier noch **nicht** übernommen – der Vergleich der Fingerabdrücke
+/// kommt gleich danach.
 async fn programme_abgleichen(innen: &Arc<Innen>, soll: &Soll) -> usize {
     let _wache = innen.programm_wache.lock().await;
-    let mut behalten = BTreeSet::new();
-    let mut laden = Vec::new();
+    // Je Programm: alle Einträge, die es starten.
+    let mut je_programm: BTreeMap<String, Vec<EintragId>> = BTreeMap::new();
     for eintrag in &soll.eintraege {
         let Some(name) = tools::verteilt_name(&eintrag.eintrag.laufzeit) else {
             continue;
         };
-        let Some(programm) = soll.programm(&name) else {
-            continue;
-        };
-        behalten.insert(name.clone());
-        if innen.ablage.vorhanden(programm).is_some() {
+        if soll.programm(&name).is_none() {
             continue;
         }
-        laden.push((eintrag.eintrag.id.clone(), programm.clone()));
+        je_programm
+            .entry(name)
+            .or_default()
+            .push(eintrag.eintrag.id.clone());
     }
+    let behalten: BTreeSet<String> = je_programm.keys().cloned().collect();
+
     // Nicht mehr zugewiesene Programme: die betroffenen Einträge stoppen und
     // die Datei löschen. Die Konfiguration bleibt und gilt wieder, sobald der
-    // Eintrag zurückkommt.
+    // Eintrag zurückkommt. Das Löschen wartet auf das Ende der Prozesse – sonst
+    // bliebe die Datei unter Windows liegen (Aufgabe 37).
     let bisher: Vec<quiver_domain::Programm> = innen.stand().soll.programme.clone();
     for programm in bisher {
         if behalten.contains(&programm.name) {
             continue;
         }
-        let ids: Vec<EintragId> = innen
-            .stand()
-            .soll
-            .eintraege
-            .iter()
-            .filter(|eintrag| {
-                tools::verteilt_name(&eintrag.eintrag.laufzeit).as_deref()
-                    == Some(programm.name.as_str())
-            })
-            .map(|eintrag| eintrag.eintrag.id.clone())
-            .collect();
+        let ids = eintraege_mit_programm(&innen.stand(), &programm.name);
         for id in ids {
             innen.tausch_abwarten(&id).await;
             stoppe_in(innen, &id);
         }
-        innen.ablage.loeschen(&programm.name);
+        innen.ablage.loeschen(&programm.name).await;
     }
     // Auch, was auf der Platte liegt und in keinem Soll mehr steht (etwa nach
-    // einem Wechsel zwischen zwei Servern).
-    innen.ablage.aufraeumen(&behalten);
+    // einem Wechsel zwischen zwei Servern) – und was beim letzten Mal noch
+    // gesperrt war. Jeder Abgleich versucht es erneut.
+    innen.ablage.aufraeumen(&behalten).await;
 
     let (server, token) = innen.zugang();
     let (Some(server), Some(token)) = (server, token) else {
         return 0;
     };
+    // Was fehlt oder eine andere Prüfsumme trägt, kommt in die Liste – je
+    // Programm einmal, nicht je Eintrag.
+    let mut laden: Vec<(String, quiver_domain::Programm)> = Vec::new();
+    for name in &behalten {
+        let Some(programm) = soll.programm(name) else {
+            continue;
+        };
+        if innen.ablage.vorhanden(programm).is_some() {
+            continue;
+        }
+        laden.push((name.clone(), programm.clone()));
+    }
+
     let gesamt = u32::try_from(laden.len()).unwrap_or(u32::MAX);
     let mut geholt = 0usize;
-    for (nummer, (id, programm)) in laden.into_iter().enumerate() {
+    for (nummer, (name, programm)) in laden.into_iter().enumerate() {
         let fertig = u32::try_from(nummer).unwrap_or(u32::MAX);
         if gesamt > 0 {
             innen.fortschritt_setzen(Fortschritt::Laedt { fertig, gesamt });
         }
-        // Eine andere Fassung als bisher: der Eintrag wird erst gestoppt, dann
-        // ersetzt.
+        let ids = je_programm.get(&name).cloned().unwrap_or_default();
+        // Eine andere Fassung als bisher: **alle** Einträge, die dieses
+        // Programm starten, werden erst gestoppt, dann ersetzt.
         let ersetzt = innen
             .stand()
             .soll
-            .programm(&programm.name)
+            .programm(&name)
             .map(|alt| alt.sha256 != programm.sha256)
             .unwrap_or(false);
         if ersetzt {
             // Laufende Aufrufe zu Ende gehen lassen, bevor das Programm
             // getauscht wird (Nachtrag zu Aufgabe 37).
-            innen.tausch_abwarten(&id).await;
-            stoppe_in(innen, &id);
+            for id in &ids {
+                innen.tausch_abwarten(id).await;
+                stoppe_in(innen, id);
+            }
         }
-        innen.ladezustand_setzen(
-            &id,
-            Some(if ersetzt {
-                EintragZustand::Aktualisiert
-            } else {
-                EintragZustand::WirdGeladen
-            }),
-        );
+        let zustand = if ersetzt {
+            EintragZustand::Aktualisiert
+        } else {
+            EintragZustand::WirdGeladen
+        };
+        for id in &ids {
+            innen.ladezustand_setzen(id, Some(zustand.clone()));
+        }
         let mut zuletzt = 0u8;
         let ergebnis = {
             let innen_laden = innen.clone();
-            let id_laden = id.clone();
+            let ids_laden = ids.clone();
             let groesse = programm.groesse;
             innen
                 .ablage
@@ -2511,7 +2534,9 @@ async fn programme_abgleichen(innen: &Arc<Innen>, soll: &Soll) -> usize {
                     let anteil = anteil_von(geladen, groesse);
                     if anteil != zuletzt {
                         zuletzt = anteil;
-                        innen_laden.ladeanteil_setzen(&id_laden, anteil);
+                        for id in &ids_laden {
+                            innen_laden.ladeanteil_setzen(id, anteil);
+                        }
                     }
                 })
                 .await
@@ -2519,20 +2544,26 @@ async fn programme_abgleichen(innen: &Arc<Innen>, soll: &Soll) -> usize {
         match ergebnis {
             Ok(_) => {
                 geholt += 1;
-                tracing::info!(eintrag = %id, programm = %programm.name, "Programm geladen");
+                tracing::info!(programm = %name, "Programm geladen");
             }
             Err(fehler) => {
                 // Der Startversuch sagt es gleich noch einmal genau; hier steht
                 // der Grund im Protokoll des Eintrags.
                 let text = format!("{fehler:#}");
-                tracing::warn!(eintrag = %id, "Programm {} nicht geladen: {text}", programm.name);
-                innen.protokoll.zeile_schreiben(&id, &text);
+                tracing::warn!(programm = %name, "Programm nicht geladen: {text}");
+                for id in &ids {
+                    innen.protokoll.zeile_schreiben(id, &text);
+                }
             }
         }
-        innen.ladezustand_setzen(&id, None);
+        for id in &ids {
+            innen.ladezustand_setzen(id, None);
+        }
         {
             let mut stand = innen.stand();
-            stand.ladeanteil.remove(&id);
+            for id in &ids {
+                stand.ladeanteil.remove(id);
+            }
         }
         let fertig = fertig.saturating_add(1);
         if gesamt > 0 {
@@ -2540,6 +2571,17 @@ async fn programme_abgleichen(innen: &Arc<Innen>, soll: &Soll) -> usize {
         }
     }
     geholt
+}
+
+/// Die Einträge eines Solls, die dieses Programm starten.
+fn eintraege_mit_programm(stand: &Stand, name: &str) -> Vec<EintragId> {
+    stand
+        .soll
+        .eintraege
+        .iter()
+        .filter(|eintrag| tools::verteilt_name(&eintrag.eintrag.laufzeit).as_deref() == Some(name))
+        .map(|eintrag| eintrag.eintrag.id.clone())
+        .collect()
 }
 
 impl Innen {
@@ -2788,6 +2830,18 @@ impl Kern {
         // **nicht** an: kein Tool startet, bevor der Server das Gerät in diesem
         // Lauf angenommen hat (erster erfolgreicher Abgleich).
         let soll = innen.stand().soll.clone();
+
+        // Aufgabe 37: was beim letzten Mal nicht gelöscht werden konnte (der
+        // Prozess hielt die Datei noch), wird jetzt erneut versucht – sonst
+        // bliebe eine alte Fassung für immer liegen. Behalten wird, was im
+        // gespeicherten Soll steht.
+        let behalten: BTreeSet<String> = soll
+            .eintraege
+            .iter()
+            .filter_map(|eintrag| tools::verteilt_name(&eintrag.eintrag.laufzeit))
+            .collect();
+        innen.ablage.aufraeumen(&behalten).await;
+
         innen.geheim_laden(&soll).await;
         innen.protokoll.geheimnisse_setzen(innen.geheimnisse());
         innen.modell_schicken();
@@ -3868,14 +3922,6 @@ impl Kern {
     /// Alles anhalten (Fenster zu, Strg+C).
     pub async fn beenden(&self) {
         self.innen.ende.abbrechen();
-        // Die Profil-Sperre fällt mit dem Beenden: ein neuer Kern auf
-        // demselben Profil (ein Neustart) darf starten, ein **gleichzeitig**
-        // laufender nicht (Paket 3).
-        self.innen
-            ._profil_sperre
-            .lock()
-            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
-            .take();
         // Laufende Einrichtungen brechen ab, damit kein Kindprozess stehen
         // bleibt (Paket 3).
         let abbrueche: Vec<Abbruch> = self
@@ -3903,6 +3949,15 @@ impl Kern {
         for aufgabe in aufgaben {
             let _ = tokio::time::timeout(Duration::from_secs(3), aufgabe).await;
         }
+        // Die Profil-Sperre fällt **erst jetzt**: erst wenn alle Aufgaben
+        // wirklich vorbei sind, ist dieses Profil frei. Ein neuer Kern auf
+        // demselben Profil (ein Neustart) darf danach starten, nicht davor –
+        // sonst liefen zwei Kerne für einen Augenblick auf denselben Dateien.
+        self.innen
+            ._profil_sperre
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+            .take();
     }
 }
 

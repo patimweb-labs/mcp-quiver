@@ -227,16 +227,17 @@ hochladen oder ändern. Was bereitliegt, zeigt `GET /api/v1/admin/programme`
 (Verwaltung: je Eintrag das Programm, je Gerät die laufende Fassung aus der
 Meldung des Geräts).
 
-Eine geänderte Datei ändert die Revision des Solls; Geräte holen sie beim
-nächsten Abgleich (Ereignis, spätestens nach fünf Minuten). Ein Abbild **ohne**
+Eine geänderte Datei ändert die Revision des Solls; der Server bemerkt sie
+innerhalb von 30 Sekunden und stößt die Geräte an. Ein Abbild **ohne**
 Programme ist gültig: dann steht beim Start „keine Programme“ im Log, und die
-Geräte bekommen nichts (ihre Konfiguration bleibt). Bauen mit Programmen:
+Geräte bekommen nichts (ihre Konfiguration bleibt). Die Fassung steht im
+`Dockerfile`; eine andere beim Bauen:
 
 ```bash
-docker build --build-arg QUIVER_TOOLS_VERSION=0.3.0 -t mcp-quiver-server .
+docker build --build-arg QUIVER_TOOLS_VERSION=0.1.0 -t mcp-quiver-server .
 ```
 
-Ohne die Angabe sagt der Bau deutlich, dass keine Programme im Abbild sind.
+Mit leerer Angabe (`QUIVER_TOOLS_VERSION=`) baut es ohne Programme und sagt es.
 
 ## Konfiguration
 

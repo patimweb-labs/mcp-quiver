@@ -45,56 +45,31 @@ RUN cargo build --release --locked -p quiver-server \
 # --- Programme ----------------------------------------------------------------
 # Die Programme, die der Server an die Geräte verteilt (Aufgabe 37): die
 # Archive des festgelegten Releases von quiver-tools (Aufgabe 38), je System
-# und Architektur eines, entpackt nach /programme/<system>/<arch>/. Geprüft
-# wird gegen die `SHA256SUMS` des Releases.
+# und Architektur eines, entpackt nach /programme/<system>/<arch>/.
 #
-# **Solange es dieses Release nicht gibt, baut das Abbild ohne Programme** –
-# und sagt es deutlich. `QUIVER_TOOLS_VERSION` bleibt dann leer; die Geräte
-# bekommen kein Programm, und der Server schreibt beim Start „keine Programme“.
-# Ein Bau, der hier abbricht, wäre schlimmer: das Abbild ist auch ohne
-# Programme nützlich (Bibliothek, Zuweisung, Anmeldung).
+# Die Fassung steht **hier im Repo**, nicht in einer GitHub-Variable: was ein
+# Abbild enthält, soll aus dem Commit hervorgehen. `QUIVER_TOOLS_VERSION` leer
+# (`--build-arg QUIVER_TOOLS_VERSION=`) baut weiter, nur ohne Programme – das
+# Abbild ist auch ohne sie nützlich (Bibliothek, Zuweisung, Anmeldung), die
+# Geräte laden dann nichts.
+#
+# Geprüft wird in `verteilung/programme.sh`: erst alle Prüfsummen gegen
+# `SHA256SUMS`, dann entpacken und gegen `LISTE.json`. Fehlt ein Archiv oder
+# stimmt etwas nicht, bricht der Bau ab – lieber kein Abbild als ein halbes.
+# Dasselbe Skript läuft lokal in einem Temp-Ordner (siehe Tests).
 FROM ${BASIS}/debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS programme
-# Die Fassung des Releases (ohne „v“), z. B. 0.3.0. Leer = keine Programme.
-ARG QUIVER_TOOLS_VERSION=""
+COPY verteilung/programme.sh /usr/local/bin/programme
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && chmod 755 /usr/local/bin/programme
+# Die Fassung des Releases (ohne „v“). Leer = keine Programme.
+ARG QUIVER_TOOLS_VERSION=0.1.0
 ARG QUIVER_TOOLS_BASIS="https://github.com/patimweb-labs/quiver-tools/releases/download"
-ARG QUIVER_TOOLS_SYSTEME="windows-x64 macos-arm64 macos-x64 linux-x64 linux-arm64"
-# Bringt ein Archiv einen Ordner mit, zählt dessen Inhalt: der Server erwartet
-# Programme und LISTE.json direkt in <system>/<arch>/.
-RUN set -eu; \
-    mkdir -p /programme; \
-    if [ -z "$QUIVER_TOOLS_VERSION" ]; then \
-        echo "=============================================================="; \
-        echo "HINWEIS: QUIVER_TOOLS_VERSION ist nicht gesetzt."; \
-        echo "Dieses Abbild enthaelt KEINE Werkzeug-Programme. Geraete bekommen"; \
-        echo "beim Abgleich nichts geladen (die Konfiguration bleibt)."; \
-        echo "Zum Mitliefern: --build-arg QUIVER_TOOLS_VERSION=<fassung>"; \
-        echo "=============================================================="; \
-        exit 0; \
-    fi; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl; \
-    rm -rf /var/lib/apt/lists/*; \
-    basis="$QUIVER_TOOLS_BASIS/v$QUIVER_TOOLS_VERSION"; \
-    curl -fsSL -o /tmp/SHA256SUMS "$basis/SHA256SUMS"; \
-    cd /tmp; \
-    for ziel in $QUIVER_TOOLS_SYSTEME; do \
-        datei="quiver-tools-$QUIVER_TOOLS_VERSION-$ziel.tar.gz"; \
-        curl -fsSL -o "/tmp/$datei" "$basis/$datei"; \
-        system=${ziel%-*}; \
-        arch=${ziel##*-}; \
-        mkdir -p "/programme/$system/$arch"; \
-        tmp=$(mktemp -d); \
-        tar -xzf "/tmp/$datei" -C "$tmp"; \
-        quelle="$tmp"; \
-        if [ ! -f "$tmp/LISTE.json" ]; then \
-            quelle=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1); \
-        fi; \
-        cp -a "$quelle/." "/programme/$system/$arch/"; \
-        rm -rf "$tmp"; \
-    done; \
-    sha256sum -c /tmp/SHA256SUMS; \
-    echo "Programme aus quiver-tools $QUIVER_TOOLS_VERSION liegen bereit:"; \
-    find /programme -type f | sort
+ENV QUIVER_TOOLS_VERSION=$QUIVER_TOOLS_VERSION \
+    QUIVER_TOOLS_BASIS=$QUIVER_TOOLS_BASIS \
+    ZIEL=/programme
+RUN programme
 
 # --- Laufzeit vorbereiten -----------------------------------------------------
 # Zertifikate (für Entra und Graph) und Zeitzonen kommen aus Debian; das

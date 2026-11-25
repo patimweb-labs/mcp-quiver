@@ -107,9 +107,18 @@ pub async fn app_mit_hintergrund_und_abschalter(
     konfig: Konfig,
 ) -> anyhow::Result<(Router, Abschalter)> {
     let (router, zustand) = bauen(konfig).await?;
+    let beobachter = {
+        let zustand = zustand.clone();
+        tokio::spawn(programme::beobachten(
+            zustand.programme.clone(),
+            programme::PROGRAMME_ABSTAND,
+            move || zustand.melde_aenderung(),
+        ))
+    };
     let aufgaben = vec![
         tokio::spawn(refresh::hintergrund(zustand.clone())),
         tokio::spawn(beobachte_datenbank(zustand.clone())),
+        beobachter,
     ];
     Ok((router, Abschalter { zustand, aufgaben }))
 }
@@ -419,14 +428,15 @@ fn mit_programmen(
     let Some(system) = system else {
         return soll.mit_programmen(Vec::new());
     };
-    let gebraucht: std::collections::BTreeSet<&str> = soll
+    let gebraucht: std::collections::BTreeSet<String> = soll
         .eintraege
         .iter()
         .filter_map(|eintrag| match &eintrag.eintrag.laufzeit {
-            quiver_domain::Laufzeit::Stdio { befehl, .. }
-                if quiver_domain::ist_verteilt(befehl.trim()) =>
-            {
-                Some(befehl.trim())
+            // Der Name zählt, nicht der Pfad: ein Altbestand mit festem Pfad
+            // (`/pfad/quiver-devops`, `C:\…\quiver-devops.exe`) bekommt sein
+            // Programm genauso wie ein bloßer Name (Aufgabe 37).
+            quiver_domain::Laufzeit::Stdio { befehl, .. } => {
+                quiver_domain::verteiltes_programm(befehl)
             }
             _ => None,
         })
@@ -434,7 +444,7 @@ fn mit_programmen(
     let programme = ablage
         .fuer(system)
         .into_iter()
-        .filter(|programm| gebraucht.contains(programm.name.as_str()))
+        .filter(|programm| gebraucht.contains(&programm.name))
         .collect();
     soll.mit_programmen(programme)
 }
@@ -457,7 +467,12 @@ pub(crate) async fn soll_fuer_system(
         soll_aus(&bestand, &zeile.geraet)
     })
     .await?;
-    Ok(mit_programmen(soll, system.as_ref(), &zustand.programme))
+    // Beim ersten Mal und nach jeder Änderung werden Prüfsummen über viele
+    // Megabyte gerechnet: das gehört auf eine blockierende Aufgabe.
+    let ablage = zustand.programme.clone();
+    tokio::task::spawn_blocking(move || mit_programmen(soll, system.as_ref(), &ablage))
+        .await
+        .map_err(|fehler| FehlerAntwort::intern_mit_kennung(&fehler))
 }
 
 /// Läuft, wenn Unterbefehle die Datenbank geändert haben: `PRAGMA data_version`
