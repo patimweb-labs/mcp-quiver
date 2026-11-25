@@ -745,11 +745,8 @@ async fn entzug_waehrend_des_ladens_laesst_nichts_zurueck() {
 /// Nach einem Neustart des Clients sind die Ordner der Ablage 0700 und die
 /// Programme ausführbar: das Werkzeug läuft wieder, ohne neu zu laden
 /// (Aufgabe 37).
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nach_einem_neustart_laeuft_das_programm_weiter() {
-    use std::os::unix::fs::PermissionsExt;
-
     let inhalt = attrappe("demo");
     let mut welt = Welt::neu(&inhalt).await;
     let id = EintragId::neu("devops");
@@ -762,15 +759,19 @@ async fn nach_einem_neustart_laeuft_das_programm_weiter() {
 
     // Was eine alte Fassung hinterlassen hätte: offene Ordner, ein Programm
     // ohne Ausführungsrecht.
-    let ordner = pfad.parent().expect("Ordner").to_path_buf();
-    for offen in [
-        welt.profil.join("tools"),
-        welt.profil.join("tools").join("quiver-devops"),
-        ordner.clone(),
-    ] {
-        std::fs::set_permissions(&offen, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for offen in [
+            welt.profil.join("tools"),
+            welt.profil.join("tools").join("quiver-devops"),
+            pfad.parent().expect("Ordner").to_path_buf(),
+        ] {
+            std::fs::set_permissions(&offen, std::fs::Permissions::from_mode(0o755))
+                .expect("Rechte");
+        }
+        std::fs::set_permissions(&pfad, std::fs::Permissions::from_mode(0o644)).expect("Rechte");
     }
-    std::fs::set_permissions(&pfad, std::fs::Permissions::from_mode(0o644)).expect("Rechte");
 
     // Neustart auf demselben Profil.
     let tresor = welt.tresor.clone();
@@ -781,8 +782,17 @@ async fn nach_einem_neustart_laeuft_das_programm_weiter() {
         "{:?}",
         laeuft.tools
     );
-    let modus = |pfad: &Path| std::fs::metadata(pfad).expect("Datei").permissions().mode() & 0o777;
-    assert_eq!(modus(&pfad), 0o700, "das Programm ist wieder ausführbar");
-    assert_eq!(modus(&ordner), 0o700, "der Ordner ist wieder dicht");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let modus =
+            |pfad: &Path| std::fs::metadata(pfad).expect("Datei").permissions().mode() & 0o777;
+        assert_eq!(modus(&pfad), 0o700, "das Programm ist wieder ausführbar");
+        assert_eq!(
+            modus(pfad.parent().expect("Ordner")),
+            0o700,
+            "der Ordner ist wieder dicht"
+        );
+    }
     welt.kern.beenden().await;
 }

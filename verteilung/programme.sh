@@ -95,10 +95,10 @@ for eintrag in $archive; do
         { name = $2; sub(/^\*/, "", name) }
         name == datei { print $1; exit }
     ' "$arbeit/SHA256SUMS")
-    [ -n "$erwartet" ] || fehler "»$datei« steht nicht in SHA256SUMS"
+    [ -n "$erwartet" ] || fehler "»${datei}« steht nicht in SHA256SUMS"
     ist=$(summe "$arbeit/$datei")
     [ "$ist" = "$erwartet" ] ||
-        fehler "Prüfsumme von »$datei« stimmt nicht (erwartet $erwartet, ist $ist)"
+        fehler "Prüfsumme von »${datei}« stimmt nicht (erwartet $erwartet, ist $ist)"
 done
 echo "==> alle Archive stimmen mit SHA256SUMS"
 
@@ -117,33 +117,33 @@ for eintrag in $archive; do
         inhalt=$(find "$entpackt" -mindepth 1 -maxdepth 1 -type d | head -1)
     fi
     liste="$inhalt/LISTE.json"
-    [ -f "$liste" ] || fehler "»$datei« bringt keine LISTE.json"
+    [ -f "$liste" ] || fehler "»${datei}« bringt keine LISTE.json"
 
     # System und Architektur müssen zum Dateinamen passen – sonst liegt ein
     # Archiv unter dem falschen Namen.
     laut_system=$(sed -n 's/.*"system": *"\([^"]*\)".*/\1/p' "$liste" | head -1)
     laut_arch=$(sed -n 's/.*"arch": *"\([^"]*\)".*/\1/p' "$liste" | head -1)
     [ "$laut_system" = "$system" ] ||
-        fehler "»$datei« nennt System »$laut_system« statt »$system«"
+        fehler "»${datei}« nennt System »${laut_system}« statt »${system}«"
     [ "$laut_arch" = "$archiv_arch" ] ||
-        fehler "»$datei« nennt Architektur »$laut_arch« statt »$archiv_arch«"
+        fehler "»${datei}« nennt Architektur »${laut_arch}« statt »${archiv_arch}«"
 
     # Je Programm: da, richtige Größe, richtige Prüfsumme.
     sed -n 's/.*"name": *"\([^"]*\)".*"groesse": *\([0-9][0-9]*\).*"sha256": *"\([0-9a-f][0-9a-f]*\)".*/\1 \2 \3/p' \
         "$liste" >"$arbeit/eintraege"
-    [ -s "$arbeit/eintraege" ] || fehler "»$datei« nennt kein Programm in LISTE.json"
+    [ -s "$arbeit/eintraege" ] || fehler "»${datei}« nennt kein Programm in LISTE.json"
     while read -r name groesse sha; do
         programm="$inhalt/$name"
         if [ -f "$inhalt/$name.exe" ]; then
             programm="$inhalt/$name.exe"
         fi
-        [ -f "$programm" ] || fehler "»$datei« bringt »$name« nicht mit"
+        [ -f "$programm" ] || fehler "»${datei}« bringt »${name}« nicht mit"
         ist_groesse=$(wc -c <"$programm" | tr -d ' ')
         [ "$ist_groesse" = "$groesse" ] ||
-            fehler "»$name« in »$datei« ist $ist_groesse statt $groesse Bytes groß"
+            fehler "»${name}« in »${datei}« ist $ist_groesse statt $groesse Bytes groß"
         ist_summe=$(summe "$programm")
         [ "$ist_summe" = "$sha" ] ||
-            fehler "Prüfsumme von »$name« in »$datei« stimmt nicht mit LISTE.json"
+            fehler "Prüfsumme von »${name}« in »${datei}« stimmt nicht mit LISTE.json"
     done <"$arbeit/eintraege"
 
     mkdir -p "$ziel/$system/$ordner"
