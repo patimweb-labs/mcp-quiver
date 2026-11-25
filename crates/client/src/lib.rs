@@ -33,18 +33,21 @@ mod anmeldung;
 mod dateitresor;
 mod einrichtung;
 pub mod einstellungen;
-mod endpunkt;
+pub(crate) mod endpunkt;
 mod hilfen;
 mod laufzeit;
+mod netz;
 mod profil;
 pub mod protokoll;
+pub mod rechte;
+mod server_anmeldung;
 mod sse;
 mod tresor;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -52,7 +55,7 @@ use quiver_domain::{
     EintragId, FehlendesFeld, Feld, Geraet, Mehrfach, Quelle, Soll, SollEintrag, Werte, Zugang,
     MEHRFACH_UMGEBUNG,
 };
-use quiver_protocol::EintragZustand;
+use quiver_protocol::{AnmeldeGrund, Anmeldearten, EintragZustand, PRAEFIX};
 use rmcp::model::Tool;
 use rmcp::{Peer, RoleClient, RoleServer};
 use serde::{Deserialize, Serialize};
@@ -63,6 +66,7 @@ pub use einrichtung::EinrichtZustand;
 pub use einstellungen::{Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung};
 use hilfen::Abbruch;
 pub use protokoll::{Aufruf, LogFilter, Zeile};
+pub use server_anmeldung::{Browser, SystemBrowser};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
@@ -82,6 +86,9 @@ pub struct KernKonfig {
     pub mcp_adresse: SocketAddr,
     /// Wo Geheimnisse liegen (Standard: Tresor-Datei `<profil>/tresor`, in Tests: im Speicher).
     pub tresor: Arc<dyn Tresor>,
+    /// Wer die Anmeldeseite des Servers öffnet (Aufgabe 22). Standard: das
+    /// System; der Ende-zu-Ende-Test setzt eine Attrappe ein.
+    pub browser: Arc<dyn Browser>,
 }
 
 impl KernKonfig {
@@ -94,6 +101,7 @@ impl KernKonfig {
             tresor: Arc::new(DateiTresor::fuer_profil(&profil)),
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
+            browser: Arc::new(SystemBrowser),
         }
     }
 }
@@ -119,12 +127,38 @@ impl std::fmt::Debug for KernKonfig {
 pub enum Verbindung {
     /// Noch kein Server eingebunden.
     NichtEingebunden,
-    /// Anmeldung läuft.
+    /// Anmeldung läuft (Server fragen, Code tauschen).
     Verbindet { server: String },
+    /// Der Browser ist offen; der Lauscher wartet auf genau eine Antwort.
+    /// `adresse` ist die Anmeldeseite des Servers (für „Browser erneut öffnen“).
+    WartetAufBrowser { server: String, adresse: String },
     /// Verbunden; `geraet` ist der Anzeigename des eigenen Geräts.
     Verbunden { server: String, geraet: String },
     /// Verbindung weg – was nach der Anmeldung lief, läuft weiter.
     Getrennt { server: String, fehler: String },
+    /// Der Server verlangt eine neue Anmeldung (`neu-anmelden` oder ein
+    /// unbekannter Grund): alle Tools sind aus, **Geräte-Token und alle
+    /// Angaben bleiben**, der Knopf „Erneut anmelden“ führt zurück.
+    NeuAnmelden { server: String, text: String },
+    /// Die Anmeldung ist gescheitert (gesperrt, kein Zugriff, abgebrochen,
+    /// Zeit abgelaufen, Server nicht erreichbar). Kein Geräte-Token, die
+    /// Server-Adresse bleibt vorbelegt.
+    AnmeldeFehler { server: String, text: String },
+}
+
+impl Verbindung {
+    /// Die Server-Adresse, falls es eine gibt (auch nach dem Abmelden).
+    pub fn server(&self) -> Option<&str> {
+        match self {
+            Verbindung::NichtEingebunden => None,
+            Verbindung::Verbindet { server }
+            | Verbindung::WartetAufBrowser { server, .. }
+            | Verbindung::Verbunden { server, .. }
+            | Verbindung::Getrennt { server, .. }
+            | Verbindung::NeuAnmelden { server, .. }
+            | Verbindung::AnmeldeFehler { server, .. } => Some(server),
+        }
+    }
 }
 
 /// Ein Eintrag, wie ihn das Fenster zeigt.
@@ -158,6 +192,11 @@ pub struct EintragSicht {
     /// [`EintragZustand::AmGeraetAus`] und nichts startet ihn.
     #[serde(default)]
     pub am_geraet_aus: bool,
+    /// Warum dieser Eintrag nicht startet, obwohl er zugewiesen ist
+    /// (Paket 3): seine Kennung taugt nicht als Präfix der Werkzeugnamen.
+    /// Dann steht hier der Grund im Klartext – das Fenster zeigt ihn.
+    #[serde(default)]
+    pub unzulaessig: Option<String>,
 }
 
 /// Ein Zugang eines Eintrags mit `mehrfach`, wie ihn das Fenster zeigt:
@@ -192,6 +231,20 @@ pub struct AgentSicht {
     pub verbunden: bool,
 }
 
+/// Welche Wege der Server für die Anmeldung dieses Geräts anbietet.
+///
+/// Kommt aus `GET /api/v1/anmeldearten` und gilt nur für die Adresse, für die
+/// gefragt wurde. Ändert der User die Adresse, ist der Eintrag nicht mehr
+/// gültig — die Ansicht zeigt dann wieder „Weiter“.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anmeldewege {
+    pub server: String,
+    /// Entra: Knopf „Mit Microsoft anmelden“.
+    pub entra: bool,
+    /// Einmal-Code: ohne Entra der Weg dieses Servers.
+    pub code: bool,
+}
+
 /// Alles, was das Fenster zeigt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Modell {
@@ -204,10 +257,34 @@ pub struct Modell {
     /// alle Tools sind gestoppt, das Gerät muss neu eingebunden werden.
     #[serde(default)]
     pub abgelehnt: bool,
+    /// Warum das Gerät abgelehnt wurde (Aufgabe 20/22): `gesperrt`,
+    /// `kein-zugriff` oder `neu-anmelden`. `None` heißt: kein Grund bekannt.
+    #[serde(default)]
+    pub anmelde_grund: Option<AnmeldeGrund>,
+    /// Anzeigename des angemeldeten Benutzers („Angemeldet als …“). Kein
+    /// Geheimnis; kommt aus der Anmeldeantwort.
+    #[serde(default)]
+    pub benutzer: Option<String>,
+    /// Die zuletzt benutzte Server-Adresse — auch nach dem Abmelden, damit
+    /// sie nicht neu getippt werden muss.
+    #[serde(default)]
+    pub server_url: Option<String>,
+    /// Welche Anmeldewege der Server für `server_url` genannt hat.
+    #[serde(default)]
+    pub anmeldewege: Option<Anmeldewege>,
     /// Dürfen Agenten Inhalte des Protokolls sehen (Aufgabe 17)? Standard:
     /// aus – dann gibt es nur Metadaten.
     #[serde(default)]
     pub protokoll_fuer_agenten: bool,
+    /// Warum der Tresor nicht lesbar ist (Paket 3). Solange hier etwas steht,
+    /// wird nichts geschrieben und **kein** neuer Schlüssel erzeugt; das
+    /// Fenster bietet „Neu beginnen“ an.
+    #[serde(default)]
+    pub tresor_fehler: Option<String>,
+    /// Der gespeicherte Stand war nicht lesbar und liegt als
+    /// `.kaputt-<zeit>` daneben (Paket 3). Der Client läuft weiter.
+    #[serde(default)]
+    pub profil_hinweis: Option<String>,
 }
 
 /// Der Stand eines Eintrags, ohne Verbindung (der Teil, der ins Modell geht).
@@ -243,15 +320,98 @@ struct Laeufer {
 struct Sitzung {
     agent: Option<String>,
     peer: Peer<RoleServer>,
+    /// Wann diese Sitzung zuletzt benutzt wurde (Paket 3: sie läuft nach
+    /// 10 Minuten ohne Nutzung ab).
+    zuletzt: std::time::Instant,
+}
+
+/// So viele Sitzungen hält der Endpunkt höchstens.
+pub const SITZUNGEN_MAX: usize = 64;
+/// So lange bleibt eine Sitzung ohne Nutzung bestehen.
+pub const SITZUNG_FRIST: Duration = Duration::from_secs(10 * 60);
+
+/// Welche Sitzung muss für eine neue weichen?
+///
+/// Zuerst eine **abgelaufene** (länger als [`SITZUNG_FRIST`] ohne Nutzung);
+/// gibt es keine, dann – wenn [`SITZUNGEN_MAX`] erreicht ist – die älteste.
+/// `None` heißt: es ist Platz.
+pub(crate) fn sitzung_weicht(
+    zuletzt: &BTreeMap<u64, std::time::Instant>,
+    jetzt: std::time::Instant,
+) -> Option<u64> {
+    let abgelaufen = zuletzt
+        .iter()
+        .find(|(_, zeit)| jetzt.duration_since(**zeit) >= SITZUNG_FRIST)
+        .map(|(schluessel, _)| *schluessel);
+    if abgelaufen.is_some() {
+        return abgelaufen;
+    }
+    if zuletzt.len() >= SITZUNGEN_MAX {
+        return zuletzt
+            .iter()
+            .min_by_key(|(_, zeit)| **zeit)
+            .map(|(schluessel, _)| *schluessel);
+    }
+    None
+}
+
+/// Zählt die gleichzeitigen Werkzeugaufrufe – insgesamt und je Eintrag.
+///
+/// Ohne Grenze könnte ein Agent mit vielen parallelen Aufrufen jeden Eintrag
+/// und den ganzen Client ausbremsen; die Grenze antwortet stattdessen sofort
+/// mit „ausgelastet“.
+#[derive(Debug, Default)]
+pub(crate) struct Auslastung {
+    gesamt: usize,
+    je_eintrag: BTreeMap<EintragId, usize>,
+}
+
+impl Auslastung {
+    /// So viele Aufrufe laufen höchstens gleichzeitig.
+    pub(crate) const GESAMT_MAX: usize = 32;
+    /// So viele Aufrufe je Eintrag.
+    pub(crate) const EINTRAG_MAX: usize = 8;
+
+    /// Einen Aufruf belegen. `false` heißt: ausgelastet.
+    pub(crate) fn belegen(&mut self, id: &EintragId) -> bool {
+        if self.gesamt >= Self::GESAMT_MAX {
+            return false;
+        }
+        let offen = self.je_eintrag.entry(id.clone()).or_insert(0);
+        if *offen >= Self::EINTRAG_MAX {
+            return false;
+        }
+        *offen += 1;
+        self.gesamt += 1;
+        true
+    }
+
+    pub(crate) fn freigeben(&mut self, id: &EintragId) {
+        if let Some(offen) = self.je_eintrag.get_mut(id) {
+            *offen = offen.saturating_sub(1);
+            if *offen == 0 {
+                self.je_eintrag.remove(id);
+            }
+        }
+        self.gesamt = self.gesamt.saturating_sub(1);
+    }
 }
 
 /// Alles, was der Kern im Speicher hält.
 struct Stand {
     /// Siehe [`Modell::abgelehnt`].
     abgelehnt: bool,
+    /// Siehe [`Modell::anmelde_grund`].
+    anmelde_grund: Option<AnmeldeGrund>,
     server_url: Option<String>,
     geraet: Option<Geraet>,
     token: Option<String>,
+    /// Siehe [`Modell::benutzer`].
+    benutzer: Option<String>,
+    /// Siehe [`Modell::anmeldewege`].
+    anmeldewege: Option<Anmeldewege>,
+    /// Bricht eine laufende Browser-Anmeldung ab (Aufgabe 22).
+    anmeldung_abbruch: Option<Abbruch>,
     lokale_werte: BTreeMap<EintragId, Werte>,
     /// Geheimwerte im Speicher (Quelle bleibt der Tresor).
     geheim: BTreeMap<EintragId, Werte>,
@@ -268,6 +428,15 @@ struct Stand {
     einrichtung: BTreeMap<EintragId, EinrichtZustand>,
     /// Einträge, deren Einrichtung gerade läuft (höchstens einer je Eintrag).
     einrichtung_laufend: BTreeSet<EintragId>,
+    /// Abbruchsignal je laufender Einrichtung (Paket 3: „Abbrechen“ im
+    /// Fenster und das Beenden des Clients räumen sie ab).
+    einrichtung_abbruch: BTreeMap<EintragId, Abbruch>,
+    /// Frist je Werkzeugaufruf in Sekunden, je Eintrag (Paket 3).
+    aufruf_fristen: BTreeMap<EintragId, u64>,
+    /// Warum der Tresor nicht lesbar ist (Paket 3); `None` heißt: in Ordnung.
+    tresor_fehler: Option<String>,
+    /// Hinweis zum gespeicherten Stand (Paket 3).
+    profil_hinweis: Option<String>,
     /// Einträge, die der User auf diesem Gerät abgeschaltet hat (Aufgabe 19).
     am_geraet_aus: BTreeSet<EintragId>,
     /// Hat der Server dieses Gerät in **diesem** Lauf angenommen (erster
@@ -313,7 +482,13 @@ impl Stand {
                 .collect(),
             endpunkt: self.endpunkt.clone(),
             abgelehnt: self.abgelehnt,
+            anmelde_grund: self.anmelde_grund,
+            benutzer: self.benutzer.clone(),
+            server_url: self.server_url.clone(),
+            anmeldewege: self.anmeldewege.clone(),
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
+            tresor_fehler: self.tresor_fehler.clone(),
+            profil_hinweis: self.profil_hinweis.clone(),
         }
     }
 
@@ -321,6 +496,7 @@ impl Stand {
         profil::Profil {
             server_url: self.server_url.clone(),
             geraet: self.geraet.clone(),
+            benutzer: self.benutzer.clone(),
             lokale_werte: self
                 .lokale_werte
                 .iter()
@@ -338,6 +514,11 @@ impl Stand {
                 .am_geraet_aus
                 .iter()
                 .map(|id| id.als_str().to_string())
+                .collect(),
+            aufruf_fristen: self
+                .aufruf_fristen
+                .iter()
+                .map(|(id, sekunden)| (id.als_str().to_string(), *sekunden))
                 .collect(),
         }
     }
@@ -395,6 +576,9 @@ fn eintraege_sicht(
             // Abgeschaltet ist ein eigener Zustand: kein Fehler, sondern die
             // Wahl des Users (Aufgabe 19). Seine Werkzeuge gibt es nicht.
             let aus = am_geraet_aus.contains(id);
+            // Eine Kennung, die nicht als Präfix taugt, startet nichts – und
+            // das Fenster sagt, warum (Paket 3).
+            let unzulaessig = quiver_domain::kennung_fehler(id.als_str()).map(str::to_string);
             EintragSicht {
                 id: id.clone(),
                 titel: eintrag.eintrag.titel.clone(),
@@ -450,6 +634,7 @@ fn eintraege_sicht(
                     zugaenge_sicht(mehrfach, zugaenge.get(id), zugang_geheim.get(id))
                 }),
                 am_geraet_aus: aus,
+                unzulaessig,
             }
         })
         .collect()
@@ -616,9 +801,15 @@ fn export_daten(
     (eintraege, Some(geheimnisse))
 }
 
+/// Was beim Lesen der Geheimnisse je Eintrag gebraucht wird: der Eintrag, seine
+/// Geheimfelder und je Zugang dessen Geheimfelder.
+type Geheimplan = (EintragId, Vec<String>, Vec<(String, Vec<String>)>);
+
 /// Innerei des Kerns; geteilt zwischen Fassade, Abgleich und Endpunkt.
 pub(crate) struct Innen {
     pub(crate) konfig: KernKonfig,
+    /// Die tatsächliche Adresse des Endpunkts (nach dem Binden).
+    pub(crate) adresse: SocketAddr,
     pub(crate) http: reqwest::Client,
     pub(crate) stand: Mutex<Stand>,
     pub(crate) modell: watch::Sender<Modell>,
@@ -638,6 +829,17 @@ pub(crate) struct Innen {
     pub(crate) schalt_wache: tokio::sync::Mutex<()>,
     /// Aufrufe und Prozesszeilen (Aufgabe 17).
     pub(crate) protokoll: Arc<protokoll::Protokoll>,
+    /// Die Sperre des Profils (Paket 3): solange sie lebt, arbeitet dieser
+    /// Kern auf dem Profil, und ein zweiter startet nicht. Sie wird nie
+    /// gelesen – ihr Dasein ist die Wirkung.
+    pub(crate) _profil_sperre: Mutex<Option<std::fs::File>>,
+    /// Wie viele Werkzeugaufrufe gerade laufen (Paket 3).
+    pub(crate) auslastung: Mutex<Auslastung>,
+    /// Wann allen Agenten zuletzt `list_changed` geschickt wurde (Paket 3:
+    /// höchstens einmal je Sekunde).
+    pub(crate) liste_zuletzt: Mutex<Option<std::time::Instant>>,
+    /// Ist eine weitere Meldung schon vorgemerkt?
+    pub(crate) liste_geplant: AtomicBool,
 }
 
 impl Innen {
@@ -742,11 +944,11 @@ impl Innen {
         {
             let mut stand = self.stand();
             stand.abgelehnt = abgelehnt;
-            if !abgelehnt {
-                stand.server_url = None;
-            }
+            // Die Adresse bleibt **immer** stehen (Aufgabe 22): Abmelden
+            // verwirft Token und Gerät, nicht die Adresse.
             stand.geraet = None;
             stand.token = None;
+            stand.benutzer = None;
             stand.soll = Soll::neu(Vec::new());
             stand.anmeldung.clear();
             stand.einrichtung.clear();
@@ -760,6 +962,64 @@ impl Innen {
         self.modell_schicken();
         self.liste_geaendert().await;
         geloescht
+    }
+
+    /// Der Server verlangt eine neue Anmeldung: alle Tools aus, aber
+    /// **Geräte-Token, Soll und alle lokalen Angaben bleiben** (Aufgabe 22).
+    /// Erst ein neuer Anmeldevorgang ersetzt das Token.
+    pub(crate) async fn neu_anmelden_setzen(self: &Arc<Self>, server: &str) {
+        let ids: Vec<EintragId> = self.stand().laeufer.keys().cloned().collect();
+        for id in ids {
+            stoppe_in(self, &id);
+        }
+        {
+            let mut stand = self.stand();
+            stand.angenommen = false;
+            stand.abgelehnt = false;
+            stand.anmelde_grund = Some(AnmeldeGrund::NeuAnmelden);
+            stand.verbindung = Verbindung::NeuAnmelden {
+                server: server.to_string(),
+                text: "Die Anmeldung gilt nicht mehr. Geräte-Token und Angaben bleiben."
+                    .to_string(),
+            };
+        }
+        self.speichern();
+        self.modell_schicken();
+        self.liste_geaendert().await;
+    }
+
+    /// Eine Ablehnung des Geräts einordnen (Aufgabe 22):
+    /// - `gesperrt`/`kein-zugriff`: alle Tools aus, Token weg, klare Meldung.
+    /// - `neu-anmelden` **und jeder unbekannte Grund**: alle Tools aus, Token
+    ///   und Angaben bleiben; der User meldet sich erneut an.
+    /// - 401 ohne Grund (Token ungültig/entfernt): wie bisher neu einbinden.
+    pub(crate) async fn ablehnung_behandeln(
+        self: &Arc<Self>,
+        server: &str,
+        fehler: &anyhow::Error,
+    ) {
+        // 401 heißt: das Token gilt nicht mehr (Gerät entfernt). Dann wie
+        // bisher neu einbinden — auch ohne `grund`.
+        if abgleich::status_von(fehler) == Some(reqwest::StatusCode::UNAUTHORIZED) {
+            if let Err(fehler) = self.ausbinden(true).await {
+                tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+            }
+            return;
+        }
+        match abgleich::grund_von(fehler) {
+            Some(grund @ (AnmeldeGrund::Gesperrt | AnmeldeGrund::KeinZugriff)) => {
+                if let Err(fehler) = self.ausbinden(true).await {
+                    tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                }
+                {
+                    let mut stand = self.stand();
+                    stand.anmelde_grund = Some(grund);
+                }
+                self.speichern();
+                self.modell_schicken();
+            }
+            _ => self.neu_anmelden_setzen(server).await,
+        }
     }
 
     pub(crate) fn verbunden_setzen(&self, server: &str) {
@@ -786,62 +1046,111 @@ impl Innen {
 
     /// Die Geheimwerte der Soll-Einträge aus dem Tresor holen – die des
     /// Eintrags und die seiner Zugänge (Aufgabe 14).
-    pub(crate) fn geheim_laden(&self, soll: &Soll) {
+    ///
+    /// Der Tresor wird **einmal** gelesen (eine Sperre, eine Entschlüsselung),
+    /// und zwar in `spawn_blocking`: ein Dateizugriff gehört nicht in den
+    /// async-Aufgabenbereich, in dem die Oberfläche weiterläuft (Paket 3).
+    pub(crate) async fn geheim_laden(self: &Arc<Self>, soll: &Soll) {
         let gespeicherte_zugaenge = self.stand().zugaenge.clone();
-        let mut alle = BTreeMap::new();
-        let mut zugangs_geheim: BTreeMap<EintragId, BTreeMap<String, Werte>> = BTreeMap::new();
+        // Erst sammeln, was gebraucht wird – in derselben Reihenfolge, in der
+        // es nachher zugeordnet wird.
+        let mut schluessel: Vec<String> = Vec::new();
+        // Je Eintrag: seine Geheimfelder und je Zugang die Geheimfelder.
+        let mut plan: Vec<Geheimplan> = Vec::new();
         for eintrag in &soll.eintraege {
-            let mut werte = Werte::new();
-            for feld in eintrag
+            let geheim_felder: Vec<String> = eintrag
                 .eintrag
                 .felder
                 .iter()
                 .filter(|feld| feld.quelle == Quelle::Geheim)
-            {
-                let schluessel = geheim_schluessel(&eintrag.eintrag.id, &feld.name);
-                match self.konfig.tresor.lesen(&schluessel) {
-                    Ok(Some(wert)) => {
-                        werte.insert(feld.name.clone(), wert);
-                    }
-                    Ok(None) => {}
-                    Err(fehler) => tracing::warn!("{schluessel} nicht lesbar: {fehler}"),
-                }
-            }
-            alle.insert(eintrag.eintrag.id.clone(), werte);
-
-            let Some(mehrfach) = &eintrag.eintrag.mehrfach else {
-                continue;
-            };
-            let geheim_felder: Vec<&str> = mehrfach
-                .felder
-                .iter()
-                .filter(|feld| feld.quelle == Quelle::Geheim)
-                .map(|feld| feld.name.as_str())
+                .map(|feld| feld.name.clone())
                 .collect();
-            let mut je_eintrag = BTreeMap::new();
+            for feld in &geheim_felder {
+                schluessel.push(geheim_schluessel(&eintrag.eintrag.id, feld));
+            }
+            let mut zugangs_felder: Vec<String> = Vec::new();
+            if let Some(mehrfach) = &eintrag.eintrag.mehrfach {
+                zugangs_felder = mehrfach
+                    .felder
+                    .iter()
+                    .filter(|feld| feld.quelle == Quelle::Geheim)
+                    .map(|feld| feld.name.clone())
+                    .collect();
+            }
+            let mut zugangsplan = Vec::new();
             for name in gespeicherte_zugaenge
                 .get(&eintrag.eintrag.id)
                 .into_iter()
                 .flat_map(|liste| liste.keys())
             {
-                let mut werte = Werte::new();
-                for feld in &geheim_felder {
-                    let schluessel = zugang_geheim_schluessel(&eintrag.eintrag.id, name, feld);
-                    match self.konfig.tresor.lesen(&schluessel) {
-                        Ok(Some(wert)) => {
-                            werte.insert((*feld).to_string(), wert);
-                        }
-                        Ok(None) => {}
-                        Err(fehler) => tracing::warn!("{schluessel} nicht lesbar: {fehler}"),
+                for feld in &zugangs_felder {
+                    schluessel.push(zugang_geheim_schluessel(&eintrag.eintrag.id, name, feld));
+                }
+                zugangsplan.push((name.clone(), zugangs_felder.clone()));
+            }
+            plan.push((eintrag.eintrag.id.clone(), geheim_felder, zugangsplan));
+        }
+
+        let tresor = self.konfig.tresor.clone();
+        let gelesen = tokio::task::spawn_blocking(move || tresor.werte_laden(&schluessel))
+            .await
+            .unwrap_or_else(|fehler| Err(anyhow::anyhow!("Tresor: {fehler}")));
+        let werte = match gelesen {
+            Ok(werte) => {
+                self.tresor_fehler_setzen(None);
+                werte
+            }
+            Err(fehler) => {
+                tracing::warn!("Tresor nicht lesbar: {fehler:#}");
+                self.tresor_fehler_setzen(Some(format!("{fehler:#}")));
+                return;
+            }
+        };
+
+        let mut alle = BTreeMap::new();
+        let mut zugangs_geheim: BTreeMap<EintragId, BTreeMap<String, Werte>> = BTreeMap::new();
+        for (id, geheim_felder, zugangsplan) in plan {
+            let mut eigene = Werte::new();
+            for feld in &geheim_felder {
+                let schluessel = geheim_schluessel(&id, feld);
+                if let Some(wert) = werte.get(&schluessel) {
+                    eigene.insert(feld.clone(), wert.clone());
+                }
+            }
+            let mut je_eintrag = BTreeMap::new();
+            for (name, felder) in zugangsplan {
+                let mut eigene_felder = Werte::new();
+                for feld in &felder {
+                    let schluessel = zugang_geheim_schluessel(&id, &name, feld);
+                    if let Some(wert) = werte.get(&schluessel) {
+                        eigene_felder.insert(feld.clone(), wert.clone());
                     }
                 }
-                je_eintrag.insert(name.clone(), werte);
+                je_eintrag.insert(name, eigene_felder);
             }
-            zugangs_geheim.insert(eintrag.eintrag.id.clone(), je_eintrag);
+            zugangs_geheim.insert(id.clone(), je_eintrag);
+            alle.insert(id, eigene);
         }
         let mut stand = self.stand();
         stand.geheim = alle;
         stand.zugang_geheim = zugangs_geheim;
+    }
+
+    /// Den Zustand des Tresors im Modell führen (Paket 3): das Fenster zeigt
+    /// „Tresor nicht lesbar“, und ein Schreibversuch unterbleibt.
+    pub(crate) fn tresor_fehler_setzen(&self, text: Option<String>) {
+        let geaendert = {
+            let mut stand = self.stand();
+            if stand.tresor_fehler == text {
+                false
+            } else {
+                stand.tresor_fehler = text;
+                true
+            }
+        };
+        if geaendert {
+            self.modell_schicken();
+        }
     }
 
     /// Die gesetzten Geheimwerte eines Zugangs (leer, wenn keine).
@@ -970,6 +1279,9 @@ impl Innen {
         let mut alle = Vec::new();
         for (id, laeufer) in &stand.laeufer {
             for tool in &laeufer.stand.tools {
+                if !quiver_domain::kennung_gueltig(id.als_str()) {
+                    continue;
+                }
                 let mut kopie = tool.clone();
                 kopie.name = quiver_domain::tool_name(id, &tool.name).into();
                 kopie.input_schema = schema_mit_typ(&tool.input_schema);
@@ -978,6 +1290,31 @@ impl Innen {
         }
         alle.sort_by(|a, b| a.name.cmp(&b.name));
         alle
+    }
+
+    /// Die Zuordnung Werkzeugname → (Eintrag, Werkzeug) für den Endpunkt.
+    /// Eine Tabelle, keine Zerlegung (Paket 3): so führt ein `__` in einem
+    /// Werkzeugnamen nie zum falschen Eintrag, und doppelte Namen werden
+    /// einmal vergeben.
+    pub(crate) fn werkzeugtabelle(&self) -> BTreeMap<String, (EintragId, String)> {
+        let stand = self.stand();
+        let eintraege: Vec<(EintragId, Vec<String>)> = stand
+            .laeufer
+            .iter()
+            .map(|(id, laeufer)| {
+                (
+                    id.clone(),
+                    laeufer
+                        .stand
+                        .tools
+                        .iter()
+                        .map(|tool| tool.name.to_string())
+                        .collect(),
+                )
+            })
+            .collect();
+        drop(stand);
+        laufzeit::werkzeugtabelle(&eintraege)
     }
 
     /// Der Agent (Kennung, Name) zu einem Token – Vergleich über die Hashes in
@@ -992,6 +1329,17 @@ impl Innen {
             .map(|agent| (agent.id.clone(), agent.name.clone()))
     }
 
+    /// Die Frist für einen Werkzeugaufruf dieses Eintrags (Paket 3): die
+    /// eingestellte, sonst [`laufzeit::AUFRUF_FRIST`] – nie mehr als
+    /// [`laufzeit::AUFRUF_FRIST_MAX`].
+    pub(crate) fn aufruf_frist(&self, id: &EintragId) -> Duration {
+        let sekunden = self.stand().aufruf_fristen.get(id).copied();
+        match sekunden {
+            Some(sekunden) => Duration::from_secs(sekunden.clamp(1, 900)),
+            None => laufzeit::AUFRUF_FRIST,
+        }
+    }
+
     /// Einen Eintrag anhalten und mit den aktuellen Werten neu starten.
     pub(crate) async fn neu_starten(self: &Arc<Self>, id: &EintragId) {
         stoppe_in(self, id);
@@ -1004,7 +1352,52 @@ impl Innen {
     }
 
     /// Nach jeder Änderung der Werkzeugliste: allen Agenten Bescheid sagen.
-    pub(crate) async fn liste_geaendert(&self) {
+    ///
+    /// Höchstens **einmal je Sekunde** (Paket 3): ein Eintrag, der beim
+    /// Starten und Neustarten mehrmals die Liste ändert, soll die Agenten
+    /// nicht mit `list_changed` überschütten. Eine Meldung ist dann
+    /// vorgemerkt und kommt am Ende der Sekunde nach.
+    pub(crate) async fn liste_geaendert(self: &Arc<Self>) {
+        const ABSTAND: Duration = Duration::from_secs(1);
+        let warten = {
+            let mut zuletzt = self
+                .liste_zuletzt
+                .lock()
+                .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+            let jetzt = std::time::Instant::now();
+            match *zuletzt {
+                Some(letzte) if jetzt.duration_since(letzte) < ABSTAND => {
+                    Some(ABSTAND - jetzt.duration_since(letzte))
+                }
+                _ => {
+                    *zuletzt = Some(jetzt);
+                    None
+                }
+            }
+        };
+        if let Some(rest) = warten {
+            // Eine Meldung ist schon unterwegs: sie deckt diese Änderung mit ab.
+            if self
+                .liste_geplant
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
+            let innen = self.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(rest).await;
+                innen
+                    .liste_geplant
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                innen.liste_senden().await;
+            });
+            return;
+        }
+        self.liste_senden().await;
+    }
+
+    /// Die Meldung selbst: allen offenen Sitzungen `list_changed` schicken.
+    async fn liste_senden(&self) {
         let sitzungen: Vec<(u64, Peer<RoleServer>)> = self
             .sitzungen
             .lock()
@@ -1213,11 +1606,55 @@ async fn protokoll_aufraeumen(innen: Arc<Innen>) {
     }
 }
 
+/// Alte Agenten-Sitzungen abräumen (Paket 3): eine Sitzung, die 10 Minuten
+/// nicht benutzt wurde, gilt als weg. Das Fenster zeigt „verbunden“ daraus.
+async fn sitzungen_lauf(innen: Arc<Innen>) {
+    loop {
+        tokio::select! {
+            _ = innen.ende.warten() => return,
+            _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+        }
+        let jetzt = std::time::Instant::now();
+        let entfernt = {
+            let mut sitzungen = innen
+                .sitzungen
+                .lock()
+                .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+            let vorher = sitzungen.len();
+            sitzungen.retain(|_, sitzung| jetzt.duration_since(sitzung.zuletzt) < SITZUNG_FRIST);
+            vorher != sitzungen.len()
+        };
+        if entfernt {
+            innen.modell_schicken();
+        }
+    }
+}
+
+/// Die Sperre des Profils (`<profil>/kern.sperre`). Sie lebt so lange wie der
+/// Kern; ein zweiter Kern auf demselben Ordner bekommt sie nicht und startet
+/// nicht. Der Port taugt dafür nicht: zwei Profile dürfen nebeneinander laufen.
+fn profil_sperren(profil: &Path) -> anyhow::Result<std::fs::File> {
+    std::fs::create_dir_all(profil)?;
+    let datei = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(profil.join("kern.sperre"))?;
+    match datei.try_lock() {
+        Ok(()) => Ok(datei),
+        Err(_) => anyhow::bail!(
+            "Das Profil {} wird schon benutzt – bitte nur ein quiver je Profil starten",
+            profil.display()
+        ),
+    }
+}
+
 /// Die **eine** Stelle, die entscheidet, ob ein Eintrag laufen darf: der User
-/// hat ihn auf diesem Gerät nicht abgeschaltet (Aufgabe 19). Alle Start-Wege
+/// hat ihn auf diesem Gerät nicht abgeschaltet (Aufgabe 19) **und** seine
+/// Kennung taugt als Präfix der Werkzeugnamen (Paket 3). Alle Start-Wege
 /// gehen durch [`starte_in`].
 fn darf_laufen(stand: &Stand, id: &EintragId) -> bool {
-    !stand.am_geraet_aus.contains(id)
+    !stand.am_geraet_aus.contains(id) && quiver_domain::kennung_gueltig(id.als_str())
 }
 
 /// Der Eintrag startet: Zustand merken und die Aufsicht starten.
@@ -1233,7 +1670,10 @@ fn darf_laufen(stand: &Stand, id: &EintragId) -> bool {
 async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
     let id = eintrag.eintrag.id.clone();
     if !darf_laufen(&innen.stand(), &id) {
-        tracing::info!(eintrag = %id, "am Gerät abgeschaltet, wird nicht gestartet");
+        tracing::info!(
+            eintrag = %id,
+            "wird nicht gestartet (abgeschaltet oder Kennung unbrauchbar)"
+        );
         return;
     }
     let generation = innen
@@ -1287,6 +1727,8 @@ fn stoppe_in(innen: &Arc<Innen>, id: &EintragId) {
 /// denselben Eintrag, ist diese Aufgabe überholt und schreibt nichts mehr.
 async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch: Abbruch) {
     let mut backoff = 1u64;
+    // Wie oft eine Meldung des Tools zu groß war (Paket 3).
+    let mut zu_gross_anzahl: u64 = 0;
     // Einmal beim Start: steht die Anmeldung noch?
     status_im_hintergrund(&innen, &id);
     loop {
@@ -1395,10 +1837,19 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
         innen.melde().await;
         backoff = 1;
 
-        // Jetzt läuft es. Ende entweder durch uns (Abbruch) oder von selbst.
+        // Jetzt läuft es. Ende entweder durch uns (Abbruch), von selbst -
+        // oder weil eine Meldung des Tools die Größengrenze überschritt
+        // (Paket 3): dann ist die Leitung nicht mehr in einem bekannten
+        // Zustand, und der Eintrag wird neu gestartet.
+        let wache = verbindung.groessen_wache();
+        let mut zu_gross = false;
         let selbst_zu = tokio::select! {
             _ = abbruch.warten() => false,
             _ = innen.ende.warten() => false,
+            _ = wache.warten() => {
+                zu_gross = true;
+                true
+            }
             _ = verbindung.warten() => true,
         };
         verbindung.beenden();
@@ -1412,6 +1863,23 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
             innen.modell_schicken();
             innen.liste_geaendert().await;
             return;
+        }
+        if zu_gross {
+            zu_gross_anzahl += 1;
+            let text = format!(
+                "Eine Meldung des Tools war größer als {} Byte – der Eintrag wird neu gestartet ({zu_gross_anzahl}. Mal)",
+                laufzeit::NACHRICHT_BYTES
+            );
+            tracing::warn!(eintrag = %id, "{text}");
+            innen.protokoll.zeile_schreiben(&id, &text);
+            innen.modell_schicken();
+            innen.liste_geaendert().await;
+            // Eine Pause: ein Tool, das immer wieder zu große Meldungen
+            // schickt, soll nicht in einer Schleife Prozesse starten.
+            if !warten_auf_neustart(&abbruch, &mut backoff).await {
+                return;
+            }
+            continue;
         }
         fehler_setzen(
             &innen,
@@ -1501,7 +1969,7 @@ pub(crate) fn ueberholt(
 
 /// Den Soll-Zustand anwenden: vergleichen und die passenden Aktionen ausführen.
 pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
-    innen.geheim_laden(&soll);
+    innen.geheim_laden(&soll).await;
     let ist = innen.fingerabdruecke();
     let aktionen = quiver_domain::abgleichen(&soll, &ist);
     {
@@ -1553,6 +2021,62 @@ async fn starte_aus_soll(innen: &Arc<Innen>, soll: &Soll, id: &EintragId) {
     }
 }
 
+/// Eine Server-Adresse prüfen und normalisieren: `https` überall, `http`
+/// **nur** auf Loopback (ADR 0002). Kein Benutzer, keine Abfrage, kein Pfad.
+pub fn server_adresse(wert: &str) -> anyhow::Result<String> {
+    let wert = wert.trim().trim_end_matches('/');
+    if wert.is_empty() {
+        anyhow::bail!("Server-Adresse fehlt");
+    }
+    let adresse = reqwest::Url::parse(wert)
+        .map_err(|fehler| anyhow::anyhow!("„{wert}“ ist keine gültige Adresse: {fehler}"))?;
+    match adresse.scheme() {
+        "https" => {}
+        "http" => {
+            let host = adresse.host_str().unwrap_or_default();
+            let host = host
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+                .unwrap_or(host);
+            if !matches!(host, "127.0.0.1" | "::1" | "localhost") {
+                anyhow::bail!(
+                    "Unverschlüsseltes http ist nur auf diesem Rechner erlaubt (127.0.0.1, ::1, localhost)"
+                );
+            }
+        }
+        anderes => anyhow::bail!("Die Adresse muss mit https beginnen (nicht {anderes})"),
+    }
+    if !adresse.username().is_empty() || adresse.password().is_some() {
+        anyhow::bail!("Die Adresse darf keinen Benutzer und kein Passwort enthalten");
+    }
+    if adresse.query().is_some() || adresse.fragment().is_some() {
+        anyhow::bail!("Die Adresse darf keine Abfrage und kein Fragment enthalten");
+    }
+    if !matches!(adresse.path(), "" | "/") {
+        anyhow::bail!("Die Adresse darf keinen Pfad enthalten");
+    }
+    Ok(adresse.as_str().trim_end_matches('/').to_string())
+}
+
+/// Ein verständlicher Satz zu einem maschinenlesbaren Grund; ohne Grund steht
+/// der technische Text da.
+fn grund_text(grund: Option<AnmeldeGrund>, technisch: &str) -> String {
+    match grund {
+        Some(AnmeldeGrund::Gesperrt) => {
+            "Dieses Konto oder Gerät ist gesperrt. Bitte an die Verwaltung wenden."
+                .to_string()
+        }
+        Some(AnmeldeGrund::KeinZugriff) => {
+            "Diesem Konto ist keine Gruppe zugeordnet – es gibt noch keine Tools. Bitte an die Verwaltung wenden."
+                .to_string()
+        }
+        Some(AnmeldeGrund::NeuAnmelden) => {
+            "Die Anmeldung gilt nicht mehr. Bitte erneut anmelden.".to_string()
+        }
+        None => technisch.to_string(),
+    }
+}
+
 /// Die Fassade für das Fenster. Billig zu klonen (ein Zeiger).
 #[derive(Clone)]
 pub struct Kern {
@@ -1561,6 +2085,10 @@ pub struct Kern {
 
 impl Kern {
     /// Hintergrundaufgaben starten, gespeicherten Stand laden, Endpunkt binden.
+    ///
+    /// Ein kaputter gespeicherter Stand oder ein unlesbarer Tresor verhindert
+    /// den Start **nicht** (Paket 3): der Client läuft weiter und sagt es im
+    /// Fenster. Ein zweiter Kern auf demselben Profil startet nicht.
     pub async fn starten(konfig: KernKonfig) -> anyhow::Result<Kern> {
         if !konfig.mcp_adresse.ip().is_loopback() {
             anyhow::bail!(
@@ -1568,8 +2096,43 @@ impl Kern {
                 konfig.mcp_adresse
             );
         }
-        let gespeichert = profil::Profil::laden(&konfig.profil)?;
-        let token = konfig.tresor.lesen("geraet-token")?;
+        // Zuerst die Rechte: der Profilordner gehört 0700, was darin liegt
+        // 0600 – auch das, was eine ältere Fassung offener hinterlassen hat.
+        // Ein Fehler ist kein Startfehler (ein gesperrter Ordner soll den
+        // Client nicht hindern), er steht im Protokoll.
+        rechte::umask_setzen();
+        if let Err(fehler) = rechte::profil_pruefen(&konfig.profil) {
+            tracing::warn!(
+                "Rechte in {} nicht prüfbar: {fehler}",
+                konfig.profil.display()
+            );
+        }
+        // Eine Sperre je Profil: zwei Kerne auf demselben Ordner würden sich
+        // gegenseitig die Dateien überschreiben.
+        let profil_sperre = profil_sperren(&konfig.profil)?;
+        let (mut gespeichert, mut profil_hinweis) =
+            profil::Profil::laden_mit_hinweis(&konfig.profil);
+        // Auch die gespeicherte Adresse wird geprüft (Paket 3): was aus einer
+        // alten oder fremden Datei kommt, ist keine vertrauenswürdige Adresse.
+        if let Some(url) = gespeichert.server_url.clone() {
+            match server_adresse(&url) {
+                Ok(sauber) => gespeichert.server_url = Some(sauber),
+                Err(fehler) => {
+                    tracing::warn!("Server-Adresse im Profil taugt nicht: {fehler:#}");
+                    gespeichert.server_url = None;
+                    gespeichert.geraet = None;
+                    profil_hinweis = Some(format!(
+                        "Die gespeicherte Server-Adresse taugt nicht: {fehler:#}"
+                    ));
+                }
+            }
+        }
+        // Ein kaputter Tresor ist ein Zustand, kein Startfehler: das Fenster
+        // zeigt „Tresor nicht lesbar“ und bietet „Neu beginnen“ an.
+        let (token, tresor_fehler) = match konfig.tresor.lesen("geraet-token") {
+            Ok(token) => (token, None),
+            Err(fehler) => (None, Some(format!("{fehler:#}"))),
+        };
 
         // Erst binden: dann steht die tatsächliche Adresse im Modell.
         let listener = tokio::net::TcpListener::bind(konfig.mcp_adresse).await?;
@@ -1585,9 +2148,13 @@ impl Kern {
         };
         let stand = Stand {
             abgelehnt: false,
+            anmelde_grund: None,
             server_url: gespeichert.server_url.clone(),
             geraet,
             token,
+            benutzer: gespeichert.benutzer.clone(),
+            anmeldewege: None,
+            anmeldung_abbruch: None,
             lokale_werte: gespeichert
                 .lokale_werte
                 .iter()
@@ -1609,6 +2176,14 @@ impl Kern {
             anmeldung: BTreeMap::new(),
             einrichtung: BTreeMap::new(),
             einrichtung_laufend: BTreeSet::new(),
+            einrichtung_abbruch: BTreeMap::new(),
+            aufruf_fristen: gespeichert
+                .aufruf_fristen
+                .iter()
+                .map(|(id, sekunden)| (EintragId::neu(id.clone()), *sekunden))
+                .collect(),
+            tresor_fehler,
+            profil_hinweis,
             am_geraet_aus: gespeichert
                 .am_geraet_aus
                 .iter()
@@ -1623,7 +2198,8 @@ impl Kern {
         let (sender, _) = watch::channel(stand.modell(&BTreeSet::new()));
         let innen = Arc::new(Innen {
             konfig: konfig.clone(),
-            http: reqwest::Client::new(),
+            adresse,
+            http: netz::client(),
             stand: Mutex::new(stand),
             modell: sender,
             sitzungen: Mutex::new(BTreeMap::new()),
@@ -1635,13 +2211,17 @@ impl Kern {
             schalt_wache: tokio::sync::Mutex::new(()),
             generation: AtomicU64::new(0),
             protokoll: Arc::new(protokoll::Protokoll::neu(&konfig.profil)),
+            _profil_sperre: Mutex::new(Some(profil_sperre)),
+            auslastung: Mutex::new(Auslastung::default()),
+            liste_zuletzt: Mutex::new(None),
+            liste_geplant: AtomicBool::new(false),
         });
 
         // Geheimnisse wieder aufnehmen. Der gespeicherte Soll-Zustand läuft
         // **nicht** an: kein Tool startet, bevor der Server das Gerät in diesem
         // Lauf angenommen hat (erster erfolgreicher Abgleich).
         let soll = innen.stand().soll.clone();
-        innen.geheim_laden(&soll);
+        innen.geheim_laden(&soll).await;
         innen.protokoll.geheimnisse_setzen(innen.geheimnisse());
         innen.modell_schicken();
 
@@ -1657,6 +2237,7 @@ impl Kern {
         let abgleich = tokio::spawn(abgleich::lauf(innen.clone()));
         let status = tokio::spawn(anmeldung_lauf(innen.clone()));
         let aufraeumen = tokio::spawn(protokoll_aufraeumen(innen.clone()));
+        let sitzungen = tokio::spawn(sitzungen_lauf(innen.clone()));
         {
             let mut aufgaben = innen
                 .aufgaben
@@ -1666,6 +2247,7 @@ impl Kern {
             aufgaben.push(abgleich);
             aufgaben.push(status);
             aufgaben.push(aufraeumen);
+            aufgaben.push(sitzungen);
         }
 
         tracing::info!("MCP-Endpunkt für Agenten: {endpunkt}");
@@ -1726,13 +2308,159 @@ impl Kern {
         self.innen.modell_schicken();
     }
 
-    /// Gerät beim Server einbinden (Einmal-Code aus der Admin-Oberfläche).
-    pub async fn einbinden(&self, server: &str, code: &str, name: &str) -> anyhow::Result<()> {
-        let server = server.trim().trim_end_matches('/').to_string();
-        if server.is_empty() {
-            anyhow::bail!("Server-Adresse fehlt");
+    /// Fragen, welche Anmeldewege dieser Server anbietet (Aufgabe 22).
+    ///
+    /// Das ist der Schritt hinter „Weiter“: die Adresse wird geprüft (https,
+    /// `http` nur Loopback), gespeichert und die Antwort in `anmeldewege`
+    /// abgelegt. Erst danach zeigt die Seite **entweder** „Mit Microsoft
+    /// anmelden“ **oder** das Code-Feld, nie beides.
+    pub async fn anmeldewege(&self, server: &str) -> anyhow::Result<()> {
+        let server = server_adresse(server)?;
+        let antwort = self
+            .innen
+            .http
+            .get(format!("{server}{PRAEFIX}/anmeldearten"))
+            .send()
+            .await
+            .map_err(|fehler| anyhow::anyhow!("Server nicht erreichbar: {fehler}"))?;
+        let antwort = abgleich::pruefen(antwort).await?;
+        let arten: Anmeldearten = antwort
+            .json()
+            .await
+            .map_err(|fehler| anyhow::anyhow!("Antwort der Anmeldung: {fehler}"))?;
+        {
+            let mut stand = self.innen.stand();
+            stand.server_url = Some(server.clone());
+            stand.abgelehnt = false;
+            stand.anmelde_grund = None;
+            // Ohne Entra gibt es die Einmal-Codes; mit Entra ausdrücklich nicht.
+            stand.anmeldewege = Some(Anmeldewege {
+                server: server.clone(),
+                entra: arten.entra,
+                code: !arten.entra,
+            });
+            if !matches!(stand.verbindung, Verbindung::Verbunden { .. }) {
+                stand.verbindung = Verbindung::NichtEingebunden;
+            }
         }
-        let antwort = abgleich::anmelden(&self.innen.http, &server, code, name).await?;
+        self.innen.speichern();
+        self.innen.modell_schicken();
+        Ok(())
+    }
+
+    /// Mit Entra über den Server anmelden (Aufgabe 22). Der Client spricht
+    /// **nie** mit Entra: er öffnet die Seite des Servers, wartet auf genau
+    /// eine Antwort auf `127.0.0.1` und tauscht den Code mit seinem
+    /// PKCE-Verifier. Ein altes Token wird mitgeschickt, damit das Gerät
+    /// dasselbe bleibt.
+    pub async fn anmelden_server(&self, server: &str, name: &str) -> anyhow::Result<()> {
+        let server = server_adresse(server)?;
+        if !self
+            .innen
+            .stand()
+            .anmeldewege
+            .as_ref()
+            .is_some_and(|wege| wege.server == server && wege.entra)
+        {
+            anyhow::bail!("Dieser Server meldet keinen Entra-Weg; bitte „Weiter“ erneut wählen");
+        }
+        let altes_token = self.innen.stand().token.clone();
+        // Eine schon laufende Anmeldung (etwa ein alter Lauscher) abbrechen.
+        if let Some(alt) = self.innen.stand().anmeldung_abbruch.take() {
+            alt.abbrechen();
+        }
+        let abbruch = Abbruch::neu();
+        self.innen.stand().anmeldung_abbruch = Some(abbruch.clone());
+        self.innen.verbindung_setzen(Verbindung::Verbindet {
+            server: server.clone(),
+        });
+
+        let innen = self.innen.clone();
+        let server_fuer_adresse = server.clone();
+        let ergebnis = server_anmeldung::anmelden(
+            &self.innen.http,
+            &*self.innen.konfig.browser,
+            &server,
+            name,
+            altes_token.as_deref(),
+            &abbruch,
+            move |adresse| {
+                innen.verbindung_setzen(Verbindung::WartetAufBrowser {
+                    server: server_fuer_adresse.clone(),
+                    adresse,
+                });
+            },
+        )
+        .await;
+        self.innen.stand().anmeldung_abbruch = None;
+
+        match ergebnis {
+            Ok(antwort) => self.anmelden_uebernehmen(&server, antwort),
+            Err(fehler) => {
+                self.anmeldefehler_setzen(&server, &fehler).await;
+                Err(fehler)
+            }
+        }
+    }
+
+    /// Eine laufende Browser-Anmeldung abbrechen (Knopf „Abbrechen“).
+    pub fn anmeldung_abbrechen(&self) {
+        if let Some(abbruch) = self.innen.stand().anmeldung_abbruch.take() {
+            abbruch.abbrechen();
+        }
+    }
+
+    /// Ein gescheitertes Anmelden in den Zustand schreiben: verständlicher
+    /// Text, richtiger Umgang mit Token und Angaben.
+    async fn anmeldefehler_setzen(self: &Kern, server: &str, fehler: &anyhow::Error) {
+        let text = grund_text(abgleich::grund_von(fehler), &format!("{fehler:#}"));
+        match abgleich::grund_von(fehler) {
+            Some(AnmeldeGrund::Gesperrt | AnmeldeGrund::KeinZugriff) => {
+                if let Err(fehler) = self.innen.ausbinden(true).await {
+                    tracing::warn!("Geräte-Token ließ sich nicht löschen: {fehler:#}");
+                }
+                {
+                    let mut stand = self.innen.stand();
+                    stand.anmelde_grund = abgleich::grund_von(fehler);
+                    stand.verbindung = Verbindung::AnmeldeFehler {
+                        server: server.to_string(),
+                        text: text.clone(),
+                    };
+                }
+            }
+            Some(AnmeldeGrund::NeuAnmelden) | None if self.innen.stand().token.is_some() => {
+                self.innen.neu_anmelden_setzen(server).await;
+                let mut stand = self.innen.stand();
+                if let Verbindung::NeuAnmelden { text: alt, .. } = &mut stand.verbindung {
+                    *alt = text.clone();
+                }
+            }
+            _ => {
+                let mut stand = self.innen.stand();
+                stand.abgelehnt = false;
+                stand.anmelde_grund = abgleich::grund_von(fehler);
+                stand.verbindung = Verbindung::AnmeldeFehler {
+                    server: server.to_string(),
+                    text,
+                };
+            }
+        }
+        self.innen.speichern();
+        self.innen.modell_schicken();
+    }
+
+    /// Das Ergebnis einer Anmeldung übernehmen: Token in den Tresor, Gerät
+    /// und Benutzer ins Modell, den Abgleich wecken.
+    ///
+    /// Die Adresse wird **noch einmal** geprüft (Paket 3): sie ist die letzte
+    /// Wache vor dem Schreiben des Geräte-Tokens – keine Anmeldung kann ein
+    /// Token an eine Adresse binden, die nicht https (oder Loopback) ist.
+    fn anmelden_uebernehmen(
+        &self,
+        server: &str,
+        antwort: quiver_protocol::AnmeldenAntwort,
+    ) -> anyhow::Result<()> {
+        let server = server_adresse(server)?;
         self.innen
             .konfig
             .tresor
@@ -1740,9 +2468,11 @@ impl Kern {
         {
             let mut stand = self.innen.stand();
             stand.abgelehnt = false;
+            stand.anmelde_grund = None;
             stand.server_url = Some(server.clone());
             stand.geraet = Some(antwort.geraet);
             stand.token = Some(antwort.token);
+            stand.benutzer = antwort.benutzer;
             stand.verbindung = Verbindung::Verbindet {
                 server: server.clone(),
             };
@@ -1753,9 +2483,45 @@ impl Kern {
         Ok(())
     }
 
-    /// Gerät abmelden: Token weg, nichts läuft mehr.
+    /// Gerät beim Server einbinden (Einmal-Code aus der Admin-Oberfläche).
+    ///
+    /// Die Adresse wird wie überall geprüft: `https` überall, `http` nur auf
+    /// Loopback (Paket 3 – der Weg über den Einmal-Code war die letzte Lücke).
+    pub async fn einbinden(&self, server: &str, code: &str, name: &str) -> anyhow::Result<()> {
+        let server = server_adresse(server)?;
+        let antwort = abgleich::anmelden(&self.innen.http, &server, code, name).await?;
+        self.anmelden_uebernehmen(&server, antwort)
+    }
+
+    /// Gerät abmelden: das Gerät wird **auch am Server** gelöscht, dann sind
+    /// Token und Gerät weg; die Server-Adresse und alle Angaben bleiben.
+    /// Ist der Server nicht erreichbar, sagt der Client das — lokal ist das
+    /// Gerät trotzdem abgemeldet.
     pub async fn abmelden(&self) -> anyhow::Result<()> {
-        self.innen.ausbinden(false).await
+        tracing::info!("Abmelden im Fenster");
+        let (server, token) = self.innen.zugang();
+        let mut server_fehler = None;
+        if let (Some(server), Some(token)) = (server, token) {
+            if let Err(fehler) = abgleich::geraet_abmelden(&self.innen.http, &server, &token).await
+            {
+                tracing::warn!("Gerät am Server nicht gelöscht: {fehler:#}");
+                server_fehler = Some(fehler);
+            }
+        }
+        self.innen.ausbinden(false).await?;
+        {
+            let mut stand = self.innen.stand();
+            stand.anmelde_grund = None;
+            stand.anmeldewege = None;
+        }
+        self.innen.speichern();
+        self.innen.modell_schicken();
+        match server_fehler {
+            Some(fehler) => anyhow::bail!(
+                "Lokal abgemeldet, aber das Gerät ließ sich am Server nicht löschen: {fehler:#}"
+            ),
+            None => Ok(()),
+        }
     }
 
     /// Die Anmeldung eines Eintrags im Fenster auslösen (Aufgabe 10).
@@ -1807,8 +2573,24 @@ impl Kern {
         if !self.innen.einrichtung_beginnen(eintrag) {
             return Ok(());
         }
-        let ergebnis = self.einrichtung_ausfuehren(eintrag, &soll).await;
+        // Das Abbruchsignal gehört zum Eintrag: „Abbrechen“ im Fenster und
+        // [`Kern::beenden`] beenden den Kindprozess (Paket 3).
+        let abbruch = Abbruch::neu();
+        self.innen
+            .stand()
+            .einrichtung_abbruch
+            .insert(eintrag.clone(), abbruch.clone());
+        let ergebnis = self
+            .einrichtung_ausfuehren(eintrag, &soll, abbruch.clone())
+            .await;
         self.innen.einrichtung_freigeben(eintrag);
+        self.innen.stand().einrichtung_abbruch.remove(eintrag);
+        // Ein Abbruch ist kein Fehler: der Zustand ist wieder „Bereit“.
+        if abbruch.ist_abgebrochen() {
+            self.innen
+                .einrichtung_setzen(eintrag, EinrichtZustand::Bereit);
+            return Ok(());
+        }
         match ergebnis {
             Ok(ausgang) => match einrichtung::ergebnis_aus(&ausgang) {
                 einrichtung::Ergebnis::Fertig { neustart } => {
@@ -1842,10 +2624,45 @@ impl Kern {
         &self,
         eintrag: &EintragId,
         soll: &SollEintrag,
+        abbruch: Abbruch,
     ) -> anyhow::Result<anmeldung::Ausgang> {
         let (lokal, geheim) = self.innen.werte(eintrag);
         let befehl = einrichtung::befehl_bauen(soll, &lokal, &geheim)?;
-        einrichtung::laufen(eintrag, &befehl).await
+        einrichtung::laufen(eintrag, &befehl, Some(abbruch)).await
+    }
+
+    /// Eine laufende Einrichtung abbrechen (Knopf „Abbrechen“). Der Prozess
+    /// endet sofort, der Zustand geht zurück auf „Bereit“.
+    pub fn einrichtung_abbrechen(&self, eintrag: &EintragId) {
+        if let Some(abbruch) = self.innen.stand().einrichtung_abbruch.get(eintrag).cloned() {
+            abbruch.abbrechen();
+        }
+    }
+
+    /// Einen kaputten Tresor beiseitelegen und mit einem leeren beginnen
+    /// (Paket 3, nach der Rückfrage im Fenster). Danach ist der Tresor wieder
+    /// schreibbar; die alten Dateien liegen als `.kaputt-<zeit>` daneben.
+    pub fn tresor_neu_beginnen(&self) -> anyhow::Result<()> {
+        self.innen.konfig.tresor.neu_beginnen()?;
+        self.innen.tresor_fehler_setzen(None);
+        self.innen
+            .protokoll
+            .geheimnisse_setzen(self.innen.geheimnisse());
+        Ok(())
+    }
+
+    /// Wie lange ein Werkzeugaufruf dieses Eintrags höchstens dauern darf
+    /// (Paket 3). Erlaubt sind 1–900 Sekunden; ohne Angabe gelten 120 s.
+    pub fn aufruf_frist_setzen(&self, eintrag: &EintragId, sekunden: u64) -> anyhow::Result<()> {
+        if !(1..=900).contains(&sekunden) {
+            anyhow::bail!("Die Frist muss zwischen 1 und 900 Sekunden liegen");
+        }
+        self.innen
+            .stand()
+            .aufruf_fristen
+            .insert(eintrag.clone(), sekunden);
+        self.innen.speichern();
+        Ok(())
     }
 
     /// Einen der drei Anmelde-Befehle ausführen. Scheitert er, steht der
@@ -2060,7 +2877,12 @@ impl Kern {
         }
         // Der Import kann abschalten, also nie neben einer Schaltung.
         let _schaltung = self.innen.schalt_wache.lock().await;
-        let mut zusammenfassung = Zusammenfassung::default();
+        // Was beim Lesen schon übergangen wurde (unbrauchbare Kennungen,
+        // Mengen-Grenzen), steht in der Zusammenfassung (Paket 3).
+        let mut zusammenfassung = Zusammenfassung {
+            uebersprungen: gelesen.uebersprungen.clone(),
+            ..Zusammenfassung::default()
+        };
         let mut betroffen: Vec<EintragId> = Vec::new();
         let mut neue_werte: Vec<(EintragId, Werte)> = Vec::new();
         let mut neue_zugaenge: Vec<(EintragId, BTreeMap<String, Werte>)> = Vec::new();
@@ -2427,6 +3249,26 @@ impl Kern {
     /// Alles anhalten (Fenster zu, Strg+C).
     pub async fn beenden(&self) {
         self.innen.ende.abbrechen();
+        // Die Profil-Sperre fällt mit dem Beenden: ein neuer Kern auf
+        // demselben Profil (ein Neustart) darf starten, ein **gleichzeitig**
+        // laufender nicht (Paket 3).
+        self.innen
+            ._profil_sperre
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+            .take();
+        // Laufende Einrichtungen brechen ab, damit kein Kindprozess stehen
+        // bleibt (Paket 3).
+        let abbrueche: Vec<Abbruch> = self
+            .innen
+            .stand()
+            .einrichtung_abbruch
+            .values()
+            .cloned()
+            .collect();
+        for abbruch in abbrueche {
+            abbruch.abbrechen();
+        }
         let ids: Vec<EintragId> = self.innen.stand().laeufer.keys().cloned().collect();
         for id in ids {
             stoppe_in(&self.innen, &id);

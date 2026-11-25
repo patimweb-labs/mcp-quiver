@@ -129,6 +129,42 @@ pub fn als_css() -> String {
     css
 }
 
+/// Die Token-Dateien als CSS-Variablen für Seiten, die der Server selbst
+/// ausliefert (Aufgabe 26, Punkt 5): dunkel als Vorgabe, hell über
+/// `prefers-color-scheme` – ohne Attribut und ohne Skript.
+///
+/// Erzeugt nach `crates/server/seiten/system.css`:
+///
+/// ```text
+/// cargo run -p quiver-oberflaeche --bin tokens_seite_css > crates/server/seiten/system.css
+/// ```
+pub fn als_seiten_css() -> String {
+    let grund = lesen(GRUNDWERTE);
+    let mut css = String::from(
+        "/* Erzeugt von `cargo run -p quiver-oberflaeche --bin tokens_seite_css` \
+         – nicht von Hand ändern. */\n",
+    );
+    css.push_str("\n:root {\n");
+    for (pfad, wert) in mass_pfade(&grund) {
+        css.push_str(&format!("  {}: {wert};\n", css_name(&pfad)));
+    }
+    let dunkel = lesen(THEMEN[0].0);
+    for pfad in farb_pfade(&dunkel) {
+        let wert = aufloesen(dunkel.get(&pfad).expect("Farbwert im Theme"), &grund);
+        css.push_str(&format!("  {}: {wert};\n", css_name(&pfad)));
+    }
+    css.push_str("}\n");
+
+    css.push_str("\n@media (prefers-color-scheme: light) {\n  :root {\n");
+    let hell = lesen(THEMEN[1].0);
+    for pfad in farb_pfade(&hell) {
+        let wert = aufloesen(hell.get(&pfad).expect("Farbwert im Theme"), &grund);
+        css.push_str(&format!("    {}: {wert};\n", css_name(&pfad)));
+    }
+    css.push_str("  }\n}\n");
+    css
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +200,16 @@ mod tests {
         let grund = lesen(GRUNDWERTE);
         assert_eq!(grund["space.4"], "16px");
         assert_eq!(grund["duration.fast"], "120ms");
+    }
+
+    #[test]
+    fn seiten_css_ist_dunkel_mit_heller_ausnahme() {
+        let css = als_seiten_css();
+        assert!(css.contains(":root {"));
+        assert!(css.contains("@media (prefers-color-scheme: light)"));
+        assert!(css.contains("--wp-space-4: 16px;"));
+        assert!(css.contains("--wp-color-bg-canvas: #"));
+        assert!(!css.contains("data-theme"), "kein Attribut, kein Skript");
     }
 
     #[test]

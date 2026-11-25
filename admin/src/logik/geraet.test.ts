@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { EintragZustand, GeraetStand, Gruppe } from "../api/typen";
 import {
   anzahl_mit_problemen,
+  besitzer_hinweis,
+  besitzer_text,
   geraete_mit_problemen,
   gruppen_namen,
   hat_problem,
@@ -178,8 +180,8 @@ describe("stand_ton", () => {
 
 describe("Gruppen und Revision", () => {
   const gruppen: Gruppe[] = [
-    { id: "team", titel: "Team", saetze: [] },
-    { id: "ops", titel: "Betrieb", saetze: [] },
+    { id: "team", titel: "Team", saetze: [], entra: [] },
+    { id: "ops", titel: "Betrieb", saetze: [], entra: [] },
   ];
 
   it("löst Kennungen in Titel auf, unbekannte bleiben Kennung", () => {
@@ -192,5 +194,53 @@ describe("Gruppen und Revision", () => {
   it("kürzt lange Revisionen", () => {
     expect(revision_kurz("kurz")).toBe("kurz");
     expect(revision_kurz("0123456789abcdef")).toBe("0123456789ab…");
+  });
+});
+
+describe("Besitzer", () => {
+  it("nennt Name, sonst E-Mail, sonst Objekt-Id", () => {
+    expect(
+      besitzer_text(
+        stand({
+          besitzer: {
+            oid: "11111111-1111-1111-1111-111111111111",
+            email: "anna@example.test",
+            name: "Anna Admin",
+          },
+        }),
+      ),
+    ).toBe("Anna Admin");
+    expect(
+      besitzer_text(
+        stand({
+          besitzer: {
+            oid: "11111111-1111-1111-1111-111111111111",
+            email: "anna@example.test",
+            name: null,
+          },
+        }),
+      ),
+    ).toBe("anna@example.test");
+    expect(
+      besitzer_text(
+        stand({
+          besitzer: {
+            oid: "11111111-1111-1111-1111-111111111111",
+          },
+        }),
+      ),
+    ).toBe("11111111-1111-1111-1111-111111111111");
+  });
+
+  it("nimmt auch einen Besitzer als Namen", () => {
+    expect(besitzer_text(stand({ besitzer: "anna@example.test" }))).toBe(
+      "anna@example.test",
+    );
+  });
+
+  it("rät keinen Besitzer, wenn der Server keinen nennt", () => {
+    expect(besitzer_text(stand())).toBe("ohne Benutzer (Code)");
+    expect(besitzer_hinweis(stand())).toContain("keinen Besitzer");
+    expect(besitzer_hinweis(stand({ besitzer: { oid: "x" } }))).toBeNull();
   });
 });

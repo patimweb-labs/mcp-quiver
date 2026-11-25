@@ -146,6 +146,12 @@ pub enum Dialog {
     AgentEntfernen { id: String, name: String },
     /// Die Anmeldung eines Eintrags beenden (Rückfrage).
     AnmeldungBeenden { eintrag: EintragId, titel: String },
+    /// Das Gerät vom Server abmelden (Rückfrage, Aufgabe 22): Agenten
+    /// verlieren alle Tools, Angaben und Adresse bleiben.
+    Abmelden {
+        server: String,
+        benutzer: Option<String>,
+    },
     /// Einen Zugang anlegen (`neu`) oder ändern (Aufgabe 14). Beim Ändern ist
     /// der Name fest; die Felder stehen als Eingaben im Dialog.
     Zugang {
@@ -181,6 +187,9 @@ pub enum Dialog {
     Aufruf { aufruf: Aufruf },
     /// Das Protokoll leeren — mit Rückfrage (Aufgabe 17).
     ProtokollLeeren,
+    /// Der Tresor ist nicht lesbar: mit einem leeren beginnen (Paket 3).
+    /// Die alten Dateien bleiben als `.kaputt-<zeit>` liegen.
+    TresorNeuBeginnen,
 }
 
 /// Was in den Eingabefeldern der Verbindungsseite steht.
@@ -259,6 +268,24 @@ pub struct Sicht {
 
 impl Sicht {
     pub fn neu(modell: Modell, einstellungen: &Einstellungen) -> Self {
+        let server = modell
+            .server_url
+            .clone()
+            .or_else(|| modell.verbindung.server().map(str::to_string))
+            .unwrap_or_default();
+        // Was schon beim Start schiefsteht (Tresor, gespeicherter Stand),
+        // steht als Hinweis oben (Paket 3) – noch bevor sich das Modell ändert.
+        let hinweis = modell
+            .tresor_fehler
+            .as_ref()
+            .map(|fehler| {
+                format!(
+                    "{} {}",
+                    crate::texte::t(einstellungen.sprache(), "tresor.nicht_lesbar"),
+                    fehler
+                )
+            })
+            .or_else(|| modell.profil_hinweis.clone());
         Self {
             seite: logik::startseite(&modell),
             modell,
@@ -268,8 +295,11 @@ impl Sicht {
             offen: BTreeSet::new(),
             zugaenge_offen: BTreeSet::new(),
             nur_aktive: false,
-            eingaben: Eingaben::default(),
-            hinweis: None,
+            eingaben: Eingaben {
+                server,
+                code: String::new(),
+            },
+            hinweis,
             ergebnis: None,
             datei: None,
             autostart: false,
@@ -348,6 +378,24 @@ impl Sicht {
         )
     }
 
+    /// Den Ordner für das Feld `index` des offenen Dialogs wählen. Abbrechen
+    /// lässt den bisherigen Wert stehen. Im Test steht der Pfad in der Sicht.
+    pub fn ordner_waehlen(&mut self, index: usize) {
+        let vorgabe = self.datei.take();
+        let titel = crate::texte::t(self.sprache, "tools.ordner_titel");
+        let (Dialog::Werte { eingaben, .. } | Dialog::Zugang { eingaben, .. }) = &mut self.dialog
+        else {
+            return;
+        };
+        let Some(eingabe) = eingaben.get_mut(index) else {
+            return;
+        };
+        let pfad = vorgabe.or_else(|| crate::datei::ordner_waehlen(&titel, &eingabe.wert));
+        if let Some(pfad) = pfad {
+            eingabe.wert = pfad.display().to_string();
+        }
+    }
+
     /// Ein neues Modell des Kerns übernehmen. Wechselt die Verbindung, folgt
     /// die Seite daraus (Startseite, siehe [`logik::seite_nach_wechsel`]).
     pub fn modell_setzen(&mut self, neu: Modell) {
@@ -356,9 +404,30 @@ impl Sicht {
         }
         self.seite =
             logik::seite_nach_wechsel(&self.modell.verbindung, &neu.verbindung, self.seite);
+        // Die zuletzt benutzte Adresse vorbelegen — auch nach dem Abmelden.
+        if self.eingaben.server.trim().is_empty() {
+            if let Some(server) = &neu.server_url {
+                self.eingaben.server = server.clone();
+            }
+        }
         // Der Server hat das Gerät abgelehnt: das sagt der Hinweis oben.
         if neu.abgelehnt && !self.modell.abgelehnt {
             self.hinweis = Some(crate::texte::t(self.sprache, "verbindung.abgelehnt"));
+        }
+        // Der Tresor ist nicht lesbar (Paket 3): das Fenster sagt es, und der
+        // Knopf „Neu beginnen“ steht daneben. Nichts wird überschrieben.
+        if neu.tresor_fehler.is_some() && self.modell.tresor_fehler != neu.tresor_fehler {
+            self.hinweis = Some(format!(
+                "{} {}",
+                crate::texte::t(self.sprache, "tresor.nicht_lesbar"),
+                neu.tresor_fehler.clone().unwrap_or_default()
+            ));
+        }
+        // Der gespeicherte Stand war nicht lesbar (Paket 3) – einmal sagen.
+        if let Some(text) = &neu.profil_hinweis {
+            if self.modell.profil_hinweis.as_ref() != Some(text) {
+                self.hinweis = Some(text.clone());
+            }
         }
         // Was der Server nicht mehr kennt, hat keinen Dialog mehr verdient.
         let verschwunden = match &self.dialog {
@@ -449,6 +518,7 @@ impl Sicht {
             Dialog::AnmeldungBeenden { eintrag, .. } => {
                 return Some(Aktion::EintragAbmelden { eintrag });
             }
+            Dialog::Abmelden { .. } => return Some(Aktion::Abmelden),
             Dialog::Zugang {
                 eintrag,
                 name,
@@ -504,6 +574,7 @@ impl Sicht {
             }
             Dialog::Aufruf { .. } => {}
             Dialog::ProtokollLeeren => return Some(Aktion::ProtokollLeeren),
+            Dialog::TresorNeuBeginnen => return Some(Aktion::TresorNeuBeginnen),
         }
         None
     }
@@ -521,7 +592,13 @@ mod tests {
             agenten: Vec::new(),
             endpunkt: "http://127.0.0.1:8741/mcp".into(),
             abgelehnt: false,
+            anmelde_grund: None,
+            benutzer: None,
+            server_url: None,
+            anmeldewege: None,
             protokoll_fuer_agenten: false,
+            tresor_fehler: None,
+            profil_hinweis: None,
         }
     }
 
@@ -543,7 +620,7 @@ mod tests {
         neu.abgelehnt = true;
         sicht.modell_setzen(neu.clone());
         let hinweis = sicht.hinweis.clone().expect("Hinweis");
-        assert!(hinweis.contains("neuen Code"), "{hinweis}");
+        assert!(hinweis.contains("anmelden"), "{hinweis}");
         // Bleibt es abgelehnt, kommt der Hinweis nicht ständig neu.
         sicht.hinweis = None;
         neu.endpunkt = "http://127.0.0.1:9/mcp".into();
@@ -647,5 +724,37 @@ mod tests {
                 name: "hermes".into()
             })
         );
+    }
+
+    /// Ein kaputter gespeicherter Stand und ein unlesbarer Tresor stehen als
+    /// Hinweis oben – einmal, nicht bei jedem Bild neu (Paket 3).
+    #[test]
+    fn tresor_und_profilfehler_stehen_als_hinweis() {
+        let mut neu = leeres_modell();
+        neu.tresor_fehler = Some("tresor.json ist beschädigt".into());
+        let mut sicht = Sicht::neu(neu.clone(), &Einstellungen::default());
+        assert_eq!(
+            sicht.hinweis.as_deref(),
+            Some("Tresor nicht lesbar: tresor.json ist beschädigt"),
+            "der Hinweis steht schon beim Start"
+        );
+
+        // Ein neuer Stand mit demselben Fehler erzeugt keinen neuen Hinweis.
+        sicht.hinweis = Some("etwas anderes".into());
+        sicht.modell_setzen(neu);
+        assert_eq!(sicht.hinweis.as_deref(), Some("etwas anderes"));
+
+        // Ein kaputter gespeicherter Stand wird gemeldet.
+        let mut neu = leeres_modell();
+        neu.profil_hinweis = Some(
+            "Der gespeicherte Stand war nicht lesbar und liegt als zustand.json.kaputt-… daneben"
+                .into(),
+        );
+        sicht.modell_setzen(neu);
+        assert!(sicht
+            .hinweis
+            .as_deref()
+            .unwrap_or_default()
+            .contains("nicht lesbar"));
     }
 }

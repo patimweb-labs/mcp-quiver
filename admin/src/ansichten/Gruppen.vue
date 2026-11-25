@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// Gruppen: Sätze zuordnen. Später kommen die Gruppen aus Entra ID; im MVP
-// legt sie der Admin hier an.
+// Gruppen: Sätze zuordnen. Gruppen aus Entra ID legt der Server bei der ersten
+// Anmeldung selbst an (Aufgabe 23); sie sind gekennzeichnet, ihr Titel und
+// ihre Sätze gehören dem Admin. Gelöschte Entra-Gruppen lassen sich hier
+// wieder aufnehmen.
 import { onMounted, ref, shallowRef } from "vue";
 import { Pencil, Plus, RefreshCw, Trash2, Users } from "lucide-vue-next";
 import {
@@ -11,12 +13,17 @@ import {
 import { tief_kopie } from "../logik/kopie";
 
 import { fehlertext, type Client } from "../api/client";
-import type { Gruppe, Satz } from "../api/typen";
+import type { EntraGruppe, Gruppe, Satz } from "../api/typen";
 import Karte from "../bausteine/Karte.vue";
 import Kasten from "../bausteine/Kasten.vue";
 import Leer from "../bausteine/Leer.vue";
 import Seitenkopf from "../bausteine/Seitenkopf.vue";
 import Status from "../bausteine/Status.vue";
+import {
+  entra_name_hinweis,
+  gruppe_hinweis,
+  ist_entra_gruppe,
+} from "../logik/ausweis";
 import { neue_gruppe, saetze_sortiert } from "../logik/satz";
 import { type Zustand, fehler, fertig, laedt } from "../logik/seite";
 import GruppeDialog from "./GruppeDialog.vue";
@@ -26,6 +33,10 @@ const props = defineProps<{ client: Client }>();
 interface Daten {
   gruppen: Gruppe[];
   saetze: Satz[];
+  /** Alle gesehenen Entra-Gruppen; `name_entra` ist die kleine Zeile (Aufgabe 30). */
+  gesehen: EntraGruppe[];
+  /** Gelöschte Entra-Gruppen: bleiben gelöscht, bis der Admin sie aufnimmt. */
+  geloeschte: EntraGruppe[];
 }
 
 const zustand = shallowRef<Zustand<Daten>>(laedt());
@@ -41,15 +52,20 @@ const loescht = ref(false);
 async function laden(): Promise<void> {
   zustand.value = laedt();
   try {
-    const [gruppen, saetze] = await Promise.all([
+    const [gruppen, saetze, entra] = await Promise.all([
       props.client.gruppen(),
       props.client.saetze(),
+      // Ältere Server kennen den Weg nicht; das ist kein Grund, die Seite
+      // nicht zu zeigen.
+      props.client.entraGruppen().catch(() => [] as EntraGruppe[]),
     ]);
     zustand.value = fertig({
       gruppen: [...gruppen].sort((a, b) =>
         a.titel.localeCompare(b.titel, "de", { sensitivity: "base" }),
       ),
       saetze: saetze_sortiert(saetze),
+      gesehen: entra,
+      geloeschte: entra.filter((eintrag) => eintrag.geloescht),
     });
   } catch (fehlerWert) {
     zustand.value = fehler(fehlertext(fehlerWert));
@@ -73,6 +89,17 @@ function bearbeiten(gruppe: Gruppe): void {
 async function gespeichert(gruppe: Gruppe): Promise<void> {
   meldung.value = `Gruppe ${gruppe.id} gespeichert.`;
   await laden();
+}
+
+async function aufnehmen(id: string): Promise<void> {
+  meldung.value = "";
+  try {
+    await props.client.entraGruppeAufnehmen(id);
+    meldung.value = `Entra-Gruppe ${id} wieder aufgenommen; sie hat noch keinen Satz.`;
+    await laden();
+  } catch (fehlerWert) {
+    meldung.value = fehlertext(fehlerWert);
+  }
 }
 
 async function entfernen(): Promise<void> {
@@ -151,7 +178,12 @@ onMounted(laden);
           <Users class="zeile__zeichen" aria-hidden="true" />
           <div class="zeile__haupt">
             <div class="zeile__kopf">
-              <h3 class="zeile__titel">{{ gruppe.titel }}</h3>
+              <h3 class="zeile__titel" :title="`${gruppe.titel} · ${gruppe.id}`">
+                {{ gruppe.titel }}
+              </h3>
+              <span v-if="ist_entra_gruppe(gruppe)" class="marke-chip">
+                Aus Entra
+              </span>
               <span class="marke-chip">
                 {{ gruppe.saetze.length }}
                 {{ gruppe.saetze.length === 1 ? "Satz" : "Sätze" }}
@@ -160,7 +192,15 @@ onMounted(laden);
             <p v-if="gruppe.saetze.length > 0" class="blass">
               {{ gruppe.saetze.map((id) => satz_titel(id)).join(", ") }}
             </p>
-            <p class="mono blass">{{ gruppe.id }}</p>
+            <p
+              v-if="entra_name_hinweis(gruppe, zustand.daten.gesehen)"
+              class="blass klein"
+            >
+              {{ entra_name_hinweis(gruppe, zustand.daten.gesehen) }}
+            </p>
+            <p v-if="gruppe_hinweis(gruppe)" class="blass">
+              {{ gruppe_hinweis(gruppe) }}
+            </p>
           </div>
           <div class="zeile__aktionen">
             <WpIconButton
@@ -179,6 +219,37 @@ onMounted(laden);
       </div>
     </Kasten>
 
+    <Karte
+      v-if="zustand.art === 'fertig' && zustand.daten.geloeschte.length > 0"
+      titel="Gelöschte Entra-Gruppen"
+      unter="Sie bleiben gelöscht, bis Sie sie wieder aufnehmen; Sätze sind dann keine zugeordnet."
+    >
+      <div class="liste">
+        <article
+          v-for="eintrag in zustand.daten.geloeschte"
+          :key="eintrag.id"
+          class="zeile"
+        >
+          <Users class="zeile__zeichen" aria-hidden="true" />
+          <div class="zeile__haupt">
+            <p :title="eintrag.id">{{ eintrag.name_entra ?? eintrag.id }}</p>
+            <p v-if="eintrag.name_entra" class="mono blass klein">
+              {{ eintrag.id }}
+            </p>
+            <p class="blass klein">
+              Zuletzt gesehen: {{ eintrag.zuletzt }}
+            </p>
+          </div>
+          <div class="zeile__aktionen">
+            <WpButton
+              label="Wieder aufnehmen"
+              @press="aufnehmen(eintrag.id)"
+            />
+          </div>
+        </article>
+      </div>
+    </Karte>
+
     <GruppeDialog
       v-model:offen="dialogOffen"
       :gruppe="bearbeitet"
@@ -186,6 +257,7 @@ onMounted(laden);
       :satze="zustand.art === 'fertig' ? zustand.daten.saetze : []"
       :client="client"
       @gespeichert="gespeichert"
+      @neuladen="laden"
     />
 
     <WpDialog
@@ -193,7 +265,10 @@ onMounted(laden);
       title="Gruppe entfernen"
       :description="
         zuLoeschen
-          ? `${zuLoeschen.titel} (${zuLoeschen.id}) wird entfernt. Geräte verlieren damit diese Zuweisung.`
+          ? `${zuLoeschen.titel} (${zuLoeschen.id}) wird entfernt. Geräte verlieren damit diese Zuweisung.` +
+            (ist_entra_gruppe(zuLoeschen)
+              ? ' Diese Gruppe stammt aus Entra und bleibt gelöscht, bis Sie sie wieder aufnehmen.'
+              : '')
           : ''
       "
       tone="error"
@@ -286,13 +361,8 @@ onMounted(laden);
   flex: none;
 }
 
-.marke-chip {
-  padding: 0 var(--wp-space-2);
-  border: var(--wp-size-border) solid var(--wp-color-border-subtle);
-  background: var(--wp-color-bg-raised);
-  color: var(--wp-color-text-muted);
-  font-size: var(--wp-font-size-xs);
-  line-height: var(--wp-size-control-sm);
+.klein {
+  font-size: var(--wp-font-size-sm);
 }
 
 .fehler {

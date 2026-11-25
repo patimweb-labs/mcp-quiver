@@ -7,16 +7,9 @@
     <title>mcp-quiver · Verwaltung</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script>
-      // Das Theme steht vor dem ersten Bild fest, sonst blitzt das dunkle
-      // Standard-Theme kurz auf. Drei Themes und nichts sonst (AGENTS.md §2.7).
-      try {
-        document.documentElement.dataset.theme =
-          localStorage.getItem("quiver-thema") || "dark";
-      } catch (fehler) {
-        document.documentElement.dataset.theme = "dark";
-      }
-    </script>
+    <!-- Eigenes Theme vor dem ersten Bild setzen. Kein Inline-Skript: die CSP
+         des Servers erlaubt nur `script-src 'self'` (Aufgabe 20/25). -->
+    <script src="/thema.js"></script>
   </head>
   <body>
     <div id="app"></div>

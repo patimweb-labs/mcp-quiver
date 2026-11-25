@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Vorlage für `quiver.app`; `__VERSION__` ersetzt `verteilung/macos/paket.sh`.
+
+  Zum Vergleich mit dem Client (`crates/fenster/src/main.rs`):
+
+  * `CFBundleIdentifier` ist dieselbe Kennung, die der Client als `app_id`
+    setzt (`de.weppelmann.mcp-quiver`) — auf Linux ist das die Wayland-App-Id
+    und damit der Name der `.desktop`-Datei, hier der Name des Bündels.
+  * **Kein `LSUIElement`.** `true` machte aus quiver einen reinen
+    Hintergrunddienst ohne Dock-Symbol und ohne eigene Menüleiste; der Client
+    ist aber ein Fenster-Programm: er öffnet ein Fenster, Cmd+Tab und das Dock
+    zeigen ihn, und das Tray-Symbol ist nur der zweite Weg dorthin
+    (`crates/fenster/src/tray/native.rs`). `false` ist ausdrücklich gesetzt,
+    damit es eine Entscheidung bleibt und nicht aussieht wie vergessen.
+  * `LSMinimumSystemVersion` passt zu dem, was eframe/winit verlangen und was
+    `MACOSX_DEPLOYMENT_TARGET` beim Bauen ist (11.0, siehe `release.yml`).
+  * Autostart ist Sache des Clients (`crates/fenster/src/autostart.rs` legt den
+    LaunchAgent selbst an); das Bündel bringt keinen mit.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>de</string>
+    <key>CFBundleExecutable</key>
+    <string>quiver</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIdentifier</key>
+    <string>de.weppelmann.mcp-quiver</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>quiver</string>
+    <key>CFBundleDisplayName</key>
+    <string>mcp-quiver</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Patrick Weppelmann — MIT</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>

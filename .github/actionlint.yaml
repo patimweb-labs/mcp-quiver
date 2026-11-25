@@ -1,0 +1,8 @@
+# Ergänzungen für `actionlint` (Aufgabe 31).
+#
+# `macos-15-intel` ist der Intel-Läufer von GitHub Actions (siehe
+# `actions/runner-images`, „macOS 15, x64“). actionlint 1.7.7 bringt eine
+# ältere Liste bekannter Läufer mit und würde ihn als unbekannt melden.
+self-hosted-runner:
+  labels:
+    - macos-15-intel

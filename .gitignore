@@ -1,7 +1,11 @@
 target/
 admin/node_modules/
 admin/dist/
+# Pakete aus `verteilung/` (.dmg, .deb, .rpm, AppImage, .zip, .msi) und die
+# Werkzeuge, die die Skripte dorthin laden.
+dist/
 *.db
 .env
 demo/
 target-pi/
+.DS_Store

@@ -20,7 +20,7 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
     let mut exportieren = false;
     let mut importieren = false;
     bausteine::seite(ui, |ui| {
-        hinweis(ui, sicht);
+        hinweis(ui, sicht, aktionen);
         ergebnis(ui, sicht);
         kopfzeile(ui, sicht, &mut exportieren, &mut importieren);
         if sicht.modell.eintraege.is_empty() {
@@ -154,6 +154,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let mut anmelden = false;
     let mut abmelden = false;
     let mut einrichten = false;
+    let mut abbrechen = false;
     let mut schalten: Option<bool> = None;
     // Abgeschaltet: die Karte ist gedämpft, die Knöpfe sind gesperrt
     // (Aufgabe 19).
@@ -208,6 +209,19 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
         if let Some(fehler) = fehler {
             ui.add_space(thema::SPACE_1);
             ui.add(egui::Label::new(text(&f, fehler, Ton::Fehler)).wrap());
+        }
+        // Eine Kennung, die nicht als Präfix taugt: der Eintrag startet nicht,
+        // und das Fenster sagt warum (Paket 3).
+        if let Some(grund) = &eintrag.unzulaessig {
+            ui.add_space(thema::SPACE_1);
+            ui.add(
+                egui::Label::new(text(
+                    &f,
+                    tf(sprache, "tools.kennung_unbrauchbar", &[grund]),
+                    Ton::Fehler,
+                ))
+                .wrap(),
+            );
         }
         // Die Anmeldung (Aufgabe 10): ein Tool kann eine Anmeldung des Users
         // brauchen. Sie wird hier im Fenster ausgelöst, nie von einem Agenten.
@@ -303,6 +317,18 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                                 )
                             }) {
                                 einrichten = true;
+                            }
+                        }
+                        logik::EinrichtKnopf::Abbrechen => {
+                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                                bausteine::knopf(
+                                    ui,
+                                    &f,
+                                    Icon::Schliessen,
+                                    &t(sprache, "einrichtung.abbrechen"),
+                                )
+                            }) {
+                                abbrechen = true;
                             }
                         }
                     },
@@ -505,6 +531,11 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     }
     if einrichten {
         aktionen.push(Aktion::EintragEinrichten {
+            eintrag: eintrag.id.clone(),
+        });
+    }
+    if abbrechen {
+        aktionen.push(Aktion::EinrichtungAbbrechen {
             eintrag: eintrag.id.clone(),
         });
     }

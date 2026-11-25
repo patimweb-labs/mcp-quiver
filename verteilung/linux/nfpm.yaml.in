@@ -1,0 +1,79 @@
+# Vorlage für nfpm (.deb und .rpm). `verteilung/linux/paket.sh` ersetzt
+# __VERSION__, __ARCH__ und __BAUM__ und gibt die fertige Datei nfpm.
+#
+# Die Laufzeitabhängigkeiten sind das, was eframe/egui und das Tray wirklich
+# brauchen:
+#   * geladen wird beim Start: libGL/libEGL (glow), libxkbcommon und
+#     libxkbcommon-x11, Wayland und X11 (winit; `winit` öffnet die
+#     Tastaturbibliothek selbst per `dlopen`) — ohne sie startet das Fenster
+#     nicht.
+#   * das Tray ist **kein** GTK: `ksni` spricht D-Bus (StatusNotifierItem)
+#     selbst, es braucht also kein libappindicator. Es braucht aber etwas, das
+#     die Symbole anzeigt — auf GNOME eine Erweiterung, deshalb `recommends`
+#     (empfohlen, nicht erzwungen: KDE, Xfce und Cinnamon bringen es mit).
+name: mcp-quiver
+arch: __ARCH__
+platform: linux
+version: __VERSION__
+section: utils
+priority: optional
+maintainer: Patrick Weppelmann (patimweb-labs) <https://github.com/patimweb-labs/mcp-quiver>
+vendor: Patrick Weppelmann
+homepage: https://github.com/patimweb-labs/mcp-quiver
+license: MIT
+description: |
+  Client of a central library of MCP tools.
+  Installs, configures and runs the MCP tools assigned to the user's groups,
+  keeps the credentials on the device and offers them to every agent through
+  a single local endpoint (127.0.0.1:8741).
+contents:
+  - src: __BAUM__/bin/quiver
+    dst: /usr/bin/quiver
+  - src: __BAUM__/share/applications/de.weppelmann.mcp-quiver.desktop
+    dst: /usr/share/applications/de.weppelmann.mcp-quiver.desktop
+  - src: __BAUM__/share/metainfo/de.weppelmann.mcp-quiver.metainfo.xml
+    dst: /usr/share/metainfo/de.weppelmann.mcp-quiver.metainfo.xml
+  - src: __BAUM__/share/icons/hicolor/32x32/apps/de.weppelmann.mcp-quiver.png
+    dst: /usr/share/icons/hicolor/32x32/apps/de.weppelmann.mcp-quiver.png
+  - src: __BAUM__/share/icons/hicolor/64x64/apps/de.weppelmann.mcp-quiver.png
+    dst: /usr/share/icons/hicolor/64x64/apps/de.weppelmann.mcp-quiver.png
+  - src: __BAUM__/share/icons/hicolor/256x256/apps/de.weppelmann.mcp-quiver.png
+    dst: /usr/share/icons/hicolor/256x256/apps/de.weppelmann.mcp-quiver.png
+  - src: __BAUM__/LICENSE
+    dst: /usr/share/doc/mcp-quiver/LICENSE
+  - src: __BAUM__/README.md
+    dst: /usr/share/doc/mcp-quiver/README.md
+overrides:
+  deb:
+    depends:
+      - libc6
+      - libgcc-s1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
+      - libx11-6
+      - libxcursor1
+      - libxrandr2
+      - libxi6
+      - libegl1
+      - libgl1
+    recommends:
+      - gnome-shell-extension-appindicator
+  rpm:
+    depends:
+      - glibc
+      - libgcc
+      - libxkbcommon
+      - libxkbcommon-x11
+      - libwayland-client
+      - libwayland-cursor
+      - mesa-libEGL
+      - mesa-libGL
+      - libX11
+      - libXcursor
+      - libXrandr
+      - libXi
+    recommends:
+      - gnome-shell-extension-appindicator

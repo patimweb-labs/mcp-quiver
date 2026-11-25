@@ -34,6 +34,21 @@ pub struct EchterKern {
 impl EchterKern {
     /// Kern starten. Der Aufruf wartet, bis der Kern läuft (Endpunkt gebunden,
     /// gespeicherter Stand geladen) — danach zeichnet das Fenster.
+    /// Hält den Kern an, auch wenn das Fenster nicht mehr zeichnet (Signal bei
+    /// weggelegtem Fenster). Höchstens acht Sekunden.
+    pub fn anhalter(&self) -> impl FnOnce() + Send + 'static {
+        let kern = self.kern.clone();
+        let laufzeit = self.laufzeit.handle().clone();
+        move || {
+            laufzeit.block_on(async move {
+                let frist = std::time::Duration::from_secs(8);
+                if tokio::time::timeout(frist, kern.beenden()).await.is_err() {
+                    tracing::warn!("Der Kern ließ sich nicht in {frist:?} anhalten");
+                }
+            });
+        }
+    }
+
     pub fn starten(konfig: KernKonfig) -> anyhow::Result<Self> {
         let laufzeit = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -114,6 +129,16 @@ impl KernZugang for EchterKern {
         let wecker = self.wecker.clone();
         self.laufzeit.spawn(async move {
             let ergebnis = match aktion {
+                Aktion::Anmeldewege { server } => kern.anmeldewege(&server).await,
+                Aktion::AnmeldenMicrosoft { server } => {
+                    kern.anmelden_server(&server, &logik::geraetename()).await
+                }
+                Aktion::AnmeldungAbbrechen => {
+                    kern.anmeldung_abbrechen();
+                    Ok(())
+                }
+                // Den Browser öffnet das Fenster selbst (siehe `Fenster::bild`).
+                Aktion::BrowserOeffnen(_) => Ok(()),
                 Aktion::Einbinden { server, code } => {
                     kern.einbinden(&server, &code, &logik::geraetename()).await
                 }
@@ -212,6 +237,14 @@ impl KernZugang for EchterKern {
                 // scheitert das Speichern, bleibt alles, wie es war.
                 Aktion::EintragSchalten { eintrag, an } => {
                     kern.eintrag_schalten(&eintrag, an).await
+                }
+                // Der Tresor ist nicht lesbar: mit einem leeren beginnen
+                // (Paket 3). Die alten Dateien bleiben liegen.
+                Aktion::TresorNeuBeginnen => kern.tresor_neu_beginnen(),
+                // Eine laufende Einrichtung abbrechen (Paket 3).
+                Aktion::EinrichtungAbbrechen { eintrag } => {
+                    kern.einrichtung_abbrechen(&eintrag);
+                    Ok(())
                 }
             };
             if let Err(fehler) = ergebnis {

@@ -31,6 +31,9 @@ use quiver_client::{EintragSicht, Kern, KernKonfig, SpeicherTresor};
 use quiver_domain::{Eintrag, EintragId, Herkunft, Laufzeit, Soll, SollEintrag, Werte};
 use quiver_protocol::EintragZustand;
 
+#[path = "gemeinsam.rs"]
+mod gemeinsam;
+
 /// Wie oft der Ablauf wiederholt wird.
 const DURCHLAEUFE: usize = 5;
 /// Wie lange auf einen Zustand gewartet wird.
@@ -119,29 +122,27 @@ impl Geruest {
     /// Ein Server mit diesem Eintrag in Gruppe `team`, dazu ein Kern, der
     /// sich dort einbindet – der erste Start kommt also vom Server.
     async fn kern(&self) -> Kern {
-        const ADMIN: &str = "admin-token-fuer-den-doppelstart-test";
-        let router = quiver_server::app(quiver_server::Konfig {
-            daten: self.ordner.join("server"),
-            admin_token: ADMIN.to_string(),
-            admin_dist: None,
-        })
-        .await
-        .expect("App baut");
+        let daten = self.ordner.join("server");
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("Port frei");
         let basis = format!("http://{}", listener.local_addr().expect("Adresse"));
+        let http = reqwest::Client::new();
+        let mut konfig = quiver_server::Konfig::neu(&daten);
+        konfig.oeffentlich = basis.clone();
+        let router = quiver_server::app(konfig).await.expect("App baut");
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
-
-        let http = reqwest::Client::new();
+        let cookie = gemeinsam::sitzung(&http, &basis, &daten).await;
         let admin = |methode: &str, pfad: &str, rumpf: serde_json::Value| {
             http.request(
                 methode.parse().expect("Methode"),
                 format!("{basis}/api/v1{pfad}"),
             )
-            .bearer_auth(ADMIN)
+            .header("cookie", &cookie)
+            .header("origin", &basis)
+            .header("x-quiver", "1")
             .json(&rumpf)
             .send()
         };
@@ -188,6 +189,7 @@ impl Geruest {
             profil: self.profil.clone(),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: Arc::new(SpeicherTresor::neu()),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");

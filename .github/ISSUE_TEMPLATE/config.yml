@@ -1,0 +1,6 @@
+# Der Meldeweg für Sicherheitslücken steht vor den Vorlagen.
+blank_issues_enabled: false
+contact_links:
+  - name: Sicherheitslücke melden
+    url: https://github.com/patimweb-labs/mcp-quiver/security/advisories/new
+    about: Bitte nicht als öffentliches Issue. Der Bericht ist nur für die Maintainer sichtbar.

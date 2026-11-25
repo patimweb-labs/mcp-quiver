@@ -3,18 +3,75 @@
 Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 
 ## Server
-- [ ] Keine Begrenzung der Versuche bei `POST /anmelden` (Codes laufen nach 60 min ab, 32⁸ Möglichkeiten).
-- [ ] Abgelaufene Codes werden nur beim Einlösen entfernt, kein Aufräumen im Hintergrund.
+- [ ] Die Abschlussseite des Browser-Lauschers ist schlicht und nur deutsch;
+      die Fenstertexte sind de/en. Die Seite verrät keinen Code, aber sie folgt
+      auch nicht der Sprache des Browsers.
+- [ ] Die JWKS wird nur bei unbekannter `kid` neu geholt (höchstens 1×/min); die
+      Discovery nach 24 Stunden. Ein Endpunktwechsel bei Entra mitten im Betrieb
+      erreicht den Server damit erst beim nächsten Auffrischen.
+- [ ] Der Einmal-Code der Ersteinrichtung (Aufgabe 25) steht im Log und ist
+      128 Bit breit; wer das Log lesen darf, kann den Server in den ersten 15
+      Minuten übernehmen. Gewollt, aber es bleibt ein Cheat für den Betrieb:
+      Logs der ersten Minuten wegräumen hilft nicht rückwirkend.
+- [ ] Zustand der Ersteinrichtung (Code-Hash, Fehlversuche) liegt nur im
+      Arbeitsspeicher; ein Neustart erzeugt einen neuen Code und öffnet das
+      Fenster erneut. Bei mehreren Instanzen hätte jede ihr eigenes Fenster.
+- [ ] Die Ersteinrichtung verlangt den Code, sobald der Server nicht nur auf
+      Loopback lauscht – der Docker-Weg braucht ihn also. Nur mit
+      `QUIVER_EINRICHTUNG=ohne-code` **und** Loopback-Basis-URL entfällt er;
+      dann lässt sich der `Host`-Kopf fälschen, und wer den Port in den ersten
+      15 Minuten erreicht, könnte den Root anlegen. Eine Prüfung der
+      Aufrufer-IP statt der Lauschadresse wäre strenger, bricht aber den
+      üblichen Docker-Weg (`-p 127.0.0.1:…`, im Container kommt die Verbindung
+      vom Docker-Netz).
+- [ ] Zeitlimit und Größenbegrenzung der Entra-Antworten sind eingebaut, aber
+      nicht gegen einen hängenden oder riesigen Nachbau getestet.
+- [ ] Die Drossel liegt im Arbeitsspeicher; ein Neustart vergisst die Versuche.
+      Bei mehreren Instanzen zählt jede für sich.
+- [ ] Zu offene Rechte an `entra-secret` ergeben eine Warnung, keinen Abbruch.
+- [ ] Die Sitzungs-Id wird nur bei der Anmeldung neu vergeben, nicht laufend
+      rotiert.
+- [ ] `admin-setzen --oid` setzt voraus, dass der Benutzer schon einmal gesehen
+      wurde; die Liste der Benutzer hat keine Suche und keine Seiten.
+- [ ] Der Log-Test deckt den Ablauf Anmeldung/Prüfen/Fehlversuch und die
+      Ersteinrichtung ab; ein Geheimnis in einer ganz anderen Meldung wäre
+      nicht erfasst.
+- [ ] Das Stylesheet der Server-Seiten ist eine erzeugte Datei
+      (`crates/server/seiten/system.css`); sie wird von einem Test gegen die
+      Tokens geprüft, aber nicht in den Container-Bau eingecheckt – wer die
+      Tokens ändert, muss sie neu erzeugen.
+- [ ] Die Seiten des Servers nutzen nur Farben und Maße; Bausteine der
+      Verwaltung (Knöpfe, Karten) sind nachgebaut, nicht geteilt. Ein
+      gemeinsamer Bausatz für Vue und die Server-Seiten fehlt.
+- [ ] Ein Gerät, dessen altes Token einem anderen Benutzer gehört, bekommt ein
+      neues Gerät; das alte bleibt in der Verwaltung stehen.
+- [ ] Die Prüfspur der Kommandozeile nennt als Akteur `root-setzen`, nicht die
+      E-Mail des Aufrufers.
+- [ ] Abgelaufene Einmal-Codes und OIDC-Zustände werden im Hintergrund
+      aufgeräumt (alle 60 s), nicht in einem eigenen Takt je Tabelle.
 
 ## Client
-- [ ] Im Fenster-Modus reagiert der Client nicht auf SIGINT (Strg+C); nur SIGTERM beendet ihn.
+- [ ] SIGTERM und Strg+C enden geordnet; das „Abmelden des Systems“ ist auf
+      macOS/Windows nicht als eigener Grund erkennbar (dort bleibt es beim
+      Fenster-Ende bzw. SIGTERM). Der Signal-Faden ist nicht als
+      Integrationstest gegen ein echtes Signal geprüft; die Fahne und die
+      Texte sind getestet.
+- [ ] Cmd+Q wird im Fenster abgefangen und in den Tray gelegt. Auf Plattformen
+      ohne Tray ist das Fenster der einzige Weg; dann bleibt Cmd+Q ein
+      Weglege-Befehl ohne sichtbares Symbol.
 - [ ] Schnipsel für OpenCode, GitHub Copilot und die Header-Form von Hermes sind nicht gegen die CLI geprüft (nur Doku bzw. Quelltext).
 - [ ] Ein-Instanz-Port liest die Zeile ohne Längengrenze (nur lokal erreichbar).
 - [ ] Ungetestet: Prozess stirbt → `Fehler` + Neustart mit Backoff; `Remote`-Einträge; Start ohne Server nach Neustart.
 - [ ] `tools/list_changed` wird auch ohne echte Änderung der Tool-Liste geschickt.
 - [ ] Die Einrichtung (Aufgabe 11) hat bewusst keine Frist; ein hängendes Tool
       blockiert seinen Eintrag, bis der Prozess endet oder der Client beendet wird.
-- [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf.
+- [ ] `abmelden` räumt lokale Werte, Geheimnisse und Agenten nicht auf — das
+      ist seit Aufgabe 22 gewollt: Abmelden verwirft Token und Gerät, nicht die
+      Angaben und nicht die Server-Adresse. Wer die Angaben löschen will, löscht
+      das Profil.
+- [ ] Der Server hat für „Abmelden“ einen Geräteweg (`POST
+      /api/v1/geraet/abmelden`) bekommen. Das war für Aufgabe 22 nötig; die
+      parallele Arbeit an `crates/server` muss diesen Weg kennen.
 - [ ] Tools pro Agent filtern (SPEC §7) – die Agent-Kennung liegt in der Sitzung schon vor.
 - [ ] stderr der MCP-Prozesse geht ungefiltert ins Log (`laufzeit::stderr_ins_log`); `anmeldung::maskieren` dort ebenfalls anwenden.
 - [ ] Mehrere Zugänge (Aufgabe 14): die Liste ist nach Namen sortiert (BTreeMap), der User kann sie nicht umsortieren.
@@ -90,3 +147,20 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       Beenden verloren); gedacht für Läufe ohne Spuren.
 
 - [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.
+
+## Release (Aufgabe 31)
+- [ ] Das Windows-Paket (`.msi` mit WiX, portables `.zip`, `.ico`) ist hier
+      nicht baubar (macOS) — nur nach Vorlage geschrieben, nicht gelaufen. Die
+      PowerShell-Syntax ist nicht geprüft.
+- [ ] Die Linux-Pakete (`.deb`, `.rpm` über nfpm, AppImage) und die
+      aarch64-Bündel sind lokal nicht gelaufen; nfpm-Vorlage und die
+      AppStream-Metadaten haben noch keinen Prüflauf gesehen.
+- [ ] Signieren und Notarisieren ist nie mit echten Geheimnissen gelaufen —
+      der Weg ist geschrieben, aber unbewiesen. Bis dahin ist jedes macOS-Bündel
+      ad hoc signiert und jedes Windows-Paket unsigniert.
+- [ ] Die `.icns` entsteht aus `assets/marke/quiver-dock.png` (318 px) und wird
+      für 512 und 1024 hochskaliert; ein Bild in 1024 px fehlt (AGENTS.md §8).
+- [ ] Das AppImage wird mit `--no-appstream` gebaut; die mitgelieferten
+      Metainfo-Daten werden dabei nicht geprüft.
+- [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
+- [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.

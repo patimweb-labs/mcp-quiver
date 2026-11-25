@@ -108,17 +108,17 @@ impl Tray {
             }
         };
         let bild = tray_icon::Icon::from_rgba(rgba, kante, kante).ok()?;
-        let mut bauer = TrayIconBuilder::new()
+        let bauer = TrayIconBuilder::new()
             .with_id("mcp-quiver")
             .with_tooltip("mcp-quiver")
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(cfg!(target_os = "macos"));
-        // macOS: Template-Bild, das sich hell und dunkel anpasst.
-        bauer = if cfg!(target_os = "macos") {
-            bauer.with_icon_templated(bild)
-        } else {
-            bauer.with_icon(bild)
-        };
+        // macOS: Template-Bild, das sich hell und dunkel anpasst (die Methode
+        // gibt es nur dort). Windows nimmt das farbige Bild unverändert.
+        #[cfg(target_os = "macos")]
+        let bauer = bauer.with_icon_templated(bild);
+        #[cfg(not(target_os = "macos"))]
+        let bauer = bauer.with_icon(bild);
         let icon = match bauer.build() {
             Ok(icon) => icon,
             Err(fehler) => {

@@ -59,25 +59,16 @@ impl Einstellungen {
         }
     }
 
-    /// Datei schreiben (erst nebenhin, dann umbenennen).
+    /// Datei schreiben: atomar, 0600 im Ordner 0700 (wie `zustand.json`).
     pub fn speichern(&self, ordner: &Path) -> anyhow::Result<()> {
-        std::fs::create_dir_all(ordner)?;
         let ziel = pfad(ordner);
-        let zwischen = zwischenpfad(&ziel);
-        std::fs::write(&zwischen, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(&zwischen, &ziel)?;
-        Ok(())
+        let text = serde_json::to_vec_pretty(self)?;
+        quiver_client::rechte::schreiben_atomar(&ziel, &text)
     }
 }
 
 fn pfad(ordner: &Path) -> PathBuf {
     ordner.join(DATEI)
-}
-
-fn zwischenpfad(ziel: &Path) -> PathBuf {
-    let mut name = ziel.file_name().unwrap_or_default().to_os_string();
-    name.push(".neu");
-    ziel.with_file_name(name)
 }
 
 #[cfg(test)]
@@ -89,8 +80,10 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
+        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pfad = std::env::temp_dir().join(format!(
-            "quiver-fenster-profil-{}-{stempel}",
+            "quiver-fenster-profil-{}-{stempel}-{nummer}",
             std::process::id()
         ));
         std::fs::create_dir_all(&pfad).expect("Ordner");

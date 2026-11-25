@@ -12,6 +12,9 @@
 //!
 //! `QUIVER_ECHO_PRAEFIX` wird der Antwort vorangestellt – damit kann ein Test
 //! sehen, dass wirklich der Client die Umgebung des Eintrags gesetzt hat.
+//! `QUIVER_ECHO_UMGEBUNG` nennt eine Variable, deren Vorhandensein in der
+//! Antwort steht (`gesetzt`/`leer`): so prüft ein Test, dass ein Werkzeug
+//! **nicht** die ganze Umgebung der Shell erbt (Paket 3).
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -41,7 +44,16 @@ impl Echo {
     #[tool(description = "Gibt den übergebenen Text unverändert zurück")]
     fn echo(&self, Parameters(anfrage): Parameters<EchoAnfrage>) -> String {
         let praefix = std::env::var("QUIVER_ECHO_PRAEFIX").unwrap_or_default();
-        format!("{praefix}{}", anfrage.text)
+        let mut antwort = format!("{praefix}{}", anfrage.text);
+        if let Ok(name) = std::env::var("QUIVER_ECHO_UMGEBUNG") {
+            let stand = if std::env::var_os(&name).is_some() {
+                "gesetzt"
+            } else {
+                "leer"
+            };
+            antwort.push_str(&format!(" {name}={stand}"));
+        }
+        antwort
     }
 }
 

@@ -11,7 +11,7 @@ export function neuer_satz(id = ""): Satz {
 }
 
 export function neue_gruppe(id = ""): Gruppe {
-  return { id, titel: "", saetze: [] };
+  return { id, titel: "", saetze: [], entra: [] };
 }
 
 /** Prüfung vor dem Senden; Feld → Meldung, leer heißt in Ordnung. */

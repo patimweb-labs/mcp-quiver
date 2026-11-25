@@ -39,9 +39,9 @@ const SPALTE_TOOL_MIN: f32 = thema::SPACE_8 * 2.0;
 /// Zwischenraum der Spalten.
 const LUECKE: f32 = thema::SPACE_2;
 
-pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, _aktionen: &mut Vec<Aktion>) {
+pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
     bausteine::rand(ui, |ui| {
-        hinweis(ui, sicht);
+        hinweis(ui, sicht, aktionen);
         seitenkopf(
             ui,
             sicht,

@@ -111,6 +111,8 @@ pub enum FeldArt {
     Schalter,
     /// Eine Adresse, geprüft auf `http(s)://`.
     Url,
+    /// Ein Ordner auf dem Gerät, gewählt über den Datei-Dialog.
+    Ordner,
     /// Eine Auswahlliste aus festen Optionen.
     Auswahl { optionen: Vec<FeldOption> },
 }
@@ -316,6 +318,10 @@ pub struct Gruppe {
     pub titel: String,
     #[serde(default)]
     pub saetze: Vec<SatzId>,
+    /// Entra-Objekt-Ids, die auf diese Gruppe abgebildet werden (Aufgabe 20).
+    /// Namen sind änderbar und deshalb keine Grundlage für Rechte.
+    #[serde(default)]
+    pub entra: Vec<String>,
 }
 
 /// Ein eingebundenes Gerät.
@@ -588,10 +594,43 @@ pub fn tool_name(eintrag: &EintragId, tool: &str) -> String {
     format!("{}__{}", eintrag.0, tool)
 }
 
-/// Umkehrung von [`tool_name`].
-pub fn tool_name_zerlegen(name: &str) -> Option<(EintragId, &str)> {
-    let (e, t) = name.split_once("__")?;
-    (!e.is_empty() && !t.is_empty()).then(|| (EintragId::neu(e), t))
+/// Wie lang eine Kennung höchstens sein darf.
+pub const KENNUNG_MAX: usize = 40;
+
+/// Das Präfix der eigenen Werkzeuge des Clients – kein Eintrag darf so heißen.
+pub const RESERVIERTE_KENNUNG: &str = "quiver";
+
+/// Warum eine Kennung nicht taugt – `None` heißt: sie taugt.
+///
+/// Eine Kennung wird Teil jedes Werkzeugnamens (`<kennung>__<werkzeug>`).
+/// Deshalb nur Kleinbuchstaben, Ziffern und `-`, höchstens [`KENNUNG_MAX`]
+/// Zeichen, kein `__` (das trennt Kennung und Werkzeug) und nicht
+/// [`RESERVIERTE_KENNUNG`] (so heißen die Werkzeuge des Clients selbst).
+pub fn kennung_fehler(id: &str) -> Option<&'static str> {
+    if id.is_empty() {
+        return Some("Die Kennung ist leer");
+    }
+    if id.chars().count() > KENNUNG_MAX {
+        return Some("Die Kennung ist länger als 40 Zeichen");
+    }
+    if id.contains("__") {
+        return Some("Die Kennung darf kein __ enthalten");
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Some("Die Kennung darf nur a–z, 0–9 und - enthalten");
+    }
+    if id == RESERVIERTE_KENNUNG {
+        return Some("Die Kennung quiver ist für die Werkzeuge des Clients selbst reserviert");
+    }
+    None
+}
+
+/// Ist die Kennung eines Eintrags brauchbar ([`kennung_fehler`])?
+pub fn kennung_gueltig(id: &str) -> bool {
+    kennung_fehler(id).is_none()
 }
 
 #[cfg(test)]

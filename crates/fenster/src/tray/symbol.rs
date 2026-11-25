@@ -94,18 +94,48 @@ mod tests {
         }
     }
 
+    /// Das **gezeichnete** Zeichen: die Ecke bleibt leer, in der Mitte steht
+    /// etwas. Geprüft wird die Zeichnung selbst ([`template`]), nicht das
+    /// fertige PNG — sonst hinge der Test daran, welche Quelle die Plattform
+    /// nimmt.
     #[test]
-    fn das_zeichen_ist_sichtbar_und_durchsichtig_ringsherum() {
+    fn das_gezeichnete_zeichen_ist_sichtbar_und_durchsichtig_ringsherum() {
         let kante = 32;
-        let bild = raster(kante).expect("Symbol rasterbar");
+        let bild = template(kante).expect("Zeichen rasterbar");
         let deckkraft = |x: u32, y: u32| bild[((y * kante + x) * 4 + 3) as usize];
-        // Die Ecke bleibt leer, in der Mitte steht etwas.
         assert_eq!(deckkraft(0, 0), 0, "Ecke ist durchsichtig");
         assert_eq!(deckkraft(kante - 1, kante - 1), 0, "Ecke ist durchsichtig");
         let summe: u32 = (0..kante * kante)
             .map(|i| bild[(i * 4 + 3) as usize] as u32)
             .sum();
         assert!(summe > 0, "das Zeichen ist unsichtbar");
+    }
+
+    /// Das farbige App-Icon (Windows, Linux) ist fertig verkleinert im Repo.
+    /// Beim Verkleinern bleibt in der äußersten Ecke ein Hauch Deckkraft
+    /// stehen (1 von 255) — unsichtbar, aber nicht exakt 0. Deshalb hier eine
+    /// Schranke statt einer Gleichheit.
+    #[test]
+    fn das_farbige_zeichen_ist_sichtbar_und_ringsherum_leer() {
+        for kante in KANTEN {
+            let bild = farbig(kante).expect("App-Icon lesbar");
+            let deckkraft = |x: u32, y: u32| bild[((y * kante + x) * 4 + 3) as usize];
+            assert!(
+                deckkraft(0, 0) <= 2,
+                "Ecke ist leer ({} von 255)",
+                deckkraft(0, 0)
+            );
+            assert!(
+                deckkraft(kante - 1, kante - 1) <= 2,
+                "Ecke ist leer ({} von 255)",
+                deckkraft(kante - 1, kante - 1)
+            );
+            // In der Mitte steht das Zeichen.
+            assert!(
+                deckkraft(kante / 2, kante / 2) > 0,
+                "{kante} px: in der Mitte ist nichts"
+            );
+        }
     }
 
     #[test]

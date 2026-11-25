@@ -71,6 +71,7 @@ export type FeldArt =
   | "zahl"
   | "schalter"
   | "url"
+  | "ordner"
   | { auswahl: { optionen: FeldOption[] } };
 
 /** Ein Konfigurationsfeld eines Eintrags. */
@@ -176,11 +177,63 @@ export interface Satz {
   eintraege: SatzEintrag[];
 }
 
-/** Eine Gruppe bekommt Sätze. */
+/**
+ * Eine Gruppe bekommt Sätze. Trägt sie `entra`-Ids, stammt sie aus Entra ID
+ * (Aufgabe 23): Titel und Sätze gehören dem Admin, die Mitglieder kommen aus
+ * dem ID-Token. Die Kennung ist dann die Objekt-Id der Entra-Gruppe.
+ */
 export interface Gruppe {
   id: GruppeId;
   titel: string;
   saetze: SatzId[];
+  /** Entra-Objekt-Ids, die auf diese Gruppe abgebildet werden. */
+  entra: string[];
+}
+
+/**
+ * `GET /api/v1/admin/entra-schluessel`: womit weist sich der Server bei Entra
+ * aus, und läuft das Zertifikat bald ab? (Aufgabe 23)
+ */
+export interface EntraAusweis {
+  /** `keine`, `geheimnis` oder `schluessel`. */
+  art: "keine" | "geheimnis" | "schluessel";
+  /** RFC 3339; nur bei einem Zertifikat. */
+  ablauf?: string | null;
+  /** Negative Zahl, wenn das Zertifikat schon abgelaufen ist. */
+  tage_uebrig?: number | null;
+  /** Ab 30 Tagen vor dem Ablauf `true`. */
+  warnung: boolean;
+  fingerabdruck?: string | null;
+  /** Fertiger Warntext des Servers. */
+  hinweis?: string | null;
+}
+
+/**
+ * Eine in Anmeldungen gesehene Entra-Gruppe (Aufgabe 23). Der Server legt
+ * für jede Id einmal eine quiver-Gruppe an; gelöschte bleiben gemerkt und
+ * lassen sich wieder aufnehmen.
+ *
+ * `name_entra` ist der Anzeigename aus Entra (Aufgabe 30) – nur Anzeige, nie
+ * der Schlüssel; Rechte laufen weiter über `id`.
+ */
+export interface EntraGruppe {
+  id: string;
+  anzeigename: string | null;
+  zuletzt: string;
+  /** Kennung der quiver-Gruppe, falls es sie gibt. */
+  gruppe: GruppeId | null;
+  geloescht: boolean;
+  /** Anzeigename aus Entra, sofern geholt (Aufgabe 30). */
+  name_entra: string | null;
+  /** Wann er geholt wurde (RFC 3339). */
+  name_entra_am: string | null;
+}
+
+/** Der Besitzer eines Geräts, wie ihn der Server nennt (Aufgabe 21). */
+export interface GeraetBesitzer {
+  oid: string;
+  email?: string | null;
+  name?: string | null;
 }
 
 /** Ein eingebundenes Gerät. */
@@ -215,6 +268,12 @@ export interface GeraetStand {
   meldung: Meldung | null;
   zuletzt_gesehen: string | null;
   verbunden: boolean;
+  /**
+   * Wem das Gerät gehört, sofern der Server es nennt: als Objekt oder als
+   * Anzeigename. Ältere Server lassen das Feld weg (Altgeräte mit Einmal-Code
+   * haben keinen Besitzer).
+   */
+  besitzer?: GeraetBesitzer | string | null;
 }
 
 /** Zähler für die Überblicksseite. */
@@ -254,13 +313,104 @@ export interface Fehler {
   fehler: string;
 }
 
+// ------------------------------------------------------------ Anmeldung
+//
+// Ohne Admin-Token (ADR 0002): Die Sitzung liegt in einem HttpOnly-Cookie,
+// Namen und Rolle kommen aus `/api/v1/auth/ich`. Die Formen stehen in
+// `crates/protocol/src/lib.rs` (`Rolle`, `Anmeldeart`, `Ich`, `BenutzerSicht`,
+// `Anmeldearten`, `RootAnmelden`) und in Aufgabe 25 (`AuthStand`, `Einrichten`).
+
+/** Rolle eines Benutzers; `root` ist der Notzugang, genau einer. */
+export type Rolle = "root" | "admin" | "benutzer";
+
+/** Woher die Sitzung kommt. */
+export type Anmeldeart = "root" | "entra";
+
+/** Ein Benutzer, wie ihn die Verwaltung sieht (`BenutzerSicht`). */
+export interface BenutzerSicht {
+  oid: string;
+  email: string | null;
+  name: string | null;
+  rolle: Rolle;
+  gesperrt: boolean;
+  /** Entra-Objekt-Ids der Gruppen aus dem letzten ID-Token. */
+  entra: string[];
+  /** RFC 3339, zuletzt gesehen. */
+  zuletzt: string | null;
+  /** `gueltig` oder `neu_anmelden`. */
+  token_stand: string;
+  geraete: number;
+}
+
+/** `GET /api/v1/auth/ich`: wer ist angemeldet? */
+export interface Ich {
+  benutzer: BenutzerSicht;
+  art: Anmeldeart;
+}
+
+/** `GET /api/v1/anmeldearten`: welche Wege bietet dieser Server? */
+export interface Anmeldearten {
+  entra: boolean;
+  root: boolean;
+}
+
+/** `PUT /api/v1/admin/benutzer/{oid}`; fehlende Felder bleiben, wie sie sind. */
+export interface BenutzerAendern {
+  rolle?: Rolle;
+  gesperrt?: boolean;
+  /** Nötig, wenn sich ein Admin selbst die Rolle entzieht oder sich sperrt. */
+  selbst_bestaetigt?: boolean;
+}
+
+/** Ein Eintrag der Prüfspur (`PruefspurEintrag`); ohne Geheimnisse. */
+export interface PruefspurEintrag {
+  /** RFC 3339. */
+  zeit: string;
+  /** `anmeldung`, `fehlschlag`, `rolle`, `aenderung`, `geraet`, … */
+  art: string;
+  akteur: string;
+  text: string;
+  /** Wie oft dasselbe geschah (Fehlversuche einer Adresse in einer Stunde). */
+  anzahl: number;
+}
+
+/** `POST /api/v1/auth/root`: Root-Anmeldung mit E-Mail und Passwort. */
+export interface RootAnmelden {
+  email: string;
+  passwort: string;
+}
+
+/**
+ * `GET /auth/stand` (Aufgabe 25, offen): Gibt es einen Root, und ist die
+ * Ersteinrichtung offen? `einrichtung` ist `null`, wenn die Frage nicht
+ * anwendbar ist; die Verwaltung zeigt dann dieselbe Seite wie `geschlossen`.
+ */
+export type Einrichtungslage = "offen" | "geschlossen" | null;
+
+export interface AuthStand {
+  eingerichtet: boolean;
+  einrichtung: Einrichtungslage;
+  code_noetig: boolean;
+  entra: boolean;
+}
+
+/** `POST /auth/einrichten` (Aufgabe 25): den einen Root anlegen. */
+export interface Einrichten {
+  email: string;
+  passwort: string;
+  /** Nur nötig, wenn `AuthStand.code_noetig` gilt. */
+  code?: string;
+}
+
 /** Die Seiten der Verwaltung. */
 export type Seite =
   | "ueberblick"
   | "bibliothek"
   | "saetze"
   | "gruppen"
-  | "geraete";
+  | "benutzer"
+  | "geraete"
+  | "pruefspur";
 
 /** Die drei Themes, sonst nichts (AGENTS.md §2.7). */
 export type Thema = "dark" | "light" | "mono";

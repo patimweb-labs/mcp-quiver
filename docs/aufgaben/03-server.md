@@ -1,4 +1,9 @@
-# 03 – Server: Bibliothek, Zuweisung, Verteilung
+# 03 – Server
+
+> **Überholt in Teilen:** Aufgabe 20 (`20-server-anmeldung.md`) ersetzt den
+> Admin-Token durch Sitzungen (Root per Passwort oder Entra mit Rolle `admin`).
+> Die Abschnitte zu `QUIVER_ADMIN_TOKEN` und `<daten>/admin-token` gelten nicht
+> mehr.: Bibliothek, Zuweisung, Verteilung
 
 Crate: `crates/server` (`quiver-server`), Bibliothek (`src/lib.rs`) + Programm
 (`src/main.rs`, Binärname `quiver-server`). Der Vertrag steht in

@@ -38,7 +38,9 @@ use rmcp::transport::streamable_http_client::{
 use rmcp::{ClientHandler, Peer, RoleClient, ServiceExt};
 use serde_json::{json, Value};
 
-const ADMIN: &str = "admin-token-fuer-den-protokoll-test";
+#[path = "gemeinsam.rs"]
+mod gemeinsam;
+
 /// Das Geheimnis, das nirgends auftauchen darf.
 const GEHEIM: &str = "super-geheim-4711";
 const FRIST: Duration = Duration::from_secs(10);
@@ -49,6 +51,8 @@ struct Pruefung {
     ordner: PathBuf,
     /// `http://127.0.0.1:<port>`
     basis: String,
+    /// Sitzungscookie der Verwaltung.
+    cookie: String,
     kern: Kern,
     http: reqwest::Client,
     tresor: Arc<SpeicherTresor>,
@@ -71,35 +75,36 @@ impl Pruefung {
         let daten = ordner.join("server");
         std::fs::create_dir_all(&daten).expect("Ordner");
 
-        let router = app(Konfig {
-            daten,
-            admin_token: ADMIN.to_string(),
-            admin_dist: None,
-        })
-        .await
-        .expect("App baut");
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("Port frei");
         let adresse = listener.local_addr().expect("Adresse");
+        let basis = format!("http://{adresse}");
+        let http = reqwest::Client::new();
+        let mut konfig = Konfig::neu(&daten);
+        konfig.oeffentlich = basis.clone();
+        let router = app(konfig).await.expect("App baut");
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
+        let cookie = gemeinsam::sitzung(&http, &basis, &daten).await;
 
         let tresor = Arc::new(SpeicherTresor::neu());
         let kern = Kern::starten(KernKonfig {
             profil: ordner.join("profil"),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");
 
         Self {
             ordner,
-            basis: format!("http://{adresse}"),
+            basis,
+            cookie,
             kern,
-            http: reqwest::Client::new(),
+            http,
             tresor,
         }
     }
@@ -111,7 +116,9 @@ impl Pruefung {
                 methode.parse().expect("Methode"),
                 format!("{}/api/v1{pfad}", self.basis),
             )
-            .bearer_auth(ADMIN)
+            .header("cookie", &self.cookie)
+            .header("origin", &self.basis)
+            .header("x-quiver", "1")
             .header("content-type", "application/json");
         if let Some(rumpf) = rumpf {
             anfrage = anfrage.body(serde_json::to_vec(&rumpf).expect("JSON"));
@@ -159,6 +166,7 @@ impl Pruefung {
                 id: GruppeId::neu("team"),
                 titel: "Team".into(),
                 saetze: vec![SatzId::neu("basis")],
+                entra: Vec::new(),
             },
         )
         .await;
@@ -399,14 +407,15 @@ async fn ein_aufruf_steht_mit_agent_dauer_und_status_im_protokoll() {
     assert!(aufruf.vorschau.contains("hallo"), "{}", aufruf.vorschau);
     assert!(aufruf.antwort_groesse > 0);
 
-    // Ein unbekanntes Werkzeug des Eintrags: der Eintrag antwortet mit einem
-    // Fehler, der Client hält ihn fest.
+    // Ein Werkzeug, das der Eintrag nicht anbietet: der Client reicht es
+    // **nicht** weiter (die Zuordnung ist eine Tabelle, Paket 3) und hält die
+    // Ablehnung fest.
     let fehler = aufrufen(agent.peer(), "echo__gibtsnicht", json!({})).await;
-    assert!(fehler.is_err(), "der Demo-Server kennt das Werkzeug nicht");
+    assert!(fehler.is_err(), "der Client kennt das Werkzeug nicht");
     let aufruf = p
         .warte_auf_aufruf("der Fehler", |aufruf| aufruf.tool == "echo__gibtsnicht")
         .await;
-    assert_eq!(aufruf.status, Status::Fehler);
+    assert_eq!(aufruf.status, Status::Abgelehnt);
     assert!(
         aufruf
             .fehler

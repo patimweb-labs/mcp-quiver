@@ -24,7 +24,8 @@ Dev: `quiver-server` (für den Ende-zu-Ende-Test), `tower`.
 pub struct KernKonfig {
     pub profil: PathBuf,            // Standard: dirs::config_dir()/mcp-quiver
     pub mcp_adresse: SocketAddr,    // Standard: 127.0.0.1:8741
-    pub tresor: Arc<dyn Tresor>,    // Standard: Schlüsselbund; in Tests: im Speicher
+    pub tresor: Arc<dyn Tresor>,    // Standard: Tresor-Datei; in Tests: im Speicher
+    pub browser: Arc<dyn Browser>,  // Standard: Systembrowser; im Test: Attrappe (Aufgabe 22)
 }
 
 pub trait Tresor: Send + Sync {
@@ -43,6 +44,9 @@ impl Kern {
     pub async fn starten(k: KernKonfig) -> anyhow::Result<Kern>;
     /// Aktuelles Modell für die Oberfläche; ändert sich bei jedem Ereignis.
     pub fn modell(&self) -> tokio::sync::watch::Receiver<Modell>;
+    pub async fn anmeldewege(&self, server: &str) -> anyhow::Result<()>;
+    pub async fn anmelden_server(&self, server: &str, name: &str) -> anyhow::Result<()>;
+    pub fn anmeldung_abbrechen(&self);
     pub async fn einbinden(&self, server: &str, code: &str, name: &str) -> anyhow::Result<()>;
     pub async fn abmelden(&self) -> anyhow::Result<()>;
     pub async fn werte_setzen(&self, eintrag: &EintragId, lokal: Werte, geheim: Werte) -> anyhow::Result<()>;

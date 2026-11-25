@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use crate::ansichten;
+use crate::ende::{EndeFahne, EndeGrund};
 use crate::modell::{Meldung, Seite, Sicht};
 use crate::profil::Einstellungen;
 use crate::thema::{self, Thema};
@@ -60,6 +61,15 @@ pub trait KernZugang {
 /// Eine Anweisung des Fensters an den Kern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Aktion {
+    /// Hinter „Weiter“: welche Anmeldewege bietet dieser Server?
+    Anmeldewege { server: String },
+    /// Mit Microsoft anmelden: der Client öffnet die Seite des Servers und
+    /// wartet auf genau eine Antwort auf `127.0.0.1` (Aufgabe 22).
+    AnmeldenMicrosoft { server: String },
+    /// Eine laufende Browser-Anmeldung abbrechen (Knopf „Abbrechen“).
+    AnmeldungAbbrechen,
+    /// Die Anmeldeseite erneut im Standardbrowser öffnen.
+    BrowserOeffnen(String),
     /// Gerät mit Server-Adresse und Einmal-Code einbinden.
     Einbinden { server: String, code: String },
     /// Gerät abmelden (Token weg, nichts läuft mehr).
@@ -126,6 +136,12 @@ pub enum Aktion {
     /// Dürfen Agenten Inhalte im Protokoll sehen? Wird in `zustand.json`
     /// gespeichert (Aufgabe 17).
     ProtokollFuerAgenten { an: bool },
+    /// Der Tresor ist nicht lesbar: mit einem leeren beginnen (Paket 3). Die
+    /// alten Dateien bleiben als `.kaputt-<zeit>` liegen.
+    TresorNeuBeginnen,
+    /// Eine laufende Einrichtung abbrechen (Paket 3): der Prozess endet, der
+    /// Zustand geht zurück auf „Bereit“.
+    EinrichtungAbbrechen { eintrag: EintragId },
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -168,6 +184,90 @@ pub struct Fenster<K: KernZugang> {
     befehle: Option<Receiver<Befehl>>,
     /// Beenden ist angefordert: dann wird das Fenster nicht mehr festgehalten.
     beenden: bool,
+    /// Warum beendet wird (Signal-Faden), damit es im Protokoll steht.
+    ende: Option<EndeFahne>,
+    /// Wurde die Ursache schon protokolliert (Tray meldet selbst)?
+    ende_gemeldet: bool,
+    /// Was zuletzt in die Zwischenablage ging – und seit wann (Paket 3).
+    zwischenablage: Zwischenablage,
+}
+
+/// Leert die Zwischenablage nach kurzer Zeit, wenn noch unser Wert darin
+/// steht (Paket 3): ein kopiertes Agent-Token soll nicht den ganzen Tag in
+/// der Zwischenablage jeder Anwendung liegen.
+///
+/// Egui kann die Zwischenablage nicht lesen – es kann sie nur beschreiben und
+/// über [`egui::ViewportCommand::RequestPaste`] den aktuellen Inhalt als
+/// [`egui::Event::Paste`] anfordern. Genau das passiert nach
+/// [`ZWISCHENABLAGE_FRIST`]: kommt der eigene Wert zurück, wird sie geleert;
+/// steht etwas anderes darin, bleibt es.
+#[derive(Debug, Default)]
+pub struct Zwischenablage {
+    /// Der zuletzt kopierte Wert und der Zeitpunkt (egui-Zeit in Sekunden).
+    wert: Option<(String, f64)>,
+    /// Wartet auf die Antwort auf `RequestPaste`?
+    angefragt: bool,
+}
+
+/// So lange bleibt ein kopierter Wert in der Zwischenablage.
+pub const ZWISCHENABLAGE_FRIST: f64 = 60.0;
+/// So lange wird nach der Anfrage auf die Antwort gewartet.
+const ANTWORT_FRIST: f64 = 5.0;
+
+impl Zwischenablage {
+    /// Den Inhalt dieses Bildes mitlesen: was kopiert wurde, wird gemerkt.
+    fn beobachten(&mut self, ctx: &egui::Context, jetzt: f64) {
+        let kopiert: Vec<String> = ctx.output(|ausgabe| {
+            ausgabe
+                .commands
+                .iter()
+                .filter_map(|befehl| match befehl {
+                    egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+        if let Some(text) = kopiert.last() {
+            if !text.is_empty() {
+                self.wert = Some((text.clone(), jetzt));
+                self.angefragt = false;
+            }
+        }
+    }
+
+    /// Die Antwort auf `RequestPaste` auswerten und nach der Frist leeren.
+    fn pflegen(&mut self, ctx: &egui::Context, jetzt: f64) {
+        let eingefuegt = ctx.input(|eingabe| {
+            eingabe.events.iter().find_map(|ereignis| match ereignis {
+                egui::Event::Paste(text) => Some(text.clone()),
+                _ => None,
+            })
+        });
+        if let Some(text) = eingefuegt {
+            if let Some((wert, _)) = &self.wert {
+                if &text == wert {
+                    // Noch unser Wert: leeren.
+                    ctx.copy_text(String::new());
+                    self.wert = None;
+                    self.angefragt = false;
+                    return;
+                }
+            }
+        }
+        let Some((_, seit)) = &self.wert else {
+            return;
+        };
+        let alter = jetzt - seit;
+        if !self.angefragt && alter >= ZWISCHENABLAGE_FRIST {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+            self.angefragt = true;
+        } else if self.angefragt && alter >= ZWISCHENABLAGE_FRIST + ANTWORT_FRIST {
+            // Keine Antwort (keine Zwischenablage auf dieser Plattform): dann
+            // bleibt es, wie es ist – wir wissen es nicht besser.
+            self.wert = None;
+            self.angefragt = false;
+        }
+    }
 }
 
 impl<K: KernZugang> Fenster<K> {
@@ -183,7 +283,16 @@ impl<K: KernZugang> Fenster<K> {
             tray: None,
             befehle: None,
             beenden: false,
+            ende: None,
+            ende_gemeldet: false,
+            zwischenablage: Zwischenablage::default(),
         }
+    }
+
+    /// Die Ursache für ein Ende aus einem Signal-Faden übernehmen.
+    pub fn mit_ende(mut self, fahne: EndeFahne) -> Self {
+        self.ende = Some(fahne);
+        self
     }
 
     /// Wie der Autostart geschaltet wird (im Betrieb die Systemdatei).
@@ -226,6 +335,8 @@ impl<K: KernZugang> Fenster<K> {
                     self.sicht.autostart = !self.sicht.autostart;
                 }
                 Befehl::Beenden => {
+                    EndeGrund::Tray.protokollieren();
+                    self.ende_gemeldet = true;
                     self.kern.beenden();
                     self.beenden = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -294,24 +405,26 @@ impl<K: KernZugang> Fenster<K> {
 
     /// Ein Bild: Modell holen, Meldungen einsammeln, zeichnen, Aktionen abgeben.
     pub fn bild(&mut self, ui: &mut egui::Ui) {
+        let zeit = ui.input(|eingabe| eingabe.time);
+        self.zwischenablage.pflegen(ui.ctx(), zeit);
         self.sicht.modell_setzen(self.kern.modell());
         for meldung in self.kern.meldungen() {
             self.sicht.melden(meldung);
         }
         self.protokoll_nachladen();
         // Theme und Sprache gehören ins Profil, nicht nur in den Speicher.
-        let jetzt = self.sicht.einstellungen();
-        if self.gemerkt.as_ref() != Some(&jetzt) {
-            if self.angewandt != Some(jetzt.thema()) {
-                thema::anwenden(ui.ctx(), jetzt.thema());
-                self.angewandt = Some(jetzt.thema());
+        let einstellungen = self.sicht.einstellungen();
+        if self.gemerkt.as_ref() != Some(&einstellungen) {
+            if self.angewandt != Some(einstellungen.thema()) {
+                thema::anwenden(ui.ctx(), einstellungen.thema());
+                self.angewandt = Some(einstellungen.thema());
             }
             if let Some(ordner) = &self.profil {
-                if let Err(fehler) = jetzt.speichern(ordner) {
+                if let Err(fehler) = einstellungen.speichern(ordner) {
                     tracing::warn!("Oberflächen-Einstellungen nicht speicherbar: {fehler}");
                 }
             }
-            self.gemerkt = Some(jetzt);
+            self.gemerkt = Some(einstellungen);
         }
 
         for aktion in render(ui, &mut self.sicht) {
@@ -320,16 +433,21 @@ impl<K: KernZugang> Fenster<K> {
             // nächsten Aktion.
             self.sicht.hinweis = None;
             self.sicht.ergebnis = None;
-            // Einen Hilfe-Link öffnet das Fenster selbst: der Standardbrowser
-            // hängt am Fenster (egui-winit führt `OpenUrl` aus), nicht am Kern.
-            // Damit braucht es keine weitere Abhängigkeit.
-            if let Aktion::LinkOeffnen(url) = &aktion {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
-                continue;
+            // Einen Hilfe-Link oder die Anmeldeseite öffnet das Fenster
+            // selbst: der Standardbrowser hängt am Fenster (egui-winit führt
+            // `OpenUrl` aus), nicht am Kern. Damit braucht es keine weitere
+            // Abhängigkeit.
+            match &aktion {
+                Aktion::LinkOeffnen(url) | Aktion::BrowserOeffnen(url) => {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                    continue;
+                }
+                _ => {}
             }
             self.kern.ausfuehren(aktion);
         }
         self.autostart_pflegen();
+        self.zwischenablage.beobachten(ui.ctx(), zeit);
     }
 }
 
@@ -350,6 +468,12 @@ impl<K: KernZugang> eframe::App for Fenster<K> {
 
     /// Letzter Halt: Kern sauber anhalten (Fenster zu, Beenden aus dem Tray).
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if !self.ende_gemeldet {
+            match self.ende.as_ref().and_then(EndeFahne::grund) {
+                Some(grund) => grund.protokollieren(),
+                None => EndeGrund::FensterBeendet.protokollieren(),
+            }
+        }
         self.kern.beenden();
     }
 }
@@ -364,6 +488,34 @@ pub fn schliessen_abfangen(ctx: &egui::Context, beenden: bool) -> bool {
     if beenden || !ctx.input(|i| i.viewport().close_requested()) {
         return false;
     }
+    EndeGrund::FensterWeggelegt.protokollieren();
+    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+    tray::weglegen(ctx);
+    true
+}
+
+/// Cmd+Q legt das Fenster in den Tray, statt quiver zu beenden. Gibt zurück,
+/// ob abgefangen wurde.
+pub fn cmd_q_abfangen(ctx: &egui::Context, beenden: bool) -> bool {
+    // Die Modifikatoren stehen am Tastenereignis; `InputState::modifiers`
+    // allein ist bei einer Attrappe (und beim ersten Bild) nicht gesetzt.
+    let cmd_q = ctx.input(|i| {
+        i.events.iter().any(|ereignis| {
+            matches!(
+                ereignis,
+                egui::Event::Key {
+                    key: egui::Key::Q,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.command
+            )
+        })
+    });
+    if beenden || !cmd_q {
+        return false;
+    }
+    EndeGrund::CmdQ.protokollieren();
     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
     tray::weglegen(ctx);
     true
@@ -420,6 +572,7 @@ mod tests {
     /// meldet. Geprüft wird, welche Befehle daraus folgen.
     fn schliessen(beenden: bool) -> Vec<egui::ViewportCommand> {
         let ctx = egui::Context::default();
+        quiver_oberflaeche::einrichten(&ctx);
         let mut eingabe = egui::RawInput::default();
         eingabe
             .viewports
@@ -456,6 +609,44 @@ mod tests {
         );
     }
 
+    /// Cmd+Q ist **kein** Ende: es legt das Fenster nur weg.
+    #[test]
+    fn cmd_q_legt_weg_statt_zu_beenden() {
+        let ctx = egui::Context::default();
+        quiver_oberflaeche::einrichten(&ctx);
+        let mut eingabe = egui::RawInput::default();
+        eingabe.events.push(egui::Event::Key {
+            key: egui::Key::Q,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+        });
+        let mut ausgabe = ctx.run_ui(eingabe, |ui| {
+            cmd_q_abfangen(ui.ctx(), false);
+        });
+        let befehle = ausgabe.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .clone();
+        ausgabe.textures_delta.clear();
+        assert!(
+            befehle.contains(&egui::ViewportCommand::CancelClose),
+            "Cmd+Q beendet nicht: {befehle:?}"
+        );
+        let weglegen = if tray::MINIMIEREN {
+            egui::ViewportCommand::Minimized(true)
+        } else {
+            egui::ViewportCommand::Visible(false)
+        };
+        assert!(
+            befehle.contains(&weglegen),
+            "Fenster in den Tray: {befehle:?}"
+        );
+    }
+
     #[test]
     fn beenden_schliesst_wirklich() {
         let befehle = schliessen(true);
@@ -463,5 +654,82 @@ mod tests {
             !befehle.contains(&egui::ViewportCommand::CancelClose),
             "beim Beenden darf nichts abgefangen werden: {befehle:?}"
         );
+    }
+
+    /// Nach `ZWISCHENABLAGE_FRIST` wird die Zwischenablage geleert – aber nur,
+    /// wenn noch unser Wert darin steht (Paket 3).
+    #[test]
+    fn die_zwischenablage_wird_nach_einer_minute_geleert() {
+        let ctx = egui::Context::default();
+        quiver_oberflaeche::einrichten(&ctx);
+        let mut zwischenablage = Zwischenablage {
+            wert: Some(("qvr_token".to_string(), 0.0)),
+            angefragt: false,
+        };
+
+        // Vor der Frist passiert nichts.
+        let mut ausgabe = ctx.run_ui(egui::RawInput::default(), |_ui| {
+            zwischenablage.pflegen(&ctx, ZWISCHENABLAGE_FRIST - 1.0);
+        });
+        assert!(
+            !ausgabe.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .contains(&egui::ViewportCommand::RequestPaste),
+            "vor der Frist wird nichts angefragt"
+        );
+        ausgabe.textures_delta.clear();
+
+        // Nach der Frist wird der Inhalt angefragt.
+        let mut ausgabe = ctx.run_ui(egui::RawInput::default(), |_ui| {
+            zwischenablage.pflegen(&ctx, ZWISCHENABLAGE_FRIST + 1.0);
+        });
+        assert!(
+            ausgabe.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .contains(&egui::ViewportCommand::RequestPaste),
+            "der Inhalt wird angefragt"
+        );
+        ausgabe.textures_delta.clear();
+        assert!(zwischenablage.angefragt);
+
+        // Noch unser Wert: die Zwischenablage wird geleert.
+        let mut eingabe = egui::RawInput::default();
+        eingabe
+            .events
+            .push(egui::Event::Paste("qvr_token".to_string()));
+        let mut ausgabe = ctx.run_ui(eingabe, |_ui| {
+            zwischenablage.pflegen(&ctx, ZWISCHENABLAGE_FRIST + 2.0);
+        });
+        let geleert =
+            ausgabe.platform_output.commands.iter().any(
+                |befehl| matches!(befehl, egui::OutputCommand::CopyText(text) if text.is_empty()),
+            );
+        assert!(geleert, "die Zwischenablage ist geleert");
+        assert_eq!(zwischenablage.wert, None);
+        ausgabe.textures_delta.clear();
+    }
+
+    /// Steht etwas anderes in der Zwischenablage, bleibt es.
+    #[test]
+    fn ein_fremder_wert_in_der_zwischenablage_bleibt() {
+        let ctx = egui::Context::default();
+        quiver_oberflaeche::einrichten(&ctx);
+        let mut zwischenablage = Zwischenablage {
+            wert: Some(("qvr_token".to_string(), 0.0)),
+            angefragt: true,
+        };
+        let mut eingabe = egui::RawInput::default();
+        eingabe
+            .events
+            .push(egui::Event::Paste("etwas anderes".to_string()));
+        let mut ausgabe = ctx.run_ui(eingabe, |_ui| {
+            zwischenablage.pflegen(&ctx, ZWISCHENABLAGE_FRIST + 2.0);
+        });
+        let geleert =
+            ausgabe.platform_output.commands.iter().any(
+                |befehl| matches!(befehl, egui::OutputCommand::CopyText(text) if text.is_empty()),
+            );
+        assert!(!geleert, "ein fremder Wert bleibt stehen");
+        ausgabe.textures_delta.clear();
     }
 }

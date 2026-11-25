@@ -273,6 +273,7 @@ onMounted(laden);
       :neu="neuModus"
       :client="client"
       @gespeichert="gespeichert"
+      @neuladen="laden"
     />
 
     <ImportDialog
@@ -404,16 +405,9 @@ onMounted(laden);
 }
 
 .marke-chip {
-  padding: 0 var(--wp-space-2);
-  border: var(--wp-size-border) solid var(--wp-color-border-subtle);
-  background: var(--wp-color-bg-raised);
-  color: var(--wp-color-text-muted);
-  font-size: var(--wp-font-size-xs);
-  line-height: var(--wp-size-control-sm);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .fehler {

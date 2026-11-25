@@ -1,5 +1,7 @@
 <script setup lang="ts">
-// Eine Gruppe: Titel und die Sätze, die ihre Geräte bekommen.
+// Eine Gruppe: Titel und die Sätze, die ihre Geräte bekommen. Stammt sie aus
+// Entra ID (Aufgabe 23), ist ihre Kennung die Objekt-Id und nicht änderbar;
+// Titel und Sätze gehören dem Admin.
 import { computed, ref, watch } from "vue";
 import {
   WpButton,
@@ -9,9 +11,10 @@ import {
 } from "@weppelmann/components";
 import { tief_kopie } from "../logik/kopie";
 
-import { fehlertext, type Client } from "../api/client";
+import { ApiFehler, fehlertext, type Client } from "../api/client";
 import type { Gruppe, Satz } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import { ist_entra_gruppe, ohne_satz } from "../logik/ausweis";
 import {
   gruppe_pruefen,
   gruppe_saeubern,
@@ -29,12 +32,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:offen": [boolean];
+  neuladen: [];
   gespeichert: [Gruppe];
 }>();
 
 const entwurf = ref<Gruppe>(neue_gruppe());
 const fehler = ref<Record<string, string>>({});
 const speicherfehler = ref("");
+const konflikt = ref(false);
 const speichert = ref(false);
 
 watch(
@@ -46,6 +51,7 @@ watch(
       : neue_gruppe();
     fehler.value = {};
     speicherfehler.value = "";
+    konflikt.value = false;
   },
   { immediate: true },
 );
@@ -70,10 +76,19 @@ async function speichern(): Promise<void> {
     emit("gespeichert", gespeichert);
     emit("update:offen", false);
   } catch (fehlerWert) {
-    speicherfehler.value = fehlertext(fehlerWert);
+    konflikt.value = fehlerWert instanceof ApiFehler && fehlerWert.status === 409;
+    speicherfehler.value = konflikt.value
+      ? "Inzwischen geändert – bitte neu laden."
+      : fehlertext(fehlerWert);
   } finally {
     speichert.value = false;
   }
+}
+
+/** Nach einem 409: die Liste neu holen und den Dialog schließen. */
+function neu_laden(): void {
+  emit("neuladen");
+  emit("update:offen", false);
 }
 </script>
 
@@ -90,7 +105,13 @@ async function speichern(): Promise<void> {
           <WpInput
             :id="id"
             :model-value="entwurf.id"
-            :state="fehler.id ? 'invalid' : 'default'"
+            :state="
+              !neu && entwurf.entra.length > 0
+                ? 'disabled'
+                : fehler.id
+                  ? 'invalid'
+                  : 'default'
+            "
             placeholder="team-entwicklung"
             @update:model-value="(wert) => (entwurf.id = wert)"
           />
@@ -109,6 +130,11 @@ async function speichern(): Promise<void> {
         </template>
       </Feld>
 
+      <p v-if="!neu && ist_entra_gruppe(entwurf)" class="hinweis">
+        Diese Gruppe stammt aus Entra ID. Kennung und Mitglieder pflegt Entra;
+        Titel und Sätze gehören Ihnen.
+      </p>
+
       <div class="auswahl">
         <WpMultiselect
           :model-value="entwurf.saetze"
@@ -118,12 +144,16 @@ async function speichern(): Promise<void> {
           @update:model-value="(werte) => (entwurf.saetze = werte)"
         />
         <p class="hinweis">Mehrfachauswahl; die Reihenfolge folgt der Priorität.</p>
+        <p v-if="ohne_satz(entwurf)" class="hinweis">
+          Noch kein Satz – diese Gruppe gibt noch keine Tools.
+        </p>
       </div>
 
       <p v-if="speicherfehler" class="fehler" role="alert">{{ speicherfehler }}</p>
     </div>
 
     <template #actions>
+      <WpButton v-if="konflikt" label="Neu laden" @press="neu_laden" />
       <WpButton label="Abbrechen" @press="emit('update:offen', false)" />
       <WpButton
         label="Speichern"

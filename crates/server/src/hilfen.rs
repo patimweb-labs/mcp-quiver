@@ -78,6 +78,14 @@ pub fn geraet_id_erzeugen() -> String {
     hex::encode(zufall(6))
 }
 
+/// Kurze Kennung für eine Fehlermeldung (acht Zeichen hexadezimal).
+///
+/// Sie verbindet die Antwort mit der Zeile im Log, ohne etwas über den Fehler
+/// zu verraten.
+pub fn kennung_erzeugen() -> String {
+    hex::encode(zufall(4))
+}
+
 /// Was in der Datenbank vom Token steht.
 pub fn hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
@@ -90,6 +98,59 @@ pub fn gleich_konstant(a: &str, b: &str) -> bool {
         return false;
     }
     a.iter().zip(b).fold(0u8, |rest, (x, y)| rest | (x ^ y)) == 0
+}
+
+/// Ein ETag zu einem Wert: [`kanonisch`] plus FNV-1a (64 Bit), als Hex.
+///
+/// Die Verwaltung berechnet denselben Wert aus dem geladenen Stand (Vue:
+/// `logik/etag.ts`); deshalb steht das Verfahren hier **einmal** und ist
+/// getestet. Kein Geheimnis, keine Signature – nur ein Vergleichswert dafür,
+/// ob sich etwas geändert hat.
+pub fn etag<T: serde::Serialize>(wert: &T) -> String {
+    let wert = serde_json::to_value(wert).unwrap_or(serde_json::Value::Null);
+    let text = kanonisch(&wert);
+    format!("\"{:016x}\"", fnv1a_64(text.as_bytes()))
+}
+
+/// JSON mit sortierten Schlüsseln und ohne Leerraum.
+///
+/// Beide Seiten müssen auf dieselbe Zeichenkette kommen; Objektschlüssel in
+/// fester Reihenfolge sind der einfachste Weg dorthin. Zahlen sind im Modell
+/// ganzzahlig, deshalb gibt es keine Abweichung bei der Darstellung.
+pub fn kanonisch(wert: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match wert {
+        Value::Object(karte) => {
+            let mut namen: Vec<&String> = karte.keys().collect();
+            namen.sort();
+            let teile: Vec<String> = namen
+                .into_iter()
+                .map(|name| {
+                    format!(
+                        "{}:{}",
+                        serde_json::Value::String(name.clone()),
+                        kanonisch(&karte[name])
+                    )
+                })
+                .collect();
+            format!("{{{}}}", teile.join(","))
+        }
+        Value::Array(liste) => {
+            let teile: Vec<String> = liste.iter().map(kanonisch).collect();
+            format!("[{}]", teile.join(","))
+        }
+        anderes => anderes.to_string(),
+    }
+}
+
+/// FNV-1a (64 Bit) – dieselbe Rechnung wie in `logik/etag.ts`.
+pub fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]
@@ -141,5 +202,25 @@ mod tests {
         let zurueck = zeit_lesen(&text).expect("RFC 3339");
         assert_eq!(zurueck.unix_timestamp(), jetzt.unix_timestamp());
         assert_eq!(zeit_lesen("keine Zeit"), None);
+    }
+
+    /// Das ETag hängt am Inhalt und nicht an der Reihenfolge der Schlüssel.
+    /// Dieselbe Rechnung steht in `admin/src/logik/etag.ts`.
+    #[test]
+    fn etag_ist_inhaltsgleich() {
+        let a: serde_json::Value = serde_json::from_str(r#"{"b":1,"a":[1,2]}"#).unwrap();
+        let b: serde_json::Value = serde_json::from_str(r#"{"a":[1,2],"b":1}"#).unwrap();
+        assert_eq!(etag(&a), etag(&b));
+        assert_ne!(etag(&a), etag(&serde_json::json!({"a": [1, 3], "b": 1})));
+        // Der Wert steht in Anführungszeichen (Entity-Tag) und ist stabil.
+        assert!(etag(&a).starts_with('"') && etag(&a).ends_with('"'));
+        assert_eq!(etag(&a), etag(&a));
+        // FNV-1a, feste Werte: wer die Rechnung ändert, merkt es hier.
+        assert_eq!(fnv1a_64(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a_64(b"a"), 0xaf63_dc4c_8601_ec8c);
+        // Dieselben Werte bildet `admin/src/logik/etag.ts`.
+        assert_eq!(etag(&a), "\"30077cb0d8fc07be\"");
+        assert_eq!(etag(&serde_json::json!({})), "\"08f44b07b5901a25\"");
+        assert_eq!(etag(&serde_json::json!([])), "\"09612b07b5ecb5a5\"");
     }
 }

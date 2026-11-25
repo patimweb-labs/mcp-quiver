@@ -37,7 +37,9 @@ use rmcp::transport::streamable_http_client::{
 use rmcp::{ClientHandler, Peer, RoleClient, ServiceExt};
 use serde_json::{json, Value};
 
-const ADMIN: &str = "admin-token-fuer-den-abschalt-test";
+#[path = "gemeinsam.rs"]
+mod gemeinsam;
+
 /// Wie lange auf einen Zustand gewartet wird.
 const FRIST: Duration = Duration::from_secs(10);
 /// So schnell muss „aus“ wirken.
@@ -49,6 +51,8 @@ struct Pruefung {
     ordner: PathBuf,
     /// `http://127.0.0.1:<port>`
     basis: String,
+    /// Sitzungscookie der Verwaltung.
+    cookie: String,
     kern: Kern,
     http: reqwest::Client,
     tresor: Arc<SpeicherTresor>,
@@ -78,20 +82,19 @@ impl Pruefung {
         let pids = ordner.join("pids");
         std::fs::create_dir_all(&pids).expect("Ordner");
 
-        let router = app(Konfig {
-            daten,
-            admin_token: ADMIN.to_string(),
-            admin_dist: None,
-        })
-        .await
-        .expect("App baut");
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("Port frei");
         let adresse = listener.local_addr().expect("Adresse");
+        let basis = format!("http://{adresse}");
+        let http = reqwest::Client::new();
+        let mut konfig = Konfig::neu(&daten);
+        konfig.oeffentlich = basis.clone();
+        let router = app(konfig).await.expect("App baut");
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
+        let cookie = gemeinsam::sitzung(&http, &basis, &daten).await;
 
         let profil = ordner.join("profil");
         let tresor = Arc::new(SpeicherTresor::neu());
@@ -99,6 +102,7 @@ impl Pruefung {
             profil: profil.clone(),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet");
@@ -108,9 +112,10 @@ impl Pruefung {
             pids,
             profil,
             ordner,
-            basis: format!("http://{adresse}"),
+            basis,
+            cookie,
             kern,
-            http: reqwest::Client::new(),
+            http,
             tresor,
         }
     }
@@ -122,6 +127,7 @@ impl Pruefung {
             profil: self.profil.clone(),
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: self.tresor.clone(),
+            browser: std::sync::Arc::new(quiver_client::SystemBrowser),
         })
         .await
         .expect("Kern startet neu");
@@ -134,7 +140,9 @@ impl Pruefung {
                 methode.parse().expect("Methode"),
                 format!("{}/api/v1{pfad}", self.basis),
             )
-            .bearer_auth(ADMIN)
+            .header("cookie", &self.cookie)
+            .header("origin", &self.basis)
+            .header("x-quiver", "1")
             .header("content-type", "application/json");
         if let Some(rumpf) = rumpf {
             anfrage = anfrage.body(serde_json::to_vec(&rumpf).expect("JSON"));
@@ -190,6 +198,7 @@ impl Pruefung {
                 id: GruppeId::neu("team"),
                 titel: "Team".into(),
                 saetze: vec![SatzId::neu("basis")],
+                entra: Vec::new(),
             },
         )
         .await;

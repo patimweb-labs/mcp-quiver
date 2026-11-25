@@ -14,6 +14,7 @@
 //! | GET | `/geraet/soll` | Gerät | → [`quiver_domain::Soll`] |
 //! | GET | `/geraet/ereignisse` | Gerät | SSE, Ereignis `soll`, Daten = Revision |
 //! | POST | `/geraet/meldung` | Gerät | [`Meldung`] → 204 |
+//! | POST | `/geraet/abmelden` | Gerät | → 204, das Gerät ist am Server gelöscht |
 //! | GET/PUT/DELETE | `/admin/eintraege[/{id}]` | Admin | [`quiver_domain::Eintrag`] |
 //! | POST | `/admin/eintraege/import` | Admin | server.json → [`quiver_domain::Eintrag`] |
 //! | GET/PUT/DELETE | `/admin/saetze[/{id}]` | Admin | [`quiver_domain::Satz`] |
@@ -22,6 +23,9 @@
 //! | PUT/DELETE | `/admin/geraete/{id}` | Admin | [`GeraetAendern`] → [`GeraetStand`] |
 //! | POST | `/admin/codes` | Admin | [`CodeAnlegen`] → [`Code`] |
 //! | GET | `/admin/ueberblick` | Admin | → [`Ueberblick`] |
+//!
+//! Ohne `/api/v1` liegen die offenen Wege der Anmeldung: `/auth/stand` →
+//! [`AuthStand`] und `/auth/einrichten` → [`Ich`] (Aufgabe 25).
 //!
 //! PUT legt an oder ersetzt (die Kennung steht im Pfad und im Rumpf, beide
 //! müssen gleich sein). Fehler kommen als [`Fehler`] mit passendem Status.
@@ -46,6 +50,11 @@ pub struct AnmeldenAntwort {
     pub geraet: Geraet,
     /// Geheimes Geräte-Token. Der Server speichert nur seinen Hash.
     pub token: String,
+    /// Anzeigename des angemeldeten Benutzers (E-Mail oder Name), nur für
+    /// „Angemeldet als …“. Kein Schlüssel, kein Geheimnis; fehlt bei
+    /// Altgeräten ohne Benutzer und bei älteren Servern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benutzer: Option<String>,
 }
 
 /// Einmal-Code anlegen; das Gerät landet beim Einbinden in diesen Gruppen.
@@ -125,6 +134,10 @@ pub struct GeraetStand {
     /// RFC 3339.
     pub zuletzt_gesehen: Option<String>,
     pub verbunden: bool,
+    /// Wem das Gerät gehört (E-Mail, sonst Name, sonst Objekt-Id). `None` bei
+    /// Geräten aus der Zeit der Einmal-Codes.
+    #[serde(default)]
+    pub besitzer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,10 +150,240 @@ pub struct Ueberblick {
     pub server_version: String,
 }
 
+/// Warum ein Gerät nicht mehr darf (Aufgabe 20).
+///
+/// Steht maschinenlesbar in [`Fehler::grund`], damit der Client den richtigen
+/// Satz zeigen kann, statt den Text zu raten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AnmeldeGrund {
+    /// Der Benutzer oder das Gerät ist gesperrt.
+    Gesperrt,
+    /// Das Refresh-Token gilt nicht mehr; neu anmelden.
+    NeuAnmelden,
+    /// Dem Benutzer ist keine Gruppe zugeordnet.
+    KeinZugriff,
+}
+
+/// Rolle eines Benutzers. `Root` ist der Notzugang ohne Entra, genau einer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Rolle {
+    Root,
+    Admin,
+    Benutzer,
+}
+
+impl Rolle {
+    pub fn als_str(self) -> &'static str {
+        match self {
+            Rolle::Root => "root",
+            Rolle::Admin => "admin",
+            Rolle::Benutzer => "benutzer",
+        }
+    }
+
+    pub fn aus_str(wert: &str) -> Self {
+        match wert {
+            "root" => Rolle::Root,
+            "admin" => Rolle::Admin,
+            _ => Rolle::Benutzer,
+        }
+    }
+
+    /// Darf diese Rolle die Verwaltung benutzen?
+    pub fn darf_verwalten(self) -> bool {
+        matches!(self, Rolle::Root | Rolle::Admin)
+    }
+}
+
+/// Woher die Sitzung kommt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Anmeldeart {
+    Root,
+    Entra,
+}
+
+/// `GET /auth/ich`: wer ist angemeldet?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ich {
+    pub benutzer: BenutzerSicht,
+    pub art: Anmeldeart,
+}
+
+/// Ein Benutzer, wie ihn die Verwaltung sieht.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenutzerSicht {
+    pub oid: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub rolle: Rolle,
+    pub gesperrt: bool,
+    /// Entra-Objekt-Ids der Gruppen aus dem letzten ID-Token.
+    #[serde(default)]
+    pub entra: Vec<String>,
+    /// RFC 3339.
+    pub zuletzt: Option<String>,
+    /// `gueltig` oder `neu_anmelden`.
+    pub token_stand: String,
+    pub geraete: u32,
+}
+
+/// `PUT /admin/benutzer/{oid}`; fehlende Felder bleiben, wie sie sind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BenutzerAendern {
+    #[serde(default)]
+    pub rolle: Option<Rolle>,
+    #[serde(default)]
+    pub gesperrt: Option<bool>,
+    /// Nötig, wenn ein Admin sich selbst die Rolle entzieht.
+    #[serde(default)]
+    pub selbst_bestaetigt: bool,
+}
+
+/// Root-Anmeldung mit E-Mail und Passwort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootAnmelden {
+    pub email: String,
+    pub passwort: String,
+}
+
+/// Ist das Zeitfenster der Ersteinrichtung offen oder zu? (Aufgabe 25)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Einrichtungslage {
+    /// Offen: es gibt noch keinen Root, und die 15 Minuten laufen.
+    Offen,
+    /// Zu: die 15 Minuten nach dem Start sind vorbei (oder zehn Codes falsch).
+    Geschlossen,
+}
+
+/// `GET /auth/stand` (offen, Aufgabe 25): mehr sagt der Server vor der
+/// Anmeldung nicht. `einrichtung` ist `None`, wenn die Frage nicht anwendbar
+/// ist – es gibt bereits einen Root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthStand {
+    /// Gibt es einen Root-Benutzer?
+    pub eingerichtet: bool,
+    /// Nur ohne Root gesetzt.
+    pub einrichtung: Option<Einrichtungslage>,
+    /// Braucht die Einrichtung den Einmal-Code aus dem Server-Log?
+    pub code_noetig: bool,
+    /// Ist Entra eingerichtet („Mit Microsoft anmelden“)?
+    pub entra: bool,
+}
+
+/// `POST /auth/einrichten` (Aufgabe 25): den einen Root anlegen. Der Server
+/// meldet ihn danach gleich an.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Einrichten {
+    pub email: String,
+    pub passwort: String,
+    /// Nur nötig, wenn [`AuthStand::code_noetig`] gilt.
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// Ein Eintrag der Prüfspur (ohne Geheimnisse).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruefspurEintrag {
+    pub zeit: String,
+    pub art: String,
+    pub akteur: String,
+    pub text: String,
+    /// Wie oft dasselbe geschah (Fehlversuche einer Adresse in einer Stunde
+    /// stehen als **ein** Eintrag mit Zähler). Fehlt der Wert, ist es 1.
+    #[serde(default = "eins")]
+    pub anzahl: u32,
+}
+
+fn eins() -> u32 {
+    1
+}
+
+/// Eine in Anmeldungen gesehene Entra-Gruppe (Aufgabe 23).
+///
+/// Der Server legt für jede Id **einmal** eine quiver-Gruppe an; Titel und
+/// Sätze gehören danach dem Admin. `gruppe` fehlt, wenn der Admin sie gelöscht
+/// hat; `aufnehmen` legt sie wieder an.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntraGruppe {
+    pub id: String,
+    /// Titel der quiver-Gruppe, die diese Id trägt (sonst `null`).
+    pub anzeigename: Option<String>,
+    pub zuletzt: String,
+    /// Kennung der quiver-Gruppe, falls es sie gibt.
+    #[serde(default)]
+    pub gruppe: Option<String>,
+    /// Vom Admin gelöscht: bleibt gelöscht, bis er sie wieder aufnimmt.
+    #[serde(default)]
+    pub geloescht: bool,
+    /// Anzeigename aus Entra (Aufgabe 30); nur Anzeige, nie der Schlüssel.
+    #[serde(default)]
+    pub name_entra: Option<String>,
+    /// Wann der Name aus Entra geholt wurde (RFC 3339).
+    #[serde(default)]
+    pub name_entra_am: Option<String>,
+}
+
+/// Rumpf für `PUT /admin/entra-gruppen/{id}` (Aufgabe 23).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EntraGruppeAendern {
+    /// Neuer Titel der quiver-Gruppe (nur wenn es sie gibt).
+    #[serde(default)]
+    pub anzeigename: Option<String>,
+    /// Eine gelöschte Gruppe wieder aufnehmen (neu anlegen, ohne Sätze).
+    #[serde(default)]
+    pub aufnehmen: bool,
+}
+
+/// Stand des Entra-Ausweises (Aufgabe 23): Geheimnis, Zertifikat oder keins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntraAusweis {
+    /// `keine`, `geheimnis` oder `schluessel`.
+    pub art: String,
+    /// RFC 3339; nur bei einem Zertifikat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ablauf: Option<String>,
+    /// Negative Zahl, wenn das Zertifikat schon abgelaufen ist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tage_uebrig: Option<i64>,
+    /// Ab 30 Tagen vor dem Ablauf `true`.
+    pub warnung: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerabdruck: Option<String>,
+    /// Fertiger Warntext für die Verwaltung.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hinweis: Option<String>,
+}
+
+/// `POST /auth/geraet/tausch`: Code plus PKCE-Verifier gegen ein Geräte-Token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeraeteTausch {
+    pub code: String,
+    pub verifier: String,
+    /// Dasselbe Gerät weiterführen, wenn es keinem oder demselben Benutzer gehört.
+    #[serde(default)]
+    pub altes_token: Option<String>,
+}
+
+/// `GET /anmeldearten`: welche Wege bietet dieser Server?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anmeldearten {
+    /// Entra ist eingerichtet (Browser-Anmeldung).
+    pub entra: bool,
+    /// Ein Root-Benutzer ist gesetzt (E-Mail und Passwort).
+    pub root: bool,
+}
+
 /// Fehlerantwort.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fehler {
     pub fehler: String,
+    /// Nur bei Geräte-Antworten gesetzt; ältere Clients ignorieren das Feld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grund: Option<AnmeldeGrund>,
 }
 
 #[cfg(test)]
@@ -166,6 +409,33 @@ mod tests {
                 felder: vec!["pfad".into()]
             }
         );
+    }
+
+    /// Aufgabe 23: Ein alter `EntraGruppe`-Eintrag ohne die neuen Felder wird
+    /// weiter gelesen (beide Seiten sind verträglich).
+    #[test]
+    fn entra_gruppe_ohne_neue_felder_wird_gelesen() {
+        let alt: EntraGruppe = serde_json::from_str(
+            r#"{"id":"id-1","anzeigename":null,"zuletzt":"2026-11-24T00:00:00Z"}"#,
+        )
+        .expect("alter Eintrag");
+        assert_eq!(alt.id, "id-1");
+        assert!(alt.gruppe.is_none());
+        assert!(!alt.geloescht);
+        assert!(alt.name_entra.is_none());
+        assert!(alt.name_entra_am.is_none());
+
+        let stand = EntraAusweis {
+            art: String::from("schluessel"),
+            ablauf: Some(String::from("2026-12-24T00:00:00Z")),
+            tage_uebrig: Some(30),
+            warnung: true,
+            fingerabdruck: Some(String::from("AA:BB")),
+            hinweis: Some(String::from("Bitte erneuern")),
+        };
+        let json = serde_json::to_string(&stand).expect("JSON");
+        assert!(json.contains(r#""art":"schluessel""#));
+        assert!(json.contains(r#""tage_uebrig":30"#));
     }
 
     /// Ein Wert, den diese Fassung nicht kennt, wird **nicht** abgelehnt: die

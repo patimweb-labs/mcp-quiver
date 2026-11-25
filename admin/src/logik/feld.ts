@@ -11,6 +11,7 @@ export const FELD_ARTEN: { value: string; label: string }[] = [
   { value: "zahl", label: "Zahl" },
   { value: "schalter", label: "Schalter" },
   { value: "url", label: "Adresse" },
+  { value: "ordner", label: "Ordner" },
   { value: "auswahl", label: "Auswahl" },
 ];
 
@@ -54,6 +55,7 @@ export function feld_art_aus_name(name: string, alt: FeldArt): FeldArt {
     case "zahl":
     case "schalter":
     case "url":
+    case "ordner":
       return name;
     default:
       return "text";

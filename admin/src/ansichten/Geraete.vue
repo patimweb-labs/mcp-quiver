@@ -13,7 +13,7 @@ import {
 import { WpButton, WpDialog } from "@weppelmann/components";
 import { tief_kopie } from "../logik/kopie";
 
-import { fehlertext, type Client } from "../api/client";
+import { fehlertext, anmeldearten, type Client } from "../api/client";
 import type { Eintrag, GeraetStand, Gruppe } from "../api/typen";
 import Karte from "../bausteine/Karte.vue";
 import Klappknopf from "../bausteine/Klappknopf.vue";
@@ -21,6 +21,8 @@ import Leer from "../bausteine/Leer.vue";
 import Seitenkopf from "../bausteine/Seitenkopf.vue";
 import Status from "../bausteine/Status.vue";
 import {
+  besitzer_hinweis,
+  besitzer_text,
   geraet_name,
   gruppen_namen,
   revision_kurz,
@@ -42,6 +44,8 @@ interface Daten {
   geraete: GeraetStand[];
   gruppen: Gruppe[];
   titel: Map<string, string>;
+  /** Ist Entra eingerichtet? Dann gibt es keine Einmal-Codes. */
+  entra: boolean;
 }
 
 const zustand = shallowRef<Zustand<Daten>>(laedt());
@@ -62,13 +66,24 @@ const gruppenListe = computed(() =>
   zustand.value.art === "fertig" ? zustand.value.daten.gruppen : [],
 );
 
+/** Einmal-Codes gibt es nur, solange kein Entra eingerichtet ist (ADR 0002). */
+const codesMoeglich = computed(
+  () => zustand.value.art === "fertig" && !zustand.value.daten.entra,
+);
+
+/** Mit Entra meldet sich der Benutzer selbst am Gerät an. */
+const entraAktiv = computed(
+  () => zustand.value.art === "fertig" && zustand.value.daten.entra,
+);
+
 async function laden(): Promise<void> {
   zustand.value = laedt();
   try {
-    const [geraete, gruppen, eintraege] = await Promise.all([
+    const [geraete, gruppen, eintraege, arten] = await Promise.all([
       props.client.geraete(),
       props.client.gruppen(),
       props.client.eintraege(),
+      anmeldearten(),
     ]);
     zustand.value = fertig({
       geraete: [...geraete].sort((a, b) =>
@@ -78,6 +93,7 @@ async function laden(): Promise<void> {
       ),
       gruppen,
       titel: titel_map(eintraege),
+      entra: arten.entra,
     });
   } catch (fehlerWert) {
     zustand.value = fehler(fehlertext(fehlerWert));
@@ -173,11 +189,16 @@ onMounted(laden);
   <div class="seite">
     <Seitenkopf
       titel="Geräte"
-      unter="Stand je Gerät, Gruppen und Zugang über Einmal-Codes."
+      :unter="
+        entraAktiv
+          ? 'Stand je Gerät, Gruppen und Besitzer.'
+          : 'Stand je Gerät, Gruppen und Zugang über Einmal-Codes.'
+      "
     />
 
     <div class="werkzeuge">
       <WpButton
+        v-if="codesMoeglich"
         label="Gerät einbinden"
         variant="primary"
         :icon="KeyRound"
@@ -190,6 +211,32 @@ onMounted(laden);
       <Status ton="gut" :text="meldung" />
     </p>
     <p v-if="aktionsfehler" class="fehler" role="alert">{{ aktionsfehler }}</p>
+
+    <Karte
+      v-if="entraAktiv"
+      titel="So meldet sich der Benutzer am Gerät an"
+      unter="Mit Entra gibt es keine Einmal-Codes; jedes Gerät gehört einem Benutzer."
+    >
+      <ol class="schritte">
+        <li>Der Benutzer öffnet den Client auf dem Gerät und wählt „Verbindung“.</li>
+        <li>
+          Dort steht „Mit Microsoft anmelden“: Der Browser öffnet die Anmeldung
+          des Servers.
+        </li>
+        <li>
+          Nach der Anmeldung zeigt der Server Konto, Gerät und Server; „Gerät
+          anmelden“ schließt die Bestätigung ab.
+        </li>
+        <li>
+          Der Browser kehrt zum Client zurück. Die Gruppen kommen aus Entra;
+          die Tools erscheinen beim nächsten Abgleich.
+        </li>
+      </ol>
+      <p class="blass">
+        Wer in keiner Entra-Gruppe ist, bekommt keine Tools. Das Gerät steht
+        danach hier.
+      </p>
+    </Karte>
 
     <template v-if="zustand.art === 'laedt'">
       <Leer titel="Lädt …" erklaerung="Geräte, Gruppen und Einträge werden geholt." />
@@ -204,10 +251,15 @@ onMounted(laden);
     <template v-else-if="zustand.daten.geraete.length === 0">
       <Leer
         titel="Noch keine Geräte"
-        erklaerung="Ein Gerät bindet sich mit einem Einmal-Code an den Server."
+        :erklaerung="
+          zustand.daten.entra
+            ? 'Geräte melden sich selbst an: Der Benutzer öffnet den Client und meldet sich mit Microsoft an.'
+            : 'Ein Gerät bindet sich mit einem Einmal-Code an den Server.'
+        "
       >
         <template #aktion>
           <WpButton
+            v-if="!zustand.daten.entra"
             label="Gerät einbinden"
             variant="primary"
             :icon="KeyRound"
@@ -223,6 +275,7 @@ onMounted(laden);
           <thead>
             <tr>
               <th scope="col">Name</th>
+              <th scope="col">Besitzer</th>
               <th scope="col">Gruppen</th>
               <th scope="col">Verbunden</th>
               <th scope="col">Zuletzt gesehen</th>
@@ -245,6 +298,11 @@ onMounted(laden);
                   </Klappknopf>
                   <p class="mono blass">{{ stand.geraet.id }}</p>
                 </td>
+                <td>
+                  <span :title="besitzer_hinweis(stand) ?? undefined">
+                    {{ besitzer_text(stand) }}
+                  </span>
+                </td>
                 <td>{{ gruppen_anzeige(stand) }}</td>
                 <td>
                   <Status
@@ -261,7 +319,7 @@ onMounted(laden);
               </tr>
 
               <tr v-if="offen === stand.geraet.id" :id="`geraet-detail-${i}`">
-                <td colspan="5">
+                <td colspan="6">
                   <div class="detail">
                     <div class="detail__kopf">
                       <WpButton
@@ -353,9 +411,11 @@ onMounted(laden);
       :gruppen="gruppenListe"
       :client="client"
       @gespeichert="gespeichert"
+      @neuladen="laden"
     />
 
     <EinbindenDialog
+      v-if="codesMoeglich"
       v-model:offen="einbindenOffen"
       :gruppen="gruppenListe"
       :client="client"
@@ -433,5 +493,17 @@ onMounted(laden);
 
 .tabelle--innen {
   margin-top: var(--wp-space-1);
+}
+
+.schritte {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-1);
+  margin: 0;
+  padding-left: var(--wp-space-4);
+}
+
+.schritte li::marker {
+  color: var(--wp-color-accent-default);
 }
 </style>

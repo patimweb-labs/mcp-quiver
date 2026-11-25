@@ -23,10 +23,16 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Im Dev-Modus geht `/api` an den Server; im Betrieb liefert der Server
-    // `admin/dist` selbst aus (gleiche Herkunft, kein CORS).
+    // Im Dev-Modus gehen `/api` **und** `/auth` an den Server; im Betrieb
+    // liefert der Server `admin/dist` selbst aus (gleiche Herkunft, kein CORS).
+    // `/auth` trägt die Anmeldung (Cookie, Microsoft-Weiterleitung,
+    // Ersteinrichtung) und liegt auf derselben Wurzel wie die Seite.
     proxy: {
       "/api": {
+        target: "http://127.0.0.1:8740",
+        changeOrigin: false,
+      },
+      "/auth": {
         target: "http://127.0.0.1:8740",
         changeOrigin: false,
       },

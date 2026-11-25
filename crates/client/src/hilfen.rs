@@ -77,6 +77,18 @@ pub fn kennung_erzeugen() -> String {
     hex::encode(zufall(8))
 }
 
+/// Zufälliger base64url-Wert ohne Auffüllzeichen (PKCE, `zustand`).
+pub fn zufall_b64(anzahl: usize) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(zufall(anzahl))
+}
+
+/// PKCE-S256-Challenge zu einem Verifier (43 Zeichen base64url).
+pub fn s256(verifier: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
 /// Was von einem Token gespeichert wird.
 pub fn hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
@@ -108,6 +120,20 @@ mod tests {
         assert_ne!(token_erzeugen(), token_erzeugen());
         assert_eq!(token_erzeugen().len(), 64);
         assert_eq!(kennung_erzeugen().len(), 16);
+    }
+
+    /// PKCE: 32 Byte ergeben 43 Zeichen base64url; die Challenge ist S256.
+    #[test]
+    fn pkce_hat_die_verlangte_form() {
+        let verifier = zufall_b64(32);
+        assert_eq!(verifier.len(), 43);
+        assert!(verifier
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+        let challenge = s256(&verifier);
+        assert_eq!(challenge.len(), 43);
+        assert_ne!(challenge, verifier);
+        assert_eq!(challenge, s256(&verifier), "S256 ist stabil");
     }
 
     #[tokio::test]

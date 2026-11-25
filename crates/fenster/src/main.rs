@@ -20,11 +20,12 @@ use std::sync::mpsc;
 use eframe::egui;
 use quiver_client::{Kern, KernKonfig};
 use quiver_fenster::app::{Fenster, KernZugang};
+use quiver_fenster::ende::{EndeFahne, EndeGrund};
 use quiver_fenster::kern::EchterKern;
 use quiver_fenster::modell::Sicht;
 use quiver_fenster::profil::Einstellungen;
 use quiver_fenster::tray::{self, Tray, TrayZustand};
-use quiver_fenster::{autostart, instanz, logik};
+use quiver_fenster::{autostart, ende, instanz, logik};
 
 fn main() -> anyhow::Result<()> {
     einrichten_log();
@@ -33,11 +34,11 @@ fn main() -> anyhow::Result<()> {
     if argumente.kopflos {
         return kopflos(konfig);
     }
-    // Nur eine Instanz je Gerät: Läuft schon eine, zeigt sie ihr Fenster und
-    // dieser Start endet. Der Kern bliebe sonst am belegten Port hängen.
-    let fensteradresse = instanz::adresse(konfig.mcp_adresse);
-    if instanz::zeigen_anfordern(fensteradresse).is_ok() {
-        tracing::info!("quiver läuft schon — Fenster der laufenden Instanz geöffnet.");
+    // Nur eine Instanz je Profil (Paket 3): Läuft schon eine, zeigt sie ihr
+    // Fenster und dieser Start endet. Erkannt wird sie an der Sperrdatei im
+    // Profil; der Port darin ist nur zum Zeigen da.
+    if instanz::zeigen_anfordern(&konfig.profil).is_ok() {
+        EndeGrund::ZweiteInstanz.protokollieren();
         return Ok(());
     }
     fenster(konfig, argumente.hintergrund)
@@ -83,10 +84,9 @@ fn kopflos(konfig: KernKonfig) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let kern = laufzeit.block_on(Kern::starten(konfig))?;
-    tracing::info!("quiver läuft ohne Fenster — Strg+C beendet.");
-    laufzeit.block_on(async {
-        let _ = tokio::signal::ctrl_c().await;
-    });
+    tracing::info!("quiver läuft ohne Fenster — Strg+C oder SIGTERM beendet.");
+    let grund = laufzeit.block_on(ende::warte_auf_signal());
+    grund.protokollieren();
     laufzeit.block_on(kern.beenden());
     Ok(())
 }
@@ -102,16 +102,16 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
     // einer zweiten Instanz, das Fenster zu zeigen.
     let (befehl_sender, befehl_empfaenger) = mpsc::channel();
     let zustand = TrayZustand::neu(befehl_sender);
-    let waechter =
-        match instanz::Waechter::belegen(instanz::adresse(konfig.mcp_adresse), zustand.clone()) {
-            Ok(waechter) => Some(waechter),
-            Err(fehler) => {
-                // Der Port ist besetzt, antwortet aber nicht — dann läuft keine
-                // Instanz, die das Fenster zeigen könnte; quiver startet trotzdem.
-                tracing::warn!("kein Wächter für die zweite Instanz: {fehler}");
-                None
-            }
-        };
+    let waechter = match instanz::Waechter::belegen(&konfig.profil, zustand.clone()) {
+        Ok(waechter) => Some(waechter),
+        Err(fehler) => {
+            // Die Sperrdatei ist besetzt, antwortet aber nicht — dann läuft
+            // keine Instanz, die das Fenster zeigen könnte; quiver startet
+            // trotzdem.
+            tracing::warn!("kein Wächter für die zweite Instanz: {fehler}");
+            None
+        }
+    };
     // Der Wächter lebt bis zum Ende von `fenster()`; sein Faden horcht im
     // Hintergrund weiter auf „Fenster zeigen".
     if let Some(waechter) = &waechter {
@@ -121,6 +121,7 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
     let kern = EchterKern::starten(konfig)?;
     let mut sicht = Sicht::neu(kern.modell(), &einstellungen);
     sicht.autostart = autostart::aktiv();
+    let ende_fahne = EndeFahne::neu();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("mcp-quiver")
@@ -128,9 +129,14 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
         .with_inner_size([1000.0, 720.0])
         .with_min_inner_size([560.0, 460.0]);
     // Das App-Icon (Fensterkopf, Taskleiste, Dock beim Start aus dem Terminal).
-    match eframe::icon_data::from_png_bytes(include_bytes!(
-        "../../../assets/marke/quiver-dunkel-256.png"
-    )) {
+    // Im Dock zeichnet macOS das Bild randlos; Apples Raster lässt der Kachel
+    // 824 von 1024. Ohne den Rand wäre quiver größer als alle anderen.
+    let app_icon: &[u8] = if cfg!(target_os = "macos") {
+        include_bytes!("../../../assets/marke/quiver-dock.png")
+    } else {
+        include_bytes!("../../../assets/marke/quiver-dunkel-256.png")
+    };
+    match eframe::icon_data::from_png_bytes(app_icon) {
         Ok(icon) => viewport = viewport.with_icon(std::sync::Arc::new(icon)),
         Err(fehler) => tracing::warn!("App-Icon nicht lesbar: {fehler}"),
     }
@@ -162,9 +168,13 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
                 tracing::warn!("kein Tray — das Fenster ist der einzige Weg zu quiver.");
                 tray::zeigen(&cc.egui_ctx);
             }
+            // Signale (Strg+C, SIGTERM) beenden geordnet und stehen mit
+            // Ursache im Protokoll.
+            ende::signal_faden(cc.egui_ctx.clone(), ende_fahne.clone(), kern.anhalter());
             let fenster = Fenster::neu(kern, sicht, Some(profil))
                 .mit_autostart(Box::new(autostart::setzen))
-                .mit_tray(tray, befehl_empfaenger);
+                .mit_tray(tray, befehl_empfaenger)
+                .mit_ende(ende_fahne.clone());
             Ok(Box::new(fenster))
         }),
     )

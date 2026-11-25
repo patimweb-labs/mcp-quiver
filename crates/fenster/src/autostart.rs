@@ -79,10 +79,13 @@ pub fn aktiv() -> bool {
 }
 
 /// Autostart ein- oder ausschalten.
+///
+/// Auf Windows steht der Eintrag in der Registry, sonst in einer Datei;
+/// deshalb ein Block je Plattform statt eines `return` dazwischen.
 pub fn setzen(an: bool) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        return windows::setzen(an);
+        windows::setzen(an)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -192,9 +195,7 @@ mod windows {
     }
 
     pub fn aktiv() -> bool {
-        key()
-            .and_then(|key| Ok(key.get_value::<String, _>(WERT).is_ok()))
-            .unwrap_or(false)
+        key().is_ok_and(|key| key.get_value::<String, _>(WERT).is_ok())
     }
 
     pub fn setzen(an: bool) -> anyhow::Result<()> {
@@ -222,8 +223,10 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Systemzeit nach 1970")
             .as_nanos();
+        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let pfad = std::env::temp_dir().join(format!(
-            "quiver-autostart-{}-{tag}-{stempel}",
+            "quiver-autostart-{}-{tag}-{stempel}-{nummer}",
             std::process::id()
         ));
         std::fs::create_dir_all(&pfad).expect("Ordner");

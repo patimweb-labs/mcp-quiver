@@ -1,12 +1,15 @@
 # SPEC – mcp-quiver
 
 > Stand: Entwurf 0, 2026-11-23. Jede Festlegung mit Begründung und Preis.
-> Offene Punkte stehen in §11 und werden als ADR in `docs/adr/` entschieden.
+> Offene Punkte stehen in §12 und werden als ADR in `docs/adr/` entschieden.
 
 ## 0. MVP (Stand 2026-11-23)
 
 Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
 
+- Der Weg ohne Azure bleibt vollständig: Gruppen liegen lokal auf dem Server,
+  Geräte binden sich mit Einmal-Codes ein. Aufgabe 20 ergänzt den zweiten Weg
+  über Entra ID; er ist optional und ändert den Code-Weg nicht.
 - Gruppen liegen lokal auf dem Server (Admin-Oberfläche), nicht in Entra ID.
 - Geräte binden sich mit einem Einmal-Code ein, den der Admin erzeugt (legt die Gruppen fest).
   Der Code gilt einmal – befristet (Minuten) oder ohne Ablauf, bis ein Gerät ihn einlöst.
@@ -15,7 +18,8 @@ Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
   läuft beim Start nicht an. Lehnt der Server das Gerät ab (401/403 – entfernt oder
   gesperrt), stoppt der Client alle Tools, verwirft das Geräte-Token und bittet ums
   Neu-Einbinden. Der Ereignis-Strom eines entfernten Geräts endet sofort.
-- Admin meldet sich mit einem Admin-Token an.
+- Die Verwaltung meldet sich mit einer Sitzung an (Root per E-Mail/Passwort oder
+  Entra mit Rolle `admin`); einen Admin-Token gibt es seit Aufgabe 20 nicht mehr.
 - Laufzeiten im MVP: `stdio` (eigene Binaries, `npx`, `uvx`, `docker`) und `remote`. WASM folgt.
 - **Abnahmekriterium:** Ein zugewiesenes MCP ist höchstens 5 s später beim Agenten nutzbar
   (Server meldet per SSE, Client gleicht ab und startet, Agenten bekommen `tools/list_changed`).
@@ -55,7 +59,7 @@ Das Datenmodell lässt Platz für `ausfuehrung = zentral` (später, eigenes ADR)
 ## 3. Ablauf
 
 ```
-1. Gerät einbinden   Client → Server: Entra-Login (User) + Geräteschlüssel
+1. Gerät einbinden   Client → Browser → Server: Entra-Login, Einmal-Code → Geräte-Token
 2. Soll berechnen    Server: Gruppen des Users → Sätze → Einträge + Werte
 3. Abgleich          Client: Soll vs. Ist → installieren / aktualisieren / entfernen
 4. Vervollständigen  Client fragt nur fehlende client-/geheim-Felder ab
@@ -140,16 +144,144 @@ Sicherung nicht mehr heran; ohne Passwort ist die Datei offen lesbar.
 1. **Agent → Client:** Der Client lauscht nur lokal. Jeder Agent bekommt beim
    Koppeln im Client-Fenster ein eigenes Token. So weiß der Client, welcher
    Agent fragt, und kann Tools pro Agent filtern.
-2. **Client → Server:** Entra-Login des Users (OAuth mit PKCE) plus ein
-   Geräteschlüssel (Ed25519), der beim Einbinden registriert wird. Geräte
-   lassen sich in der Admin-Oberfläche sperren.
-3. **Tool → Dienst:** Für Microsoft holt der Client Tokens für die Scopes des
+2. **Client → Server, mit Entra:** Der **Server** ist der einzige OIDC-Client
+   (eine Anwendung, ein Mandant, Authorization Code + PKCE; Client-Geheimnis
+   **oder** Zertifikat nur am Server, Aufgabe 23). Der Client spricht nie mit
+   Entra: er öffnet die Anmeldung des Servers im Browser, bekommt über
+   `127.0.0.1` einen Einmal-Code und tauscht ihn mit seinem PKCE-Verifier
+   gegen ein Geräte-Token. Identität ist `(tid, oid)`; E-Mail und Name sind
+   nur Anzeige. Gruppen kommen als Objekt-Ids aus dem ID-Token; jede gesehene
+   Id legt **einmal** eine lokale Gruppe an (ohne Sätze), Titel und Sätze
+   gehören dem Admin.
+3. **Client → Server, ohne Entra:** Einmal-Code aus der Verwaltung. Beide Wege
+   enden in derselben Gerätebindung; Geräte lassen sich sperren.
+   **Client-Anmeldung (Aufgabe 22):** Die Verbindungsseite fragt zuerst nur die
+   Adresse (`https`; `http` nur Loopback), merkt sie sich über das Abmelden
+   hinaus und fragt hinter „Weiter“ `GET /api/v1/anmeldearten`. Danach zeigt sie
+   **entweder** „Mit Microsoft anmelden“ **oder** das Code-Feld, nie beides.
+   Der Browser-Lauscher liegt nur auf `127.0.0.1`, Pfad `/quiver`, freier Port,
+   fünf Minuten, genau eine Antwort; `zustand` wird in konstanter Zeit
+   verglichen, der Code mit dem eigenen PKCE-Verifier getauscht. Ein vorhandenes
+   Geräte-Token geht als `altes_token` mit (dasselbe Gerät bleibt).
+4. **Verwaltung:** Root (genau einer, E-Mail und Passwort, Argon2id) wird bei
+   der **Ersteinrichtung im Browser** angelegt (`POST /auth/einrichten`), sonst
+   über die Kommandozeile; Entra-Benutzer mit Rolle `admin`. Sitzung als
+   HttpOnly-Cookie, 12 h absolut, 60 min ohne Nutzung. Ändernde Anfragen
+   brauchen `Origin` = Basis-URL **und** `X-Quiver: 1`; keine CORS-Freigabe.
+   Rechte werden bei jeder Anfrage frisch aus der Datenbank gelesen. Einen
+   Admin-Schlüssel gibt es nicht mehr.
+5. **Nachprüfen statt einmal glauben:** Das Refresh-Token jedes Benutzers liegt
+   verschlüsselt am Server (XChaCha20-Poly1305, Schlüssel `<daten>/schluessel`,
+   AAD `(tid, oid)`) und wird stündlich mit Streuung eingelöst, beim Verbinden
+   eines Geräts nach mehr als 60 Minuten und auf Knopf. Rotation wird sofort
+   gespeichert. `invalid_grant`/`interaction_required`/fehlende Zuweisung →
+   neu anmelden; Netz-/5xx-Fehler → letzter Stand, höchstens 24 h.
+6. **Tool → Dienst:** Für Microsoft holt der Client Tokens für die Scopes des
    Eintrags (`entra-delegiert`) mit dem Login des Users. Microsoft prüft die
    Rechte, nicht wir. Das Tool bekommt das Token pro Aufruf und speichert es
    nicht.
+7. **Ersteinrichtung (Aufgabe 25):** Gibt es keinen Root, zeigt die Verwaltung
+   statt der Anmeldung die Ersteinrichtung. `GET /auth/stand` (offen) sagt nur
+   `{ eingerichtet, einrichtung, code_noetig, entra }`. `POST /auth/einrichten`
+   legt **genau einen** Root an (eine Transaktion mit Prüfung „kein Root“:
+   gleichzeitige Aufrufe ergeben einmal 200 und sonst 409), meldet ihn an und
+   löscht `<daten>/admin-token`; danach antwortet der Weg mit 404. Das Fenster
+   ist **15 Minuten nach dem Start** offen und hängt an der Laufzeit des
+   Prozesses, nicht an der Wanduhr. Ist die Basis-URL nicht Loopback, ist ein
+   Einmal-Code Pflicht (128 Bit, nur gehasht im Speicher, genau einmal im
+   eigenen Log, konstante Zeit, nach zehn Fehlversuchen geschlossen). `Host`
+   und `Origin` müssen exakt die Basis-URL sein, dazu `X-Quiver: 1`. Vor der
+   Einrichtung ist die Admin-API ganz gesperrt; Geräte laufen weiter. Ohne
+   `QUIVER_OEFFENTLICH` gilt `http://localhost:<Port>`.
+8. **Sitzungen folgen dem Benutzer (Aufgabe 26):** Die Wachen prüfen bei
+   Entra-Benutzern auch `token_stand`; `neu_anmelden`, gesperrt oder gelöscht
+   beendet **alle** Sitzungen des Benutzers sofort (löschen, nicht nur
+   ablehnen). Ist die letzte Nachprüfung länger als 60 Minuten her, prüft die
+   Wache vor dem Durchlassen nach. Die Discovery gilt höchstens 24 Stunden;
+   schlägt das Neuholen fehl, gilt der alte Stand weiter (Warnung im Log).
+9. **Seiten des Servers (Aufgabe 26):** Bestätigung und Fehler sind eigene
+   Seiten mit eigenem Stylesheet (`/auth/stil.css` aus denselben Tokens, dunkel
+   als Vorgabe, hell über `prefers-color-scheme`), Logo und Hand-Cursor; Titel
+   und Texte deutsch oder englisch nach `Accept-Language`. `Referrer-Policy`
+   ist `same-origin` – mit `no-referrer` schickt der Browser beim Formular
+   `Origin: null`, und die Bestätigung scheitert. Nur die Bestätigungsseite
+   bekommt `form-action 'self' http://127.0.0.1:<Port>` mit genau dem Port des
+   Vorgangs, weil Chrome auch die Weiterleitung nach dem Absenden prüft.
+
+10. **Zertifikat statt Geheimnis (Aufgabe 23):** Der Server weist sich bei
+    Entra wahlweise mit `private_key_jwt` aus: PS256, Kopf `x5t#S256`, `aud` =
+    Token-Endpunkt, `iss` = `sub` = Client-Id, zufällige `jti`, `nbf`/`exp`
+    höchstens fünf Minuten; je Anfrage neu, bei Code-Einlösung und Refresh.
+    Konfiguriert ist **genau eins** von Schlüssel und Geheimnis; beides oder
+    eine Lücke verhindert den Start. Der Unterbefehl `entra-schluessel` erzeugt
+    RSA 3072 und ein selbst signiertes Zertifikat (ein Jahr), legt den privaten
+    Schlüssel mit 0600 an, überschreibt nie und gibt nur das öffentliche
+    Zertifikat, Fingerabdruck und Ablauf aus. `--erneuern` legt einen zweiten
+    an, `--umschalten` macht ihn ohne Neustart und ohne Ausfall aktiv. Ab 30
+    Tagen vor dem Ablauf wird im Log, in der Verwaltung und in der Prüfspur
+    gewarnt (je Tag einmal). Der Schlüssel erscheint nie in Log, Fehler,
+    Antwort, Prüfspur oder `Debug`.
+11. **Gruppen aus Entra (Aufgabe 23):** Höchstens 200; jede Id einmal, ohne
+    Sätze; Titel und Sätze gehören danach dem Admin und werden nie
+    überschrieben. Löscht der Admin eine solche Gruppe, bleibt sie gelöscht
+    (Id gemerkt), bis er sie wieder aufnimmt. Mitgliedschaften pflegt nur
+    Entra: Anmeldung und jede Nachprüfung ersetzen sie, auch das Entfernen,
+    und wirken sofort auf verbundene Geräte.
+12. **Namen der Entra-Gruppen (Aufgabe 30):** Rechte laufen weiter **nur** über
+    die Objekt-Id; der Name ist Anzeige. Nur mit `QUIVER_ENTRA_GRUPPENNAMEN=an`
+    (Standard `aus`, jeder andere Wert ist ein Startfehler) kommt
+    `https://graph.microsoft.com/GroupMember.Read.All` zu den Bereichen von
+    Anmeldung **und** Refresh – ohne Zustimmung des Mandanten scheiterte sonst
+    jede Anmeldung. Für die Gruppen aus dem ID-Token, deren Name fehlt oder
+    älter als 24 h ist, holt der Server im Hintergrund `displayName`
+    (`GET /v1.0/groups/{id}`; höchstens 20 je Lauf, 4 gleichzeitig, 5 s je
+    Anfrage, 64 KB, keine Weiterleitungen, Host fest – Loopback nur in Tests
+    über `QUIVER_ENTRA_GRAPH`) mit dem Zugriffstoken **dieses** Benutzers. Das
+    Zugriffstoken lebt nur in diesem Lauf: nie in der Datenbank, im Log, in
+    `Debug` oder in der Prüfspur. Anmeldung und Nachprüfen warten nie darauf,
+    ein Fehler ändert nichts (Log höchstens stündlich), ein 403 pausiert einen
+    Tag. Der Titel der quiver-Gruppe folgt dem Namen nur, solange er der
+    automatische („Entra-Gruppe xxxxxxxx“) oder der zuletzt übernommene ist;
+    einen Titel des Admins überschreibt der Server nie, und jede Übernahme
+    steht in der Prüfspur. Die Verwaltung zeigt den Titel, klein darunter
+    „Entra: <Name>“, wenn beide abweichen; die Id steht nur im Hinweis und in
+    den Einzelheiten.
 
 **Festlegung:** Zugangsdaten werden nie als Umgebungsvariable oder Datei
-abgelegt, die ein Agent lesen könnte.
+abgelegt, die ein Agent lesen könnte. Fehler an ein Gerät tragen einen
+maschinenlesbaren `grund` (`gesperrt`, `neu-anmelden`, `kein-zugriff`);
+unbekannte Gründe gelten als `neu-anmelden`. Daraus folgt im Client:
+`gesperrt`/`kein-zugriff` → alle Tools aus, Token weg, klare Meldung;
+`neu-anmelden`/unbekannt → alle Tools aus, **Geräte-Token und alle Angaben
+bleiben**, Knopf „Erneut anmelden“ und Hinweis im Tray; 401 (Token ungültig
+oder Gerät entfernt) → wie bisher neu einbinden, lokale Angaben bleiben.
+„Abmelden“ löscht das Gerät **am Server** (`POST /api/v1/geraet/abmelden`) und
+behält Adresse und Angaben; ist der Server nicht erreichbar, sagt der Client
+das, meldet lokal aber trotzdem ab. Jedes Ende des Clients steht mit Ursache im
+Log (Tray, Fenster, Cmd+Q, Strg+C, SIGTERM, zweite Instanz, Systemabmelden);
+Cmd+Q und das Schließen legen nur in den Tray, beendet wird über das Tray.
+Agenten können keine Anmeldung, kein Abmelden und kein Beenden auslösen.
+
+*Preis:* Die Anmeldung ist ein zusätzlicher Zustand im Client (Adresse,
+Anmeldewege, Browser warten, neu anmelden, Fehler), und ein laufender
+Browser-Vorgang hält einen Port auf `127.0.0.1` fünf Minuten offen. Der Client
+muss den Server nach `neu-anmelden` fragen, bevor er das Token wegwirft — das
+kostet einen Weg, verhindert aber, dass eine Gruppe oder ein Zertifikat
+versehentlich alle lokalen Angaben mitnimmt. Der Server ist nun auch
+Identity-Provider-Abhängigkeit: ohne Entra
+gilt der letzte Stand höchstens 24 h. Ein Gruppen-Überlauf im Token wird
+abgelehnt statt als „keine Gruppen“ gelesen. Ein selbst signiertes Zertifikat
+muss der Betreiber vor dem Ablauf erneuern; der Server warnt 30 Tage vorher,
+aber erneuern kann er es nicht von selbst. Ein zweiter Leserecht-Grad
+(Graph) ist eine zusätzliche Zustimmung des Mandanten; ohne sie bleibt der
+Schalter aus, und in der Verwaltung steht dann nur der automatische Titel. Die
+Seiten des Servers sind
+schmucklos (kein Inline-Skript, keine Inline-Stile), damit die CSP ohne
+Ausnahme gilt; sie tragen dieselben Tokens wie Verwaltung und Client, aber
+nicht deren Bausteine. Die Ersteinrichtung ist ein Weg, der nur in den ersten
+15 Minuten eines Serverlaufs offen ist – wer sie verpasst, startet neu. Der
+Einmal-Code für Nicht-Loopback steht im Log; wer das Log lesen darf, kann den
+Server übernehmen, und genau das ist gewollt (Aufgabe 25).
 
 ## 8. Laufzeiten im Client
 
@@ -161,6 +293,38 @@ abgelegt, die ein Agent lesen könnte.
 | `remote` | entfernte MCP-Server über HTTP | Client fügt Zugangsdaten ein |
 
 Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
+
+### Grenzen im Client (Paket 3)
+
+Ein Eintrag ist fremder Code und ein Agent ist ein fremder Aufrufer. Beides
+bekommt im Client feste Grenzen; sie stehen an einer Stelle und sind getestet:
+
+| Was | Grenze |
+|---|---|
+| ein Werkzeugaufruf | 120 s ohne Lebenszeichen, je Eintrag 1–900 s; Fortschrittsmeldungen verlängern, mehr als 15 min nie |
+| Abbruch | bricht der Agent ab, endet auch der Aufruf beim Tool |
+| Antwort eines Aufrufs | 8 MB, sonst Fehler mit klarem Text |
+| gleichzeitig | 32 Aufrufe insgesamt, 8 je Eintrag, darüber sofort „ausgelastet“ |
+| Prozessausgaben | Zeile 8 KB Puffer und 2000 Zeichen, 200 Zeilen je Minute und Eintrag auf die Platte, Tagesdatei 10 MB – geprüft **vor** dem Schreiben |
+| Meldung des Tools (stdio) | 16 MB; darüber startet der Eintrag neu (gezählt, mit Pause) |
+| Werkzeugliste | 500 Werkzeuge, Name ≤ 128 aus `[A-Za-z0-9_.-]`, Beschreibung ≤ 4000 Zeichen, Schema ≤ 64 KB, ohne Steuer- und Richtungszeichen |
+| `list_changed` | höchstens einmal je Sekunde an die Agenten |
+| Kennung eines Eintrags | `[a-z0-9-]{1,40}`, kein `__`, nicht `quiver`; sonst startet der Eintrag nicht und das Fenster nennt den Grund |
+| Netz | Verbinden 10 s, Antwort 30 s, Strom 60 s ohne Byte, Antwort ≤ 4 MB (Soll 8 MB), Ereigniszeile ≤ 64 KB, keine Weiterleitungen |
+| Sitzungen am Endpunkt | höchstens 64, ohne Nutzung nach 10 Minuten abgelaufen („verbunden“ folgt daraus) |
+| Herkunft am Endpunkt | mit `Origin` nur von Loopback, `Host` nur der eigene Port, ohne `Origin` erlaubt (CLI-Agent) |
+| Umgebung eines Werkzeugs | Whitelist (PATH, HOME, USER, LANG, LC_*, TZ, TMPDIR, Proxy, Plattform-nötiges) plus die Werte des Eintrags |
+| Soll-Abgleich | zusätzlich alle 5 Minuten ± Streuung, unabhängig vom Ereignis-Strom |
+| Tresor | ein Lesezugriff je Abgleich, in `spawn_blocking`, Sperre mit Frist; fehlt der Schlüssel, wird **kein** neuer erzeugt; ein kaputter Tresor verhindert den Start nicht (`Neu beginnen` mit Rückfrage, alte Dateien bleiben als `.kaputt-<zeit>`) |
+| gespeicherter Stand | Zwischendatei mit PID und Zufall, `fsync` für Datei und Ordner; unlesbar → `.kaputt-<zeit>` und Hinweis im Fenster; eine Sperrdatei verhindert den zweiten Kern auf demselben Profil |
+| zweite Instanz | Sperrdatei im Profil (der Port darin ist nur zum Zeigen, frei gewählt); je Verbindung 500 ms, höchstens 8 |
+| Einrichtung | Frist 15 Minuten, „Abbrechen“ beendet den Prozess, beim Beenden wird aufgeräumt |
+| Agent koppeln | kein Befehl trägt das Token als Argument (die Shell liest es verdeckt ein); die Zwischenablage wird nach 60 s geleert, solange sie den Wert noch enthält |
+| Import | Datei ≤ 8 MB, geprüfte Kennungen und Mengen, der Rest „übersprungen“; die Maße des Schlüssel-Ableiters aus der Datei werden begrenzt |
+
+**Bewusste Grenze:** Ein Tool läuft mit dem Konto des Benutzers und könnte den
+Tresor lesen. Der Client kann das nicht verhindern; der Schutz sind geprüfte,
+signierte Pakete und die Freigabe durch den Admin (Abschnitt 4).
 
 ## 9. Oberfläche
 
@@ -224,9 +388,11 @@ Antwort. Dazu kommen die stderr-Zeilen jedes stdio-Eintrags, je Eintrag.
   3). Eine zentrale Auswertung wäre ein eigener Entwurf (Zustimmung, Aufbewahrung,
   Zugriff) und ist nicht Teil des MVP.
 - **Festlegung: maskiert.** Schlüssel mit `pass`, `token`, `secret`, `key`,
-  `pat`, `auth` oder `cookie` im Namen bekommen `<verborgen>`; jeder Wert aus dem
-  Tresor wird ersetzt, auch als Teilstring. Kürzen: 200 Zeichen je Wert, 4 KB
-  Argumente, 500 Zeichen Vorschau, 2000 Zeichen Fehlertext.
+  `pat` (nur als Wort, nicht in `path`), `auth` oder `cookie` im Namen bekommen
+  `<verborgen>`; jeder Wert aus dem Tresor wird ersetzt – ab sechs Zeichen auch
+  als Teilstring und zusätzlich in Base64- und URL-kodierter Form, kürzere nur
+  als ganzes Wort. Kürzen: 200 Zeichen je Wert, 4 KB Argumente, 500 Zeichen
+  Vorschau, 2000 Zeichen Fehlertext und Prozesszeile.
 
 *Preis:* Wer die Dateien liest, sieht Tool-Namen, Zeiten und Fehlertexte; nach
 7 Tagen ist das meiste weg. Ein Geheimnis, das ein Tool **selbst** in eine
@@ -243,10 +409,55 @@ Prozesszeilen gibt es erst, wenn der User im Fenster unter „Agenten“
 gespeichert). Fehlertexte sind auch dann maskiert. Die Aufrufe der beiden
 eigenen Werkzeuge landen nicht im Protokoll (keine Rückkopplung).
 
-## 11. Offene Punkte
+Ein Agent sieht dabei **nur seine eigenen** Aufrufe (sein Name kommt aus seinem
+Token; das Argument `agent` gibt es nicht), und `quiver__tool_log` gibt es nur
+für Einträge, die er selbst benutzt hat. Prozesszeilen tragen zusätzlich die
+Schlüsselwort-Maske (`token`, `passwort`, …).
+
+## 11. Härtung im Betrieb
+
+Diese Festlegungen gelten ohne Schalter; wer sie ändern will, ändert Code und
+Tests. Werte, Grenzen und Fundstellen: [docs/haertung.md](docs/haertung.md).
+
+- **Festlegung: der `Host` gehört zur Basis-URL.** Jede Antwort außer dem
+  Gesundheitsweg über Loopback prüft ihn; passt er nicht, gibt es 421 ohne
+  Inhalt. *Preis:* Wer den Server unter zwei Namen erreichen will, braucht einen
+  zweiten Server (oder einen Proxy, der den Kopf richtig setzt).
+- **Festlegung: Grenzen statt Großzügigkeit.** Rumpf 64 KB (Einträge 256 KB,
+  darüber 413), Kopfzeilen 10 s, Rumpf 30 s (danach 408), höchstens 256
+  Verbindungen und 4 Ereignis-Ströme je Gerät (200 gesamt, darüber 429).
+  *Preis:* Ein sehr großer `server.json`-Eintrag über 256 KB wird abgewiesen;
+  ein Client mit vielen parallelen Strömen bekommt 429 und muss aufräumen.
+- **Festlegung: die Prüfspur entsteht in einer Wache.** Jede ändernde
+  Verwaltungsroute schreibt wer/was/Ziel (Methode, Pfadmuster, Aktion), nie
+  Werte. *Preis:* Doppelte Zeilen dort, wo eine Ansicht zusätzlich fachlich
+  schreibt; und eine fehlgeschlagene Änderung steht nicht in der Spur.
+- **Festlegung: Dateirechte 0700/0600, beim Anlegen und beim Start.** Server:
+  Datenordner, Datenbank samt `-wal`/`-shm`, Sicherungen, `entra-*`,
+  `schluessel`; Client: Profilordner, Stand, Fenster-Einstellungen, Protokolle,
+  Tresor und Sperrdatei. Symlinks werden nicht verfolgt, von den Sicherungen
+  bleiben drei. Unter Windows gilt die ACL-Vererbung des Benutzerprofils.
+  *Preis:* Ein Betreiber, der Rechte absichtlich weiter öffnet (etwa für ein
+  Backup-Werkzeug), findet sie beim nächsten Start wieder zu.
+- **Festlegung: die Laufzeit ist das Programm.** Container ohne Shell und ohne
+  Paketverwaltung (distroless), Benutzer 10001:999, Basis-Abbilder auf Digests
+  festgelegt, `--read-only`, `--cap-drop=ALL`, `no-new-privileges`,
+  `--memory`, `--pids-limit`, Log-Rotation. *Preis:* kein `docker exec sh`, kein
+  Debuggen von Hand im Container; Hilfe kommt über Unterbefehle
+  (`quiver-server benutzer`, `… gesund`).
+- **Festlegung: die Lieferkette wird geprüft.** `cargo-deny` (Sicherheitslücken
+  auch für eingestellte Kisten, Lizenzen, nur crates.io, keine doppelten
+  Krypto-Kisten) und `npm audit` laufen in der CI; jede Ausnahme steht mit Grund
+  und Weg im Baum in `deny.toml`. Genau eine RSA-Fassung (0.10), rusqlite mit
+  SQLite nicht älter als die behobene Fassung – beides hält ein Test fest.
+  *Preis:* Neue Abhängigkeiten und Doppelfassungen kosten eine Zeile Begründung,
+  und ein Abbild-Basiswechsel kostet einen neuen Digest.
+
+## 12. Offene Punkte
 
 1. Formate für eigene Tools: nur WASM, oder von Anfang an auch native Binaries?
-2. Admin-Rechte: Wer darf die Bibliothek pflegen? Eigene Entra-Gruppe oder App-Rolle?
+2. ~~Admin-Rechte: Wer darf die Bibliothek pflegen?~~ Entschieden in Aufgabe 20:
+   einzelne Entra-Benutzer mit Rolle `admin`, Root als Notzugang.
 3. Datenbank des Servers: SQLite im Volume (wie sprechwerk) oder Postgres?
 4. Soll der Client auch ohne Server nutzbar sein (nur lokale Einträge)?
 5. pi und Hermes: Schnittstellen der Plugins genau prüfen. pi 1.5 spricht MCP (`pi mcp`), für den MVP reicht das.
