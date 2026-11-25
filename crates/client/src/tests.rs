@@ -966,3 +966,124 @@ fn die_antwortgroesse_zaehlt_ohne_kopie() {
     ]);
     assert_eq!(endpunkt::antwort_groesse(&ergebnis), 9, "5 + 4 Zeichen");
 }
+
+// ------------------------------------------- Werkzeuge (Aufgabe 35, §5 und §6)
+
+/// Ein Eintrag, dessen Programm hier nicht liegt, steht mit `nicht_installiert`
+/// in der Sicht — die Karte sagt das dann einmal und bietet keine Anmeldung an.
+/// Ein fester Pfad, den es gibt, ist kein solcher Fall.
+#[test]
+fn ein_fehlendes_programm_steht_in_der_sicht() {
+    let mut fehlt = eintrag("fehlt");
+    fehlt.laufzeit = Laufzeit::Stdio {
+        befehl: "quiver-gibtsnicht-4711".into(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    let mut fest = eintrag("fest");
+    fest.laufzeit = Laufzeit::Stdio {
+        befehl: std::env::current_exe()
+            .expect("eigenes Programm")
+            .to_string_lossy()
+            .to_string(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    // Ein entfernter Eintrag startet nichts: kein Programm, kein Befund.
+    let mut entfernt = eintrag("entfernt");
+    entfernt.laufzeit = Laufzeit::Remote {
+        url: "https://example.org/mcp".into(),
+        kopfzeilen: Werte::new(),
+    };
+
+    let soll = Soll::neu(vec![
+        SollEintrag {
+            eintrag: fehlt,
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: fest,
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: entfernt,
+            werte: Werte::new(),
+        },
+    ]);
+    let werte = BTreeMap::new();
+    let geheim = BTreeMap::new();
+    let zugaenge = BTreeMap::new();
+    let leer = BTreeSet::new();
+    let sicht = eintraege_sicht(
+        &soll,
+        &Lokales {
+            werte: &werte,
+            geheim_gesetzt: &geheim,
+            zugaenge: &zugaenge,
+            zugang_geheim: &zugaenge,
+            am_geraet_aus: &leer,
+        },
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let finde = |id: &str| {
+        sicht
+            .iter()
+            .find(|eintrag| eintrag.id == EintragId::neu(id))
+            .expect("der Eintrag steht in der Sicht")
+            .clone()
+    };
+    assert_eq!(
+        finde("fehlt").nicht_installiert.as_deref(),
+        Some("quiver-gibtsnicht-4711"),
+        "der Programmname steht im Befund – kein Pfad"
+    );
+    assert_eq!(finde("fest").nicht_installiert, None);
+    assert_eq!(finde("entfernt").nicht_installiert, None);
+}
+
+/// Rechnet ein Eintrag mit dem Paket? Nur ein bloßer Programmname tut das;
+/// ein fester Pfad und ein entfernter Eintrag kommen ohne den Ordner `tools`
+/// aus (Aufgabe 35, §6).
+#[test]
+fn nur_ein_blosser_name_braucht_das_paket() {
+    let mit = |id: &str, befehl: &str| SollEintrag {
+        eintrag: {
+            let mut eintrag = eintrag(id);
+            eintrag.laufzeit = Laufzeit::Stdio {
+                befehl: befehl.into(),
+                argumente: Vec::new(),
+                umgebung: Werte::new(),
+            };
+            eintrag
+        },
+        werte: Werte::new(),
+    };
+    assert!(braucht_paket(&Soll::neu(vec![mit("a", "quiver-devops")])));
+    assert!(braucht_paket(&Soll::neu(vec![
+        mit("a", "quiver-devops"),
+        mit("b", "quiver-jira")
+    ])));
+    assert!(!braucht_paket(&Soll::neu(vec![mit(
+        "a",
+        "/opt/quiver/quiver-devops"
+    )])));
+    assert!(!braucht_paket(&Soll::neu(vec![mit(
+        "a",
+        r"C:\Programme\mcp-quiver\tools\quiver-m365.exe"
+    )])));
+    assert!(!braucht_paket(&Soll::neu(vec![mit("a", "")])));
+    let entfernt = SollEintrag {
+        eintrag: {
+            let mut eintrag = eintrag("c");
+            eintrag.laufzeit = Laufzeit::Remote {
+                url: "https://example.org/mcp".into(),
+                kopfzeilen: Werte::new(),
+            };
+            eintrag
+        },
+        werte: Werte::new(),
+    };
+    assert!(!braucht_paket(&Soll::neu(vec![entfernt])));
+}

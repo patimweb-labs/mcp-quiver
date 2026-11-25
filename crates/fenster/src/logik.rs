@@ -11,8 +11,7 @@ use quiver_client::{
     VorschauArt, VorschauEintrag, ZugaengeSicht, ZugangSicht, Zusammenfassung,
 };
 use quiver_domain::{
-    link_aufloesen, zugangsname_gueltig, EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, Quelle,
-    Werte,
+    link_aufloesen, zugangsname_gueltig, EintragId, Feld, FeldArt, FeldLink, Quelle, Werte,
 };
 use quiver_protocol::EintragZustand;
 
@@ -111,12 +110,13 @@ pub fn fehlertext(zustand: &EintragZustand) -> Option<&str> {
 /// Welcher Knopf zur Anmeldung gehört.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnmeldeKnopf {
-    /// Nichts zu tun – die Anmeldung läuft gerade.
+    /// Nichts zu tun – die Anmeldung läuft oder wird gerade geprüft.
     Keiner,
     /// „Anmelden“: der User löst sie im Fenster aus, nie ein Agent.
     Anmelden,
-    /// „Erneut versuchen“ nach einem Fehler.
-    Erneut,
+    /// „Erneut prüfen“ nach einer fehlgeschlagenen Prüfung: derselbe
+    /// Status-Befehl noch einmal, ohne Browser.
+    Pruefen,
     /// „Abmelden“ – mit Rückfrage.
     Abmelden,
 }
@@ -129,16 +129,26 @@ pub struct AnmeldeZeile {
     pub knopf: AnmeldeKnopf,
 }
 
-/// Die Anmeldezeile eines Eintrags (Aufgabe 10): abgemeldet und unbekannt
-/// warnen, „läuft“ ist leise, angemeldet ist gut, ein Fehler zeigt seinen Text.
+/// Die Anmeldezeile eines Eintrags (Aufgabe 10, 35 §5).
+///
+/// Fünf Zustände, fünf Sätze, und jeder Knopf hat **eine** benannte Wirkung:
+/// „nicht angemeldet“ → „Anmelden“, „Prüfung läuft“ → kein Knopf (mit
+/// Drehsymbol), „läuft ab“ → „Anmelden“, „angemeldet“ → „Abmelden“,
+/// „fehlgeschlagen“ mit dem Grund → „Erneut prüfen“.
 pub fn anmeldung_zeile(sprache: Sprache, zustand: &AnmeldeZustand) -> AnmeldeZeile {
-    let warnung = AnmeldeZeile {
-        ton: Ton::Warnung,
-        text: t(sprache, "anmeldung.noetig"),
-        knopf: AnmeldeKnopf::Anmelden,
-    };
     match zustand {
-        AnmeldeZustand::Unbekannt | AnmeldeZustand::Abgemeldet => warnung,
+        AnmeldeZustand::Unbekannt | AnmeldeZustand::Abgemeldet => AnmeldeZeile {
+            ton: Ton::Warnung,
+            text: t(sprache, "anmeldung.noetig"),
+            knopf: AnmeldeKnopf::Anmelden,
+        },
+        // Die Prüfung läuft: Drehsymbol, kein Knopf. Sie hat eine Frist
+        // (10 s), danach steht ein Satz und „Erneut prüfen“ da.
+        AnmeldeZustand::Pruefe => AnmeldeZeile {
+            ton: Ton::Leise,
+            text: t(sprache, "anmeldung.pruefe"),
+            knopf: AnmeldeKnopf::Keiner,
+        },
         AnmeldeZustand::Laeuft => AnmeldeZeile {
             ton: Ton::Leise,
             text: t(sprache, "anmeldung.laeuft"),
@@ -152,12 +162,55 @@ pub fn anmeldung_zeile(sprache: Sprache, zustand: &AnmeldeZustand) -> AnmeldeZei
             },
             knopf: AnmeldeKnopf::Abmelden,
         },
+        AnmeldeZustand::LaeuftAb { konto } => AnmeldeZeile {
+            ton: Ton::Warnung,
+            text: match konto {
+                Some(konto) => tf(sprache, "anmeldung.laeuft_ab_mit", &[konto]),
+                None => t(sprache, "anmeldung.laeuft_ab"),
+            },
+            knopf: AnmeldeKnopf::Anmelden,
+        },
         AnmeldeZustand::Fehler { text } => AnmeldeZeile {
             ton: Ton::Fehler,
             text: text.clone(),
-            knopf: AnmeldeKnopf::Erneut,
+            knopf: AnmeldeKnopf::Pruefen,
         },
     }
+}
+
+/// Ist das eine laufende Prüfung? Dann gehört ein Drehsymbol in die Zeile
+/// statt eines Punktes.
+pub fn dreht_sich(zustand: &AnmeldeZustand) -> bool {
+    matches!(zustand, AnmeldeZustand::Pruefe)
+}
+
+/// Welcher Knopf auf der Karte steht, um Angaben zu bearbeiten (Aufgabe 35,
+/// §5): **einer**, nie beide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kartenknopf {
+    /// Nichts zu bearbeiten: kein Knopf.
+    Keiner,
+    /// „Angaben ergänzen“ – Pflichtangaben fehlen; der Stift entfällt.
+    AngabenErgaenzen,
+    /// Der Stift, Hinweis „Bearbeiten“.
+    Bearbeiten,
+}
+
+/// Was die Karte anbietet, um Angaben zu ändern.
+///
+/// Fehlen Pflichtangaben, gibt es nur „Angaben ergänzen“; der Stift öffnete
+/// dasselbe und wäre der zweite Weg zum selben Ziel. Sind sie da, gibt es nur
+/// den Stift. Gibt es nichts einzutragen (etwa ein Eintrag, der nur eine
+/// Zugangsliste führt), gibt es auch keinen Stift: „… hinzufügen“ führt zur
+/// Liste.
+pub fn kartenknopf(eintrag: &EintragSicht) -> Kartenknopf {
+    if matches!(eintrag.zustand, EintragZustand::WartetAufWerte { .. }) {
+        return Kartenknopf::AngabenErgaenzen;
+    }
+    if eintrag.felder.is_empty() {
+        return Kartenknopf::Keiner;
+    }
+    Kartenknopf::Bearbeiten
 }
 
 /// Welcher Knopf zur Einrichtung gehört (Aufgabe 11).
@@ -333,22 +386,6 @@ pub fn grund_text(sprache: Sprache, grund: quiver_protocol::AnmeldeGrund) -> Str
         quiver_protocol::AnmeldeGrund::KeinZugriff => t(sprache, "verbindung.grund.kein_zugriff"),
         quiver_protocol::AnmeldeGrund::NeuAnmelden => t(sprache, "verbindung.grund.neu_anmelden"),
     }
-}
-
-/// Was einem Eintrag fehlt, als ein Satz: die Erklärung des Felds, sonst sein
-/// Name. (Der Name steht schon im Abzeichen.)
-pub fn fehlende_texte(fehlende: &[FehlendesFeld]) -> String {
-    fehlende
-        .iter()
-        .map(|feld| {
-            if feld.beschreibung.trim().is_empty() {
-                feld.name.clone()
-            } else {
-                feld.beschreibung.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" · ")
 }
 
 /// Die Beschriftung eines Felds: `titel`, sonst der Name (Aufgabe 16).
@@ -1302,6 +1339,7 @@ mod tests {
             protokoll_fuer_agenten: false,
             tresor_fehler: None,
             profil_hinweis: None,
+            werkzeuge_fehlen: false,
         }
     }
 
@@ -1349,6 +1387,7 @@ mod tests {
             zugaenge: None,
             am_geraet_aus: false,
             unzulaessig: None,
+            nicht_installiert: None,
         }
     }
 
@@ -1478,13 +1517,13 @@ mod tests {
     }
 
     #[test]
-    fn anmeldung_hat_vier_zustaende_und_je_einen_knopf() {
+    fn anmeldung_hat_fuenf_zustaende_und_je_einen_knopf() {
         let sprache = Sprache::De;
-        // Abgemeldet und unbekannt: derselbe Hinweis, „Anmelden“.
+        // Abgemeldet und unbekannt: derselbe Satz, „Anmelden“.
         for zustand in [AnmeldeZustand::Abgemeldet, AnmeldeZustand::Unbekannt] {
             let zeile = anmeldung_zeile(sprache, &zustand);
             assert_eq!(zeile.ton, Ton::Warnung);
-            assert_eq!(zeile.text, "Anmeldung nötig");
+            assert_eq!(zeile.text, "Nicht angemeldet");
             assert_eq!(zeile.knopf, AnmeldeKnopf::Anmelden);
         }
         // Läuft: leise, kein Knopf.
@@ -1492,6 +1531,13 @@ mod tests {
         assert_eq!(laeuft.ton, Ton::Leise);
         assert_eq!(laeuft.text, "Anmeldung im Browser läuft …");
         assert_eq!(laeuft.knopf, AnmeldeKnopf::Keiner);
+        // Geprüft wird gerade: Drehsymbol, kein Knopf.
+        let pruefe = anmeldung_zeile(sprache, &AnmeldeZustand::Pruefe);
+        assert_eq!(pruefe.ton, Ton::Leise);
+        assert_eq!(pruefe.text, "Prüfe Anmeldung …");
+        assert_eq!(pruefe.knopf, AnmeldeKnopf::Keiner);
+        assert!(dreht_sich(&AnmeldeZustand::Pruefe));
+        assert!(!dreht_sich(&AnmeldeZustand::Laeuft));
         // Angemeldet: Konto und „Abmelden“; ohne Konto bleibt der Name weg.
         let angemeldet = anmeldung_zeile(
             sprache,
@@ -1504,20 +1550,41 @@ mod tests {
         assert_eq!(angemeldet.knopf, AnmeldeKnopf::Abmelden);
         let ohne = anmeldung_zeile(sprache, &AnmeldeZustand::Angemeldet { konto: None });
         assert_eq!(ohne.text, "Angemeldet");
-        // Fehler: der Text des Fehlers, „Erneut versuchen“.
+        // Läuft ab: Warnung, „Anmelden“ (nicht „Abmelden“).
+        let ab = anmeldung_zeile(
+            sprache,
+            &AnmeldeZustand::LaeuftAb {
+                konto: Some("test@beispiel.de".into()),
+            },
+        );
+        assert_eq!(ab.ton, Ton::Warnung);
+        assert_eq!(
+            ab.text,
+            "Angemeldet als test@beispiel.de – die Anmeldung läuft bald ab"
+        );
+        assert_eq!(ab.knopf, AnmeldeKnopf::Anmelden);
+        let ab = anmeldung_zeile(sprache, &AnmeldeZustand::LaeuftAb { konto: None });
+        assert_eq!(ab.text, "Die Anmeldung läuft bald ab");
+        // Fehler: der Text des Fehlers, „Erneut prüfen“.
         let fehler = anmeldung_zeile(
             sprache,
             &AnmeldeZustand::Fehler {
-                text: "Der Status endet mit Code 3".into(),
+                text: "Der Status endet mit Code 7".into(),
             },
         );
         assert_eq!(fehler.ton, Ton::Fehler);
-        assert_eq!(fehler.text, "Der Status endet mit Code 3");
-        assert_eq!(fehler.knopf, AnmeldeKnopf::Erneut);
+        assert_eq!(fehler.text, "Der Status endet mit Code 7");
+        assert_eq!(fehler.knopf, AnmeldeKnopf::Pruefen);
 
         // Englisch ist übersetzt, nicht kopiert.
         let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Abgemeldet);
-        assert_eq!(en.text, "Sign-in required");
+        assert_eq!(en.text, "Not signed in");
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Pruefe);
+        assert_eq!(en.text, "Checking sign-in …");
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::LaeuftAb { konto: None });
+        assert_eq!(en.text, "The sign-in expires soon");
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Fehler { text: "x".into() });
+        assert_eq!(en.knopf, AnmeldeKnopf::Pruefen);
         let en = anmeldung_zeile(
             Sprache::En,
             &AnmeldeZustand::Angemeldet {
@@ -1525,6 +1592,28 @@ mod tests {
             },
         );
         assert_eq!(en.text, "Signed in as test@beispiel.de");
+    }
+
+    /// Je Karte ein Knopf für die Angaben, nie zwei (Aufgabe 35, §5).
+    #[test]
+    fn eine_karte_hat_einen_knopf_fuer_die_angaben() {
+        // Fehlen Pflichtangaben, gibt es nur „Angaben ergänzen“.
+        let wartet = eintrag();
+        assert_eq!(
+            zustand_text(Sprache::De, &wartet.zustand),
+            "Braucht Angaben: PFAD"
+        );
+        assert_eq!(kartenknopf(&wartet), Kartenknopf::AngabenErgaenzen);
+
+        // Sind sie da, gibt es nur den Stift.
+        let mut fertig = wartet.clone();
+        fertig.zustand = EintragZustand::Laeuft { tools: 1 };
+        assert_eq!(kartenknopf(&fertig), Kartenknopf::Bearbeiten);
+
+        // Nichts einzutragen, keine Zugangsliste: kein Knopf.
+        let mut leer = fertig.clone();
+        leer.felder.clear();
+        assert_eq!(kartenknopf(&leer), Kartenknopf::Keiner);
     }
 
     #[test]
@@ -1593,25 +1682,6 @@ mod tests {
             ),
             "Signing in via browser …"
         );
-    }
-
-    #[test]
-    fn fehlendes_wird_erklaert() {
-        let feld = |name: &str, beschreibung: &str| FehlendesFeld {
-            name: name.into(),
-            beschreibung: beschreibung.into(),
-            quelle: Quelle::Client,
-        };
-        assert_eq!(
-            fehlende_texte(&[feld("PFAD", "Ordner, den das Tool lesen darf")]),
-            "Ordner, den das Tool lesen darf"
-        );
-        assert_eq!(fehlende_texte(&[feld("PFAD", "  ")]), "PFAD", "ohne Text");
-        assert_eq!(
-            fehlende_texte(&[feld("A", "eins"), feld("B", "zwei")]),
-            "eins · zwei"
-        );
-        assert_eq!(fehlende_texte(&[]), "");
     }
 
     #[test]

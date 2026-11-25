@@ -200,12 +200,8 @@
     "en": "Hide tools"
   },
   "tools.bearbeiten": {
-    "de": "Angaben bearbeiten",
-    "en": "Edit settings"
-  },
-  "tools.fehlt": {
-    "de": "Fehlt: {}",
-    "en": "Missing: {}"
+    "de": "Bearbeiten",
+    "en": "Edit"
   },
   "tools.werte_sub": {
     "de": "Gesetzte Geheimnisse bleiben leer — dann ändern sie sich nicht.",
@@ -384,8 +380,8 @@
     "en": "The entry lives in the system; the checkmark shows what is there. “Quit” is in the tray menu."
   },
   "anmeldung.noetig": {
-    "de": "Anmeldung nötig",
-    "en": "Sign-in required"
+    "de": "Nicht angemeldet",
+    "en": "Not signed in"
   },
   "anmeldung.anmelden": {
     "de": "Anmelden",
@@ -408,8 +404,8 @@
     "en": "Sign out"
   },
   "anmeldung.erneut": {
-    "de": "Erneut versuchen",
-    "en": "Try again"
+    "de": "Erneut prüfen",
+    "en": "Check again"
   },
   "anmeldung.beenden_titel": {
     "de": "Anmeldung beenden",
@@ -1042,5 +1038,33 @@
   "agenten.token_hinweis": {
     "de": "Die Befehle lesen das Token verdeckt ein (read -s): es steht nie als Argument in der Prozessliste oder in der Shell-Historie. Alternativ lässt es sich in einer Datei ablegen, die nur Sie lesen können (chmod 600), und mit $(cat …) einsetzen. Die Zwischenablage wird nach 60 Sekunden geleert, solange sie noch diesen Wert enthält.",
     "en": "The commands read the token silently (read -s): it never appears as an argument in the process list or shell history. Alternatively, store it in a file only you can read (chmod 600) and use $(cat …). The clipboard is cleared after 60 seconds as long as it still holds this value."
+  },
+  "anmeldung.pruefe": {
+    "de": "Prüfe Anmeldung …",
+    "en": "Checking sign-in …"
+  },
+  "anmeldung.laeuft_ab": {
+    "de": "Die Anmeldung läuft bald ab",
+    "en": "The sign-in expires soon"
+  },
+  "anmeldung.laeuft_ab_mit": {
+    "de": "Angemeldet als {} – die Anmeldung läuft bald ab",
+    "en": "Signed in as {} – the sign-in expires soon"
+  },
+  "tools.nicht_installiert": {
+    "de": "Nicht installiert",
+    "en": "Not installed"
+  },
+  "tools.nicht_installiert_text": {
+    "de": "Dieses Tool ist auf diesem Gerät nicht installiert.",
+    "en": "This tool is not installed on this device."
+  },
+  "tools.werkzeuge_fehlen": {
+    "de": "Der Ordner „tools“ neben quiver fehlt. Bitte das ganze ZIP entpacken.",
+    "en": "The “tools” folder next to quiver is missing. Please unpack the whole ZIP."
+  },
+  "tools.ergaenzen": {
+    "de": "Angaben ergänzen",
+    "en": "Complete settings"
   }
 }

@@ -155,6 +155,96 @@ und startet die betroffenen Einträge neu. Einträge, die es hier nicht gibt,
 werden übersprungen; ein falsches Passwort ändert nichts. Die Wahl „auf diesem
 Gerät abgeschaltet“ geht mit und steht in der Vorschau — aus bleibt aus.
 
+## Woher die Programme kommen
+
+Der Client bringt die Werkzeuge aus
+[`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) selbst mit —
+für macOS, Windows und Linux dieselben. Deshalb nennt ein Eintrag in der Regel
+nur den **Programmnamen**, etwa `quiver-devops`. Ein Client aus dem Paket sucht
+ihn zuerst im mitgelieferten Ordner neben seinem eigenen Programm und dann im
+`PATH`:
+
+| Paket | Programm | Werkzeuge |
+| --- | --- | --- |
+| macOS | `quiver.app/Contents/MacOS/quiver` | `quiver.app/Contents/Resources/tools` |
+| Windows | `<Installation>\quiver.exe` | `<Installation>\tools` |
+| Linux (.deb, .rpm, .tar.gz) | `/usr/bin/quiver` | `/usr/lib/mcp-quiver/tools` |
+| AppImage | `<AppDir>/usr/bin/quiver` | `<AppDir>/usr/lib/mcp-quiver/tools` |
+
+Gesucht wird an **einer** Stelle: Start, Anmeldung, Status, Einrichtung und
+Testen nehmen dieselbe Regel. Ein Ausbruch aus dem Ordner ist nicht möglich —
+ein Name mit `/` wird dort nie angehängt, und ein Verweis, der aus dem Ordner
+hinauszeigt, gilt nicht.
+
+Ein **fester Pfad** (`/usr/local/bin/quiver-jira`, `C:\…\quiver-m365.exe`)
+funktioniert weiter. Er gilt aber nur auf Geräten, auf denen das Programm genau
+dort liegt; die Verwaltung warnt beim Speichern, hält aber niemanden auf. Zeigt
+ein solcher Pfad auf ein Programm, das es hier nicht gibt, und heißt der
+Dateiname wie ein mitgeliefertes Werkzeug, nimmt der Client das mitgelieferte
+und vermerkt es im Protokoll — ein alter Eintrag der Bibliothek heilt sich so
+von selbst.
+
+Meldungen im Fenster nennen nur den Programmnamen und den Grund, nie einen
+fremden Dateipfad; der volle Pfad steht allein im Protokoll.
+
+Fehlt der Ordner `tools` ganz — etwa weil aus dem ZIP nur `quiver.exe`
+entpackt wurde —, sagt das Fenster über den Karten: „Der Ordner ‚tools‘ neben
+quiver fehlt. Bitte das ganze ZIP entpacken.“ Der Client findet den Ordner
+immer neben seiner eigenen Datei, egal aus welchem Arbeitsverzeichnis er
+startet und ob ein Verweis (Verknüpfung, Autostart) darauf zeigt;
+Leerzeichen und Umlaute im Pfad sind kein Problem.
+
+## Die Anmeldung eines Tools
+
+Manche Werkzeuge melden sich für den Benutzer an (Microsoft 365, ZEP). Die
+Anmeldung löst immer der Benutzer im Fenster aus, nie ein Agent; die Karte
+zeigt dazu **einen** Satz und **einen** benannten Knopf. Kein Knopf besteht je
+nur aus einem Zeichen, auch nicht im schmalen Fenster:
+
+| Zustand | Satz auf der Karte | Knopf |
+| --- | --- | --- |
+| nicht angemeldet | „Nicht angemeldet“ | **Anmelden** |
+| Prüfung läuft | „Prüfe Anmeldung …“ mit Drehsymbol | keiner (gesperrt) |
+| Anmeldung im Browser | „Anmeldung im Browser läuft …“ | keiner |
+| angemeldet | „Angemeldet als …“ | **Abmelden** |
+| läuft ab | „Angemeldet als … – die Anmeldung läuft bald ab“ | **Anmelden** |
+| fehlgeschlagen | der Grund in einem Satz | **Erneut prüfen** |
+
+Die Prüfung ist ein Blick in den Tresor des Werkzeugs, kein Browser-Ablauf:
+sie hat **10 s** Zeit. Antwortet das Werkzeug nicht, steht danach ein Satz und
+**Erneut prüfen** da — kein Drehsymbol, das nie aufhört. „Erneut prüfen“
+fragt nur den Status ab; es meldet niemanden an und startet den Eintrag nicht
+neu, solange niemand angemeldet ist. Ein Werkzeug, das den Ablauf seines
+Tokens kennt, meldet ihn mit **Exit 3**; dann bietet die Karte „Anmelden“ an,
+bevor mitten in der Arbeit Schluss ist.
+
+![Anmeldung auf der Tools-Karte](../docs/bilder/fenster-dark-anmeldung-800.png)
+
+Fehlt das Programm auf diesem Gerät, steht auf der Karte **einmal** „Dieses
+Tool ist auf diesem Gerät nicht installiert.“ — kein technischer Fehler, kein
+Anmelde- und kein Einrichtungsknopf (es gäbe nichts zu starten). Den Hinweis
+für den Admin („bitte mit dem Paket mitliefern“) schreibt der Client ins
+Protokoll des Eintrags.
+
+Unter **Windows** startet der Client die Werkzeuge und die Anmeldebefehle ohne
+eigenes Konsolenfenster (`CREATE_NO_WINDOW`): es blitzt keine schwarze Konsole
+auf, und ein Werkzeug ist ein Hintergrundprozess. Angemeldet wird im
+Standardbrowser. Der Rückweg aus dem Browser läuft über `http://127.0.0.1:<port>`
+— der Client und seine Werkzeuge binden dafür **nur** an 127.0.0.1, damit die
+Windows-Firewall nicht dazwischenkommt und nichts von außen erreichbar ist.
+Das Token des Werkzeugs liegt im Tresor des Werkzeugs unter `%APPDATA%`, nie
+beim Agenten.
+
+## Eine Karte, ein Knopf je Wirkung
+
+Jede Karte trägt genau einen Knopf für die Angaben: fehlen Pflichtangaben,
+**Angaben ergänzen**; ist alles da, den **Stift** („Bearbeiten“). Gibt es
+nichts einzutragen, steht auch kein Stift da — bei einer Zugangsliste führt
+**… hinzufügen** zur Liste. Was fehlt, steht in einer Zeile („Braucht Angaben:
+Pfad“), nicht zusätzlich darunter. Jeder weitere Knopf einer Karte hat seine
+eigene, benannte Wirkung: **Anmelden**, **Abmelden**, **Erneut prüfen**,
+**Einrichten**, **Abbrechen**, **Exportieren**, **Importieren**.
+
 ## Protokoll und Datenschutz
 
 Die Seite **Protokoll** im Fenster listet jeden Tool-Aufruf eines Agenten (Zeit,
@@ -223,6 +313,7 @@ Alles optional:
 | `QUIVER_MCP_ADRESSE` | MCP-Endpunkt (Standard `127.0.0.1:8741`; ein zweiter Port lässt zwei Instanzen nebeneinander laufen) |
 | `QUIVER_AUTOSTART_DIR` | Ordner für die Autostart-Datei (macOS und Linux; Tests und andere Sitzungen) |
 | `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt in der Tresor-Datei (Läufe ohne Spuren, zum Ausprobieren) |
+| `QUIVER_TOOLS_DIR` | Ordner mit den Werkzeugen statt des mitgelieferten (Entwicklung; überschreibt die Suche neben dem Programm) |
 
 `--headless` startet nur den Kern (bis Strg+C); `--hintergrund` bringt das Tray
 ohne Fenster.
@@ -235,6 +326,9 @@ ohne Fenster.
 | „Der Server ist nicht erreichbar“ | Adresse prüfen: `https` überall außer Loopback, kein Pfad am Ende. Die Verwaltung muss unter derselben Adresse erreichbar sein. |
 | Der Client zeigt „Erneut anmelden“ | Der Server verlangt eine neue Anmeldung (Token zu alt, 60 Tage ungenutzt oder Gerät entfernt). Angaben und Geräte-Token bleiben. |
 | Tools bleiben bei „fehlende Angaben“ | Die Karte nennt die Felder. Über den Stift ausfüllen; Geheimes geht in den Tresor. |
+| „Dieses Tool ist auf diesem Gerät nicht installiert.“ | Der Eintrag nennt ein Programm, das weder das Paket noch der `PATH` kennt. Es steckt in den mitgelieferten Programmen (siehe *Woher die Programme kommen*) — oder als fester Pfad eintragen. Der Grund (Name und Suchorte) steht im Protokoll des Eintrags. |
+| „Der Ordner ‚tools‘ neben quiver fehlt“ | Aus dem ZIP wurde nur `quiver` entpackt. Das ganze ZIP in einen Ordner entpacken und `quiver` von dort starten (der Ordner bleibt neben dem Programm, auch über eine Verknüpfung). |
+| Die Karte bleibt auf „Anmeldung läuft …“ oder „Prüfe Anmeldung …“ stehen | Ein Werkzeug antwortet nicht. Nach 10 s (Prüfung) bzw. 5 min (Browser) endet es von selbst mit einem Satz und einem Knopf; hängt es weiter, das Protokoll des Eintrags ansehen und den Client neu starten. |
 | Ein Tool meldet „Prozess wurde beendet“ | Im Protokoll den Reiter *Tool-Logs* öffnen; stderr steht dort (maskiert). |
 | Ein Agent sieht keine Tools | Er muss gekoppelt sein und das Token aus *Agenten* nutzen. Endpunkt `http://127.0.0.1:8741/mcp` prüfen und ob der Eintrag auf diesem Gerät abgeschaltet ist. |
 | Zwei Clients streiten um den Port | Dem zweiten `QUIVER_MCP_ADRESSE=127.0.0.1:8742` und ein anderes `QUIVER_PROFIL` geben. |

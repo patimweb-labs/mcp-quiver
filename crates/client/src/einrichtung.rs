@@ -15,11 +15,14 @@
 //! arbeitet auf der Seite, der Befehl endet von selbst. Der Zustand bleibt
 //! lokal und geht nie an den Server (kein Vertragswechsel, AGENTS.md §2.1).
 
+use std::sync::Arc;
+
 use quiver_domain::{EintragId, SollEintrag, Werte};
 use serde::{Deserialize, Serialize};
 
 use crate::anmeldung::{befehl_aus_liste, befehl_laufen, Ausgang, Befehl, EINRICHT_FRIST};
 use crate::hilfen::Abbruch;
+use crate::protokoll::Protokoll;
 
 /// Wie es um die Einrichtung eines Eintrags steht. Nur für das Fenster; der
 /// Server bekommt sie nie zu sehen. `None` im [`crate::EintragSicht`] heißt:
@@ -74,8 +77,9 @@ pub async fn laufen(
     id: &EintragId,
     befehl: &Befehl,
     abbruch: Option<Abbruch>,
+    protokoll: &Arc<Protokoll>,
 ) -> anyhow::Result<Ausgang> {
-    befehl_laufen(id, befehl, Some(EINRICHT_FRIST), abbruch).await
+    befehl_laufen(id, befehl, Some(EINRICHT_FRIST), abbruch, protokoll).await
 }
 
 /// Was aus dem Ausgang eines Einrichtungs-Befehls folgt.

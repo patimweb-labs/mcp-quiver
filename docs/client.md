@@ -148,6 +148,90 @@ device does not have are skipped; a wrong password changes nothing. The choice
 “switched off on this device” travels with the file and shows up in the
 preview — off stays off.
 
+## Where the programs come from
+
+The client ships the tools from
+[`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) itself — the
+same ones on macOS, Windows and Linux. An entry therefore normally names just
+the **program name**, such as `quiver-devops`. A client from the package looks
+for it first in the bundled folder next to its own program, then in `PATH`:
+
+| Package | Program | Tools |
+| --- | --- | --- |
+| macOS | `quiver.app/Contents/MacOS/quiver` | `quiver.app/Contents/Resources/tools` |
+| Windows | `<install dir>\quiver.exe` | `<install dir>\tools` |
+| Linux (.deb, .rpm, .tar.gz) | `/usr/bin/quiver` | `/usr/lib/mcp-quiver/tools` |
+| AppImage | `<AppDir>/usr/bin/quiver` | `<AppDir>/usr/lib/mcp-quiver/tools` |
+
+There is exactly **one** place that searches: start, sign-in, status, setup and
+test all use the same rule. Escaping the folder is not possible — a name with a
+`/` is never appended there, and a link that points out of the folder does not
+count.
+
+A **fixed path** (`/usr/local/bin/quiver-jira`, `C:\…\quiver-m365.exe`) still
+works, but only on machines where the program sits exactly there; the admin
+warns when saving and lets you save anyway. If such a path points at a program
+that is not there and its file name matches a bundled tool, the client runs the
+bundled one and notes it in the log — an old library entry heals itself.
+
+Messages in the window name the program and the reason, never someone else's
+file path; the full path only appears in the log.
+
+If the `tools` folder is missing altogether — say only `quiver.exe` was taken
+out of the ZIP — the window says above the cards: “The ‘tools’ folder next to
+quiver is missing. Please unpack the whole ZIP.” The client always finds that
+folder next to its own file, whatever the working directory is and whether a
+link (shortcut, autostart) points at it; spaces and umlauts in the path are
+fine.
+
+## Signing a tool in
+
+Some tools sign in on the user's behalf (Microsoft 365, ZEP). The sign-in is
+always triggered by the user in the window, never by an agent; the card shows
+**one** sentence and **one** named button. No button is ever just a symbol,
+not even in a narrow window:
+
+| State | Sentence on the card | Button |
+| --- | --- | --- |
+| not signed in | “Not signed in” | **Sign in** |
+| check running | “Checking sign-in …”, spinner | none (disabled) |
+| signing in | “Signing in via browser …” | none |
+| signed in | “Signed in as …” | **Sign out** |
+| expiring | “Signed in as … – the sign-in expires soon” | **Sign in** |
+| failed | the reason in one sentence | **Check again** |
+
+The check is a look into the tool's vault, not a browser round: it gets **10 s**.
+If the tool does not answer, a sentence and **Check again** remain — not a
+spinner that never stops. “Check again” only asks for the status; it signs
+nobody in and does not restart the entry while nobody is signed in. A tool that
+knows when its token expires reports it with **exit 3**; the card then offers
+“Sign in” before work stops in the middle.
+
+![Signing in on the tools card](../docs/bilder/fenster-dark-anmeldung-800.png)
+
+If the program is missing on this device, the card says **once**: “This tool is
+not installed on this device.” — no technical error, no sign-in and no setup
+button (there would be nothing to start). The hint for the admin (“please ship
+it with the package”) goes to the entry's log.
+
+On **Windows** the client starts tools and sign-in commands without a console
+window of their own (`CREATE_NO_WINDOW`): no black console flashes up, and a
+tool is a background process. Signing in happens in the default browser. The
+way back from the browser runs over `http://127.0.0.1:<port>` — the client and
+its tools bind **only** to 127.0.0.1, so the Windows firewall stays out of the
+way and nothing is reachable from outside. A tool's token lives in the tool's
+vault under `%APPDATA%`, never with an agent.
+
+## One card, one button per effect
+
+Every card carries exactly one button for the settings: if required values are
+missing, **Complete settings**; otherwise the **pencil** (“Edit”). If there is
+nothing to enter, there is no pencil either — with an access list, **Add …**
+leads to the list. What is missing appears on one line (“Needs input: path”),
+not once more underneath. Every further button on a card has its own named
+effect: **Sign in**, **Sign out**, **Check again**, **Set up**, **Cancel**,
+**Export**, **Import**.
+
 ## Protocol and privacy
 
 The window's **Protocol** page lists every tool call an agent triggers (time,
@@ -216,6 +300,7 @@ All optional:
 | `QUIVER_MCP_ADRESSE` | MCP endpoint (default `127.0.0.1:8741`; a second port lets two instances run side by side) |
 | `QUIVER_AUTOSTART_DIR` | Folder for the autostart file (macOS and Linux; tests and other sessions) |
 | `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the vault file (for trying things out without traces) |
+| `QUIVER_TOOLS_DIR` | Folder with the tools instead of the bundled one (development; overrides the search next to the program) |
 
 `--headless` runs the core only (until Ctrl+C); `--hintergrund` brings the tray
 without the window.
@@ -228,6 +313,9 @@ without the window.
 | "The server cannot be reached" | Check the address: `https` everywhere except loopback, and no trailing path. The admin UI must be reachable under that address too. |
 | The client shows "Sign in again" | The server asked for a new sign-in (token too old, unused for 60 days, or device removed). Settings and the device token are kept. |
 | Tools stay "missing settings" | The card names the fields. Fill them under the pencil; secrets go into the vault. |
+| “This tool is not installed on this device.” | The entry names a program that neither the package nor `PATH` knows. It is among the bundled programs (see *Where the programs come from*) — or enter a fixed path. The reason (name and places searched) is in the entry's log. |
+| “The ‘tools’ folder next to quiver is missing” | Only `quiver` was taken out of the ZIP. Unpack the whole ZIP into a folder and start `quiver` from there (the folder stays next to the program, also through a shortcut). |
+| The card stays on “Signing in via browser …” or “Checking sign-in …” | A tool is not answering. After 10 s (check) or 5 min (browser) it ends by itself with a sentence and a button; if it keeps hanging, look at the entry's log and restart the client. |
 | A tool fails with "process ended" | Open *Tool logs* on the Protocol page; stderr is kept there (masked). |
 | An agent sees no tools | It must be paired and use the token from *Agents*. Check the endpoint `http://127.0.0.1:8741/mcp` and that the entry is not switched off on this device. |
 | Two clients fight over the port | Give the second one `QUIVER_MCP_ADRESSE=127.0.0.1:8742` and a different `QUIVER_PROFIL`. |

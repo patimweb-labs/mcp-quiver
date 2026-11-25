@@ -173,6 +173,7 @@ impl KernZugang for EchterKern {
                 }
                 Aktion::AgentEntfernen { id } => kern.agent_entfernen(&id).await,
                 Aktion::EintragAnmelden { eintrag } => kern.anmelden(&eintrag).await,
+                Aktion::AnmeldungPruefen { eintrag } => kern.anmeldung_pruefen(&eintrag).await,
                 Aktion::EintragAbmelden { eintrag } => kern.abmelden_eintrag(&eintrag).await,
                 Aktion::EintragEinrichten { eintrag } => kern.einrichten(&eintrag).await,
                 Aktion::ZugangSpeichern {

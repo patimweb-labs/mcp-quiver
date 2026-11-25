@@ -219,6 +219,14 @@ Repository ist derselbe Aufruf und kann lokal bauen:
 | jedes Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, starten |
 | jedes Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | auspacken, `bin/quiver` starten |
 
+In jedem Paket stecken die Werkzeuge aus
+[quiver-tools](https://github.com/patimweb-labs/quiver-tools) — dieselben auf
+allen drei Systemen. Ein Eintrag in der Bibliothek nennt deshalb in der Regel
+nur den Programmnamen (`quiver-devops`), und der Client findet ihn neben seinem
+eigenen Programm; ein fester Pfad geht weiterhin, gilt aber nur auf Geräten mit
+genau diesem Pfad. Welche Werkzeuge dabei sind und in welchem Commit, steht im
+Release-Text und in [docs/client.de.md](docs/client.de.md#woher-die-programme-kommen).
+
 Die Pakete sind **unsigniert**, solange der Betreiber sie nicht signiert:
 Gatekeeper und SmartScreen fragen beim ersten Start einmal nach. Was das heißt
 und wie man daran vorbeikommt:

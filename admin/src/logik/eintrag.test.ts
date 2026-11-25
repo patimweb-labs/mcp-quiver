@@ -30,6 +30,8 @@ import {
   neuer_eintrag,
   neues_feld,
   neues_zugang_feld,
+  ist_fester_pfad,
+  pfad_warnung,
   server_felder,
   server_werte,
   sortiert_nach_titel,
@@ -211,6 +213,42 @@ describe("eintrag_pruefen", () => {
     const fehler = eintrag_pruefen(eintrag);
     expect(fehler["feld.2.name"]).toContain("schon");
     expect(fehler["feld.3.name"]).toContain("Buchstaben");
+  });
+});
+
+describe("fester Pfad im Befehl", () => {
+  it("erkennt absolute Pfade und keine Namen", () => {
+    expect(ist_fester_pfad("/usr/local/bin/quiver-devops")).toBe(true);
+    expect(ist_fester_pfad("  /opt/quiver/quiver-jira  ")).toBe(true);
+    expect(ist_fester_pfad("C:\\Programme\\mcp-quiver\\tools\\quiver-m365.exe")).toBe(
+      true,
+    );
+    expect(ist_fester_pfad("C:/Programme/quiver.exe")).toBe(true);
+    expect(ist_fester_pfad("\\\\server\\freigabe\\quiver.exe")).toBe(true);
+
+    // Ein Name ist kein Pfad — und auch kein halber.
+    expect(ist_fester_pfad("quiver-devops")).toBe(false);
+    expect(ist_fester_pfad("npx")).toBe(false);
+    expect(ist_fester_pfad("")).toBe(false);
+    expect(ist_fester_pfad("node_modules/.bin/x")).toBe(false);
+  });
+
+  it("warnt beim Speichern, hält aber niemanden auf", () => {
+    const warnung = pfad_warnung("/usr/local/bin/quiver-devops");
+    expect(warnung).toContain("nur auf Geräten");
+    expect(warnung).toContain("quiver-devops");
+    expect(pfad_warnung("quiver-devops")).toBeNull();
+    expect(pfad_warnung("")).toBeNull();
+
+    // Der Eintrag bleibt gültig: die Warnung ist keine Fehlermeldung.
+    const eintrag = beispiel();
+    eintrag.laufzeit = {
+      art: "stdio",
+      befehl: "/usr/local/bin/postfach-mcp",
+      argumente: [],
+      umgebung: {},
+    };
+    expect(eintrag_pruefen(eintrag)).toEqual({});
   });
 });
 

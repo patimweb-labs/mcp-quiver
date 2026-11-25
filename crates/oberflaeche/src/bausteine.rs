@@ -13,6 +13,31 @@ pub fn text(f: &Farben, inhalt: impl Into<String>, art: Ton) -> RichText {
     RichText::new(inhalt).color(thema::ton(f, art))
 }
 
+/// Ein Absatz, der umbricht — auch **mitten in einem langen Wort**.
+///
+/// Ein Fehlertext kann ein Pfad oder eine Adresse ohne Leerzeichen sein. Ein
+/// gewöhnliches `Label` bricht nur an Wortgrenzen: es wüchse über die Karte
+/// hinaus, die Karte würde breiter als ihre Geschwister, und der Text liefe
+/// unter die Knöpfe (Aufgabe 35).
+pub fn absatz(
+    ui: &mut egui::Ui,
+    f: &Farben,
+    inhalt: impl Into<String>,
+    art: Ton,
+) -> egui::Response {
+    let mut job = egui::text::LayoutJob::simple(
+        inhalt.into(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        thema::ton(f, art),
+        // Ein Pixel Spielraum: sonst rundet egui die letzte Zeile über den
+        // Rand hinaus.
+        (ui.available_width() - 0.5).max(1.0),
+    );
+    job.wrap.break_anywhere = true;
+    let galley = ui.ctx().fonts_mut(|fonts| fonts.layout_job(job));
+    ui.add(egui::Label::new(galley))
+}
+
 /// Überschrift einer Seite mit Unterzeile.
 pub fn seitenkopf(ui: &mut egui::Ui, f: &Farben, titel: &str, unter: &str) {
     // Titel und Unterzeile stehen 4 px auseinander, darunter folgt der Inhalt
@@ -1111,6 +1136,30 @@ pub fn status(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str) -> eg
                 ui.allocate_exact_size(egui::vec2(thema::SPACE_2, thema::SPACE_2), Sense::hover());
             ui.painter().rect_filled(rect, 0.0, thema::ton(f, ton));
             ui.label(text(f, beschriftung, ton));
+        },
+    )
+    .response
+}
+
+/// Eine Statuszeile mit Drehsymbol: hier läuft gerade etwas (etwa die Prüfung
+/// einer Anmeldung, Aufgabe 35, §5).
+///
+/// An der Stelle des Punktes dreht sich ein Ring, damit „es passiert etwas“
+/// nicht nur im Text steht. Die Zeile ist so hoch wie [`status`], damit nichts
+/// springt, wenn aus dem Drehen ein Punkt wird.
+pub fn status_dreht(ui: &mut egui::Ui, f: &Farben, ton: Ton, beschriftung: &str) -> egui::Response {
+    let hoehe = thema::FONT_SIZE_MD * thema::FONT_LINE_NORMAL;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), hoehe),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = thema::SPACE_1;
+            ui.add(
+                egui::Spinner::new()
+                    .size(thema::FONT_SIZE_MD)
+                    .color(thema::ton(f, ton)),
+            );
+            ui.add(egui::Label::new(text(f, beschriftung, ton)).truncate());
         },
     )
     .response

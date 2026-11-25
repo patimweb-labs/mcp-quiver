@@ -1,0 +1,17 @@
+# Stand der mitgelieferten Werkzeuge (Aufgabe 35)
+#
+# Der Client aus dem Paket bringt die Programme aus `quiver-tools` selbst mit;
+# ein Eintrag der Bibliothek nennt dann nur noch den Programmnamen
+# (`quiver-devops`).
+#
+# Gebaut wird genau dieser Commit, nicht `main`: ein Release soll
+# reproduzierbar sein, und ein Werkzeug, das sich ohne unseren Willen ändert,
+# wäre ein Fehler, den niemand gemerkt hat. Angehoben wird der Stand mit einem
+# eigenen Commit (`chore: Werkzeuge auf <commit>`), damit im Verlauf steht, was
+# sich geändert hat. Die Version steht im Release-Text.
+#
+# Gelesen von `verteilung/tools/bauen.sh` und `verteilung/tools/bauen.ps1`;
+# geschrieben wird die Datei von Hand.
+repo=patimweb-labs/quiver-tools
+commit=2563bc5ca8c671bfeba42732a9029f8d498d1e69
+version=0.1.0

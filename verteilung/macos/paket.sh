@@ -103,7 +103,19 @@ for kante in 16 32 64 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 
+# ---------------------------------------------------------------- Werkzeuge
+# Die Programme aus quiver-tools liegen neben dem Programm im Bündel; ein
+# Eintrag der Bibliothek nennt dann nur noch den Namen (Aufgabe 35).
+"$wurzel/verteilung/tools/einbauen.sh" "$dist/tools" \
+    "$app/Contents/Resources/tools"
+
 # ---------------------------------------------------------------- Signieren
+# Die Werkzeuge liegen im Bündel und werden **einzeln** signiert, bevor das
+# Bündel selbst drankommt: die Signatur des Bündels versiegelt auch seinen
+# Inhalt, später signieren macht sie ungültig (Aufgabe 35).
+"$wurzel/verteilung/tools/macos-signieren.sh" "$app" \
+    "${MACOS_SIGNING_IDENTITY:-}"
+
 zustand=unsigniert
 if [ -n "${MACOS_CERTIFICATE:-}" ] && [ -n "${MACOS_SIGNING_IDENTITY:-}" ]; then
     echo "==> signiere mit »$MACOS_SIGNING_IDENTITY«"

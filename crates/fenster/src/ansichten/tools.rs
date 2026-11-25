@@ -14,7 +14,6 @@ use crate::modell::{Dialog, Sicht};
 use crate::texte::{t, tf};
 use crate::thema::{self, Ton};
 use quiver_client::EintragSicht;
-use quiver_protocol::EintragZustand;
 
 pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
     let mut exportieren = false;
@@ -22,6 +21,7 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
     bausteine::seite(ui, |ui| {
         hinweis(ui, sicht, aktionen);
         ergebnis(ui, sicht);
+        werkzeuge_fehlen(ui, sicht);
         kopfzeile(ui, sicht, &mut exportieren, &mut importieren);
         if sicht.modell.eintraege.is_empty() {
             leer(
@@ -85,6 +85,27 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
     }
 }
 
+/// Der Ordner mit den mitgelieferten Werkzeugen fehlt neben dem Programm
+/// (Aufgabe 35, §6): ein entpacktes ZIP ohne seinen Ordner `tools`.
+///
+/// Die Zeile steht über den Karten, weil sie für alle gilt: kein Eintrag, der
+/// einen bloßen Programmnamen nennt, kann hier laufen. Gelöst wird es nicht im
+/// Fenster, sondern beim Entpacken – deshalb ein Hinweis und kein Knopf.
+fn werkzeuge_fehlen(ui: &mut egui::Ui, sicht: &Sicht) {
+    if !sicht.modell.werkzeuge_fehlen {
+        return;
+    }
+    let f = *sicht.thema.farben();
+    let text = t(sicht.sprache, "tools.werkzeuge_fehlen");
+    bausteine::kasten(ui, &f, |ui| {
+        ui.horizontal(|ui| {
+            bausteine::icon(ui, &f, Icon::Hinweis, Ton::Warnung);
+            ui.add(egui::Label::new(bausteine::text(&f, &text, Ton::Warnung)).wrap());
+        });
+    });
+    ui.add_space(thema::SPACE_4);
+}
+
 /// Die Kopfzeile der Seite: Titel und Unterzeile links, „Exportieren“ und
 /// „Importieren“ rechts (Aufgabe 15). Ist das Fenster zu schmal für beides
 /// nebeneinander, stehen die Knöpfe darunter (Aufgabe 18): die Unterzeile
@@ -146,12 +167,18 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let ton = logik::zustand_ton(&eintrag.zustand);
     let stand = logik::zustand_text(sprache, &eintrag.zustand);
     let fehler = logik::fehlertext(&eintrag.zustand).map(str::to_string);
-    let wartet = matches!(eintrag.zustand, EintragZustand::WartetAufWerte { .. });
+    // Fehlt das Programm, sagt die Karte das einmal – und zwar an der Stelle
+    // des Zustands. Alles Technische bleibt weg, und einen Anmelde-Knopf gibt
+    // es nicht: es gäbe nichts zu starten (Aufgabe 35, §5).
+    let nicht_installiert = eintrag.nicht_installiert.is_some();
+    // Ein Knopf für die Angaben, nie zwei (Aufgabe 35, §5).
+    let angaben_knopf = logik::kartenknopf(eintrag);
     let unter = (!eintrag.beschreibung.is_empty()).then(|| eintrag.beschreibung.clone());
     let mut angaben = false;
     let mut bearbeiten = false;
     let mut aufklappen = false;
     let mut anmelden = false;
+    let mut pruefen = false;
     let mut abmelden = false;
     let mut einrichten = false;
     let mut abbrechen = false;
@@ -162,6 +189,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let gesperrt = t(sprache, "tools.gesperrt_hinweis");
     // Zugänge (Aufgabe 14): aufklappen, anlegen, bearbeiten, löschen.
     let mut zugaenge_aufklappen = false;
+    let mut zugaenge_oeffnen = false;
     let mut zugang_neu = false;
     let mut zugang_bearbeiten: Option<String> = None;
     let mut zugang_loeschen: Option<String> = None;
@@ -169,78 +197,105 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let zugaenge_offen = sicht.zugaenge_offen.contains(&eintrag.id);
 
     bausteine::karte_mit(ui, &f, &eintrag.titel, unter.as_deref(), aus, |ui| {
+        // `shrink_left`: die Knöpfe sitzen zuerst, ganz rechts, und der Text
+        // links bekommt den Rest und wird gekürzt. Mit `shrink_right` wüchse
+        // die Karte mit einem langen Zustandstext (etwa einer Liste fehlender
+        // Felder) über den Rand, die Knöpfe liefen hinaus und der Text
+        // darunter sähe aus, als läge er unter ihnen (Aufgabe 35).
         egui::Sides::new()
             .height(thema::SIZE_CONTROL_SM)
-            .shrink_right()
+            .shrink_left()
             .truncate()
             .show(
                 ui,
                 |ui| {
-                    bausteine::status(ui, &f, ton, &stand);
+                    if nicht_installiert {
+                        let satz = t(sprache, "tools.nicht_installiert_text");
+                        bausteine::status(ui, &f, Ton::Warnung, &satz).on_hover_text(satz);
+                    } else {
+                        bausteine::status(ui, &f, ton, &stand);
+                    }
                 },
                 |ui| {
-                    // Der Stift steht auf jeder Karte an derselben Stelle:
-                    // ganz rechts.
-                    if bausteine::icon_knopf(
-                        ui,
-                        &f,
-                        Icon::Bearbeiten,
-                        &t(sprache, "tools.bearbeiten"),
-                        false,
-                    )
-                    .clicked()
-                    {
-                        bearbeiten = true;
-                    }
-                    if wartet
-                        && bausteine::hauptknopf_mit(
-                            ui,
-                            &f,
-                            Icon::Schluessel,
-                            &t(sprache, "tools.wartet"),
-                        )
-                        .clicked()
-                    {
-                        angaben = true;
+                    // Der Knopf für die Angaben steht auf jeder Karte an
+                    // derselben Stelle: ganz rechts.
+                    match angaben_knopf {
+                        logik::Kartenknopf::Keiner => {}
+                        logik::Kartenknopf::AngabenErgaenzen => {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
+                                bausteine::hauptknopf_mit(
+                                    ui,
+                                    &f,
+                                    Icon::Schluessel,
+                                    &t(sprache, "tools.ergaenzen"),
+                                )
+                            }) {
+                                angaben = true;
+                            }
+                        }
+                        logik::Kartenknopf::Bearbeiten => {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
+                                bausteine::icon_knopf(
+                                    ui,
+                                    &f,
+                                    Icon::Bearbeiten,
+                                    &t(sprache, "tools.bearbeiten"),
+                                    false,
+                                )
+                            }) {
+                                bearbeiten = true;
+                            }
+                        }
                     }
                 },
             );
 
-        if let Some(fehler) = fehler {
+        // Der Fehlertext bricht um, auch mitten im Wort: eine lange Adresse
+        // oder ein Pfad darf die Karte nicht breiter machen als ihre
+        // Geschwister und nicht unter die Knöpfe laufen (Aufgabe 35).
+        //
+        // Fehlt das Programm, steht der Satz schon in der Zustandszeile; der
+        // technische Text des Startfehlers kommt nicht zusätzlich auf die
+        // Karte (Aufgabe 35, §5).
+        if let Some(fehler) = fehler.filter(|_| !nicht_installiert) {
             ui.add_space(thema::SPACE_1);
-            ui.add(egui::Label::new(text(&f, fehler, Ton::Fehler)).wrap());
+            bausteine::absatz(ui, &f, fehler, Ton::Fehler);
         }
         // Eine Kennung, die nicht als Präfix taugt: der Eintrag startet nicht,
         // und das Fenster sagt warum (Paket 3).
         if let Some(grund) = &eintrag.unzulaessig {
             ui.add_space(thema::SPACE_1);
-            ui.add(
-                egui::Label::new(text(
-                    &f,
-                    tf(sprache, "tools.kennung_unbrauchbar", &[grund]),
-                    Ton::Fehler,
-                ))
-                .wrap(),
+            bausteine::absatz(
+                ui,
+                &f,
+                tf(sprache, "tools.kennung_unbrauchbar", &[grund]),
+                Ton::Fehler,
             );
         }
         // Die Anmeldung (Aufgabe 10): ein Tool kann eine Anmeldung des Users
         // brauchen. Sie wird hier im Fenster ausgelöst, nie von einem Agenten.
-        if let Some(zustand) = &eintrag.anmeldung {
+        // Fehlt das Programm, gibt es nichts anzumelden (Aufgabe 35, §5).
+        if let Some(zustand) = eintrag.anmeldung.as_ref().filter(|_| !nicht_installiert) {
             ui.add_space(thema::SPACE_2);
             let zeile = logik::anmeldung_zeile(sprache, zustand);
             egui::Sides::new()
                 .height(thema::SIZE_CONTROL_SM)
-                .shrink_right()
+                .shrink_left()
                 .truncate()
                 .show(
                     ui,
                     |ui| {
-                        bausteine::status(ui, &f, zeile.ton, &zeile.text);
+                        if logik::dreht_sich(zustand) {
+                            // Eine Prüfung läuft: Drehsymbol, kein Knopf.
+                            bausteine::status_dreht(ui, &f, zeile.ton, &zeile.text);
+                        } else {
+                            bausteine::status(ui, &f, zeile.ton, &zeile.text);
+                        }
                     },
                     |ui| match zeile.knopf {
                         logik::AnmeldeKnopf::Keiner => {}
                         logik::AnmeldeKnopf::Anmelden => {
-                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
                                 bausteine::hauptknopf_mit(
                                     ui,
                                     &f,
@@ -251,20 +306,20 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                                 anmelden = true;
                             }
                         }
-                        logik::AnmeldeKnopf::Erneut => {
-                            if kartenknopf(ui, aus, &gesperrt, |ui| {
-                                bausteine::hauptknopf_mit(
+                        logik::AnmeldeKnopf::Pruefen => {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
+                                bausteine::knopf(
                                     ui,
                                     &f,
                                     Icon::Neuladen,
                                     &t(sprache, "anmeldung.erneut"),
                                 )
                             }) {
-                                anmelden = true;
+                                pruefen = true;
                             }
                         }
                         logik::AnmeldeKnopf::Abmelden => {
-                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
                                 bausteine::knopf(
                                     ui,
                                     &f,
@@ -280,13 +335,14 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
         }
         // Die Einrichtung (Aufgabe 11): Tools verwalten Zugänge in Profilen.
         // Eingerichtet wird auf der Seite des Tools selbst — „Einrichten“ ist
-        // ein normaler Knopf, kein Hauptknopf.
-        if let Some(zustand) = &eintrag.einrichtung {
+        // ein normaler Knopf, kein Hauptknopf. Ohne Programm gibt es auch
+        // nichts einzurichten (Aufgabe 35, §5).
+        if let Some(zustand) = eintrag.einrichtung.as_ref().filter(|_| !nicht_installiert) {
             ui.add_space(thema::SPACE_2);
             let zeile = logik::einrichtung_zeile(sprache, zustand);
             egui::Sides::new()
                 .height(thema::SIZE_CONTROL_SM)
-                .shrink_right()
+                .shrink_left()
                 .truncate()
                 .show(
                     ui,
@@ -296,7 +352,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     |ui| match zeile.knopf {
                         logik::EinrichtKnopf::Keiner => {}
                         logik::EinrichtKnopf::Einrichten => {
-                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
                                 bausteine::knopf(
                                     ui,
                                     &f,
@@ -308,7 +364,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                             }
                         }
                         logik::EinrichtKnopf::Erneut => {
-                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
                                 bausteine::knopf(
                                     ui,
                                     &f,
@@ -320,7 +376,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                             }
                         }
                         logik::EinrichtKnopf::Abbrechen => {
-                            if kartenknopf(ui, aus, &gesperrt, |ui| {
+                            if nur_wenn_an(ui, aus, &gesperrt, |ui| {
                                 bausteine::knopf(
                                     ui,
                                     &f,
@@ -354,6 +410,10 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                 )
                 .clicked()
                 {
+                    // „… hinzufügen“ führt zur Liste: sie klappt auf, und der
+                    // Dialog für den neuen Zugang steht davor. So braucht es
+                    // keinen zweiten Weg über den Stift (Aufgabe 35, §5).
+                    zugaenge_oeffnen = true;
                     zugang_neu = true;
                 }
             });
@@ -378,7 +438,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                         for zugang in &zugaenge.liste {
                             egui::Sides::new()
                                 .height(thema::SIZE_CONTROL_SM)
-                                .shrink_right()
+                                .shrink_left()
                                 .truncate()
                                 .show(
                                     ui,
@@ -428,17 +488,9 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                     });
             }
         }
-        // Was fehlt, mit der Erklärung des Felds — nicht nur der Name.
-        let fehlende = logik::fehlende_texte(&eintrag.fehlende);
-        if !fehlende.is_empty() {
-            ui.add_space(thema::SPACE_1);
-            ui.add(
-                egui::Label::new(
-                    text(&f, tf(sprache, "tools.fehlt", &[&fehlende]), Ton::Warnung).small(),
-                )
-                .wrap(),
-            );
-        }
+        // Was fehlt, steht im Abzeichen der Karte („Braucht Angaben: PFAD“).
+        // Eine zweite Zeile „Fehlt: …“ sagte dasselbe noch einmal
+        // (Aufgabe 35, §5).
 
         if !eintrag.tools.is_empty() {
             ui.add_space(thema::SPACE_2);
@@ -506,6 +558,9 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     if zugaenge_aufklappen {
         sicht.zugaenge_umschalten(&eintrag.id);
     }
+    if zugaenge_oeffnen {
+        sicht.zugaenge_oeffnen(&eintrag.id);
+    }
     if zugang_neu {
         sicht.zugang_dialog(eintrag, None);
     }
@@ -526,6 +581,11 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     }
     if anmelden {
         aktionen.push(Aktion::EintragAnmelden {
+            eintrag: eintrag.id.clone(),
+        });
+    }
+    if pruefen {
+        aktionen.push(Aktion::AnmeldungPruefen {
             eintrag: eintrag.id.clone(),
         });
     }
@@ -557,7 +617,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
 /// Einen Knopf der Karte zeichnen. Ist der Eintrag auf diesem Gerät
 /// abgeschaltet, bleibt der Knopf gesperrt und nennt am Zeiger den Grund
 /// (Aufgabe 19). `true` heißt: geklickt.
-fn kartenknopf(
+fn nur_wenn_an(
     ui: &mut egui::Ui,
     aus: bool,
     hinweis: &str,
