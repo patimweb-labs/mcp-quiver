@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI für mcp-quiver, **je Benutzer** (`Scope="perUser"`): Installation nach
+  %LOCALAPPDATA%\Programs\mcp-quiver, Startmenü-Verknüpfung, Eintrag unter
+  „Apps und Features" mit Symbol, Deinstallation ohne Administratorrechte.
+
+  Gebaut von `verteilung/windows/paket.ps1`:
+
+      wix build -arch x64 -d Version=<version> -d Quelle=<target\release> \
+                -d Wurzel=<repo> -d Symbol=<quiver.ico> \
+                -o <datei>.msi verteilung\windows\quiver.wxs
+
+  Die `UpgradeCode` bleibt für immer dieselbe — daran erkennt Windows, dass
+  eine neue Version die alte ersetzt. Nicht ändern.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package
+        Name="mcp-quiver"
+        Manufacturer="Patrick Weppelmann"
+        Version="$(var.Version)"
+        UpgradeCode="6f1c2a54-3b7e-4c2a-9d1f-2c0e6b8f4a17"
+        Scope="perUser"
+        Compressed="yes">
+
+        <SummaryInformation
+            Description="mcp-quiver — one endpoint for all MCP tools"
+            Manufacturer="Patrick Weppelmann" />
+
+        <MajorUpgrade
+            DowngradeErrorMessage="Eine neuere Version von mcp-quiver ist bereits installiert." />
+
+        <MediaTemplate EmbedCab="yes" />
+
+        <Icon Id="AppSymbol" SourceFile="$(var.Symbol)" />
+        <Property Id="ARPPRODUCTICON" Value="AppSymbol" />
+        <Property Id="ARPNOMODIFY" Value="1" />
+        <Property Id="ARPHELPLINK" Value="https://github.com/patimweb-labs/mcp-quiver" />
+
+        <!-- Je Benutzer: kein `Program Files`, keine Nachfrage nach Rechten. -->
+        <StandardDirectory Id="LocalAppDataFolder">
+            <Directory Id="Programme" Name="Programs">
+                <Directory Id="INSTALLFOLDER" Name="mcp-quiver" />
+            </Directory>
+        </StandardDirectory>
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Directory Id="Startmenue" Name="mcp-quiver" />
+        </StandardDirectory>
+
+        <Feature Id="Alles" Title="mcp-quiver" Level="1">
+            <ComponentGroupRef Id="Programm" />
+            <ComponentGroupRef Id="StartmenueVerknuepfung" />
+        </Feature>
+    </Package>
+
+    <Fragment>
+        <ComponentGroup Id="Programm" Directory="INSTALLFOLDER">
+            <Component>
+                <File Id="QuiverExe" Source="$(var.Quelle)\quiver.exe" KeyPath="yes" />
+            </Component>
+            <Component>
+                <File Id="Lizenz" Source="$(var.Wurzel)\LICENSE" />
+            </Component>
+            <Component>
+                <File Id="Liesmich" Source="$(var.Wurzel)\README.md" />
+            </Component>
+        </ComponentGroup>
+    </Fragment>
+
+    <Fragment>
+        <ComponentGroup Id="StartmenueVerknuepfung" Directory="Startmenue">
+            <Component>
+                <!-- `RegistryValue` als Schlüssel: die Verknüpfung selbst taugt
+                     nicht als KeyPath. `RemoveFolder` räumt den Startmenü-Ordner
+                     beim Deinstallieren weg. -->
+                <Shortcut Id="Verknuepfung"
+                    Name="mcp-quiver"
+                    Description="One endpoint for all MCP tools"
+                    Target="[INSTALLFOLDER]quiver.exe"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppSymbol" />
+                <RemoveFolder Id="StartmenueOrdner" On="uninstall" />
+                <RegistryValue Root="HKCU" Key="Software\Weppelmann\mcp-quiver"
+                    Name="Startmenue" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+        </ComponentGroup>
+    </Fragment>
+</Wix>

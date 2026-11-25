@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=mcp-quiver
+GenericName=MCP Tool Library Client
+GenericName[de]=Client für die MCP-Werkzeugbibliothek
+Comment=One endpoint for all MCP tools on this device
+Comment[de]=Ein Endpunkt für alle MCP-Werkzeuge dieses Geräts
+# Im PATH: das Paket legt das Programm unter /usr/bin ab.
+Exec=quiver
+Icon=de.weppelmann.mcp-quiver
+Terminal=false
+Categories=Development;Utility;
+Keywords=mcp;tools;agent;agents;
+# Dieselbe Kennung setzt der Client selbst
+# (`crates/fenster/src/main.rs`, `with_app_id`): Wayland findet das Symbol
+# darüber, X11 ordnet das Fenster über `StartupWMClass` zu.
+StartupWMClass=de.weppelmann.mcp-quiver
+StartupNotify=true

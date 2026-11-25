@@ -149,3 +149,22 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       Beenden verloren); gedacht für Läufe ohne Spuren.
 
 - [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.
+
+## Release (Aufgabe 31)
+- [ ] Das Windows-Paket (`.msi` mit WiX, portables `.zip`, `.ico`) ist hier
+      nicht baubar (macOS) — nur nach Vorlage geschrieben, nicht gelaufen. Die
+      PowerShell-Syntax ist nicht geprüft.
+- [ ] Die Linux-Pakete (`.deb`, `.rpm` über nfpm, AppImage) und die
+      aarch64-Bündel sind lokal nicht gelaufen; nfpm-Vorlage und die
+      AppStream-Metadaten haben noch keinen Prüflauf gesehen.
+- [ ] Signieren und Notarisieren ist nie mit echten Geheimnissen gelaufen —
+      der Weg ist geschrieben, aber unbewiesen. Bis dahin ist jedes macOS-Bündel
+      ad hoc signiert und jedes Windows-Paket unsigniert.
+- [ ] Die `.icns` entsteht aus `assets/marke/quiver-dock.png` (318 px) und wird
+      für 512 und 1024 hochskaliert; ein Bild in 1024 px fehlt (AGENTS.md §8).
+- [ ] Das AppImage wird mit `--no-appstream` gebaut; die mitgelieferten
+      Metainfo-Daten werden dabei nicht geprüft.
+- [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
+- [ ] Kein Release-Please/`CHANGELOG.md`: die Version wird von Hand gehoben
+      (AGENTS.md §6 nennt release-please, Aufgabe 31 verlangt es nicht).
+- [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.

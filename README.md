@@ -194,6 +194,33 @@ it again. At most 200 groups are created this way.
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
 | `QUIVER_ALTGERAETE` | `gesperrt` (default once Entra is configured, otherwise `erlaubt`) for devices without a user |
 
+## Install the client
+
+`quiver` is the program on the device: it installs and runs the tools, keeps
+the credentials and is the one endpoint every agent talks to. Ready-made
+packages come from [Releases](https://github.com/patimweb-labs/mcp-quiver/releases):
+
+| System | File | Install |
+| --- | --- | --- |
+| macOS, Apple Silicon | `quiver-<version>-macos-arm64.dmg` | open, drag `quiver.app` to *Applications* |
+| macOS, Intel | `quiver-<version>-macos-x86_64.dmg` | same |
+| Windows x86_64 | `quiver-<version>-windows-x86_64.msi` | double click — installs for the current user, no administrator |
+| Windows x86_64, portable | `quiver-<version>-windows-x86_64.zip` | unzip, run `quiver.exe` |
+| Debian, Ubuntu | `mcp-quiver_<version>_<amd64\|arm64>.deb` | `sudo apt install ./mcp-quiver_<version>_amd64.deb` |
+| Fedora, openSUSE | `mcp-quiver-<version>.<x86_64\|aarch64>.rpm` | `sudo dnf install ./mcp-quiver-<version>.x86_64.rpm` |
+| any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, run it |
+| any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | unpack, run `bin/quiver` |
+
+The packages are **unsigned** unless the maintainer signs them: Gatekeeper and
+SmartScreen ask once on the first start (what that means and how to get past
+it: [docs/release.md](docs/release.md#what-unsigned-means)). Every release
+also carries `SHA256SUMS` and a build provenance you can verify with
+`gh attestation verify`.
+
+After the first start the client sits in the tray, and the tools are reachable
+for agents at `http://127.0.0.1:8741/mcp`. Building a package yourself:
+[docs/release.md](docs/release.md#building-a-package-locally).
+
 ## Development
 
 ```bash

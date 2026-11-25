@@ -1,0 +1,307 @@
+# Client-Pakete für macOS (arm64 + Intel), Windows und Linux (x86_64 +
+# aarch64), dazu ein GitHub-Release mit Prüfsummen und Herkunftsnachweis.
+#
+#   Tag vX.Y.Z           -> bauen, Release anlegen (oder ergänzen), alles anhängen
+#   „Run workflow“       -> nur bauen, Pakete liegen als Artefakte am Lauf
+#   Pull Request         -> nur bauen, wenn Pipelines oder Paket-Skripte sich
+#                           ändern (kein Release, keine Geheimnisse)
+#
+# Das Server-Abbild ist nicht hier: `abbild.yml` baut es weiterhin.
+#
+# Was hier gebaut wird, steht in `verteilung/` und läuft auch lokal:
+#   verteilung/macos/paket.sh      .app + .dmg (ad hoc oder signiert/notarisiert)
+#   verteilung/linux/paket.sh      .tar.gz, .deb, .rpm, AppImage
+#   verteilung/windows/paket.ps1   .msi (je Benutzer) + portables .zip
+#
+# **Unsigniert ist der Normalfall** (kein Apple-Konto, kein
+# Windows-Zertifikat): macOS wird ad hoc signiert, Gatekeeper und SmartScreen
+# fragen beim ersten Start. Sind die macOS-Geheimnisse gesetzt, wird signiert
+# und notarisiert; was dabei herauskam, steht im Release-Text. Auf Pull
+# Requests werden Geheimnisse **nicht** angefasst — dort läuft der Schritt
+# ohne sie.
+#
+# Rechte: `permissions` ist überall leer, jeder Job nimmt sich nur, was er
+# braucht (Lesen); schreiben darf allein der letzte Job.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+    # Nur zum Erproben, kommt vor dem Merge wieder weg: baut, veröffentlicht nichts.
+    branches: [feat/release]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "verteilung/**"
+      - "assets/marke/**"
+  workflow_dispatch:
+
+# Zwei Läufe am selben Tag würden sich die Dateien am Release streitig machen.
+# Nicht abbrechen: ein halb hochgeladenes Release ist schlimmer als ein spätes.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # `aws-lc-sys` (TLS in reqwest/rustls) bräuchte unter Windows sonst NASM.
+  AWS_LC_SYS_PREBUILT_NASM: "1"
+
+jobs:
+  # Der Tag muss die Version aus `[workspace.package]` tragen — sonst hieße das
+  # Release anders als das Programm in seinem eigenen Protokoll.
+  version:
+    name: Version und Tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      veroeffentlichen: ${{ steps.v.outputs.veroeffentlichen }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Version aus Cargo.toml gegen den Tag prüfen
+        id: v
+        env:
+          EREIGNIS: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(verteilung/version.sh)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          tag=""
+          if [ "$EREIGNIS" = "push" ] && [ "${REF#refs/tags/}" != "$REF" ]; then
+            tag="$REF_NAME"
+          fi
+
+          if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then
+            echo "::error::Tag »$tag« passt nicht zu »v$version« aus Cargo.toml."
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ]; then
+            echo "veroeffentlichen=ja" >> "$GITHUB_OUTPUT"
+          else
+            echo "veroeffentlichen=nein" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version $version, Tag ${tag:-keiner}"
+
+  # Nativ auf dem jeweiligen Läufer gebaut, kein Cross-Compile: Rust unter
+  # Emulation braucht eine Stunde statt Minuten.
+  #
+  # `fail-fast: false`: ein gescheitertes Linux ist kein Grund, macOS nicht
+  # hochzuladen. Der Lauf bleibt rot, ein zweiter Anlauf ergänzt das Fehlende.
+  pakete:
+    name: Paket ${{ matrix.name }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64, os: macos-latest, arch: arm64 }
+          # Intel-Bündel auf einem Intel-Läufer; `macos-13` ist eingestellt.
+          - { name: macos-x86_64, os: macos-15-intel, arch: x86_64 }
+          - { name: windows-x86_64, os: windows-2025, arch: x86_64 }
+          # 22.04: ältere glibc (2.35) — die Programme laufen damit auch auf
+          # älteren Systemen, nicht nur auf dem neuesten.
+          - { name: linux-x86_64, os: ubuntu-22.04, arch: x86_64 }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `file` und `libfuse2` braucht appimagetool; nfpm holt sich das Skript
+      # selbst (feste Version, feste Prüfsumme).
+      - name: Werkzeuge für die Pakete
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends file libfuse2
+
+      # Zwei Schritte statt einem: so wird auf Pull Requests **kein** Secret
+      # ausgewertet, auch nicht als leerer Wert.
+      - name: Paket bauen (macOS, mit Geheimnissen)
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: verteilung/macos/paket.sh
+
+      - name: Paket bauen (macOS, unsigniert)
+        if: runner.os == 'macOS' && github.event_name == 'pull_request'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: verteilung/macos/paket.sh
+
+      - name: Paket bauen (Linux)
+        if: runner.os == 'Linux'
+        run: verteilung/linux/paket.sh
+
+      - name: Paket bauen (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./verteilung/windows/paket.ps1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: paket-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/*.dmg
+            dist/SIGNIERT.txt
+            dist/*.msi
+            dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/*.tar.gz
+
+  # Der einzige Job mit Schreibrechten: Prüfsummen, Herkunftsnachweis, Release.
+  veroeffentlichen:
+    name: Prüfsummen und Release
+    needs: [version, pakete]
+    if: needs.version.outputs.veroeffentlichen == 'ja'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: paket-*
+          path: aus
+
+      - name: Pakete einsammeln
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find aus -type f \
+            \( -name '*.dmg' -o -name '*.msi' -o -name '*.zip' -o -name '*.deb' \
+               -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.tar.gz' \) \
+            -exec cp {} release/ \;
+          if [ -z "$(ls -A release)" ]; then
+            echo "::error::Keine Pakete da — die Bau-Jobs sind gescheitert."
+            exit 1
+          fi
+          ls -la release
+
+      - name: Prüfsummen
+        working-directory: release
+        run: |
+          set -euo pipefail
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      # Herkunft: bescheinigt, dass diese Dateien in diesem Lauf aus diesem
+      # Commit entstanden sind. Prüfen mit
+      #   gh attestation verify <datei> --repo <repo>
+      #
+      # Über `SHA256SUMS` statt über Namensmuster: fällt eine Plattform aus,
+      # steht ihre Datei nicht in der Liste, und der Job scheitert nicht an
+      # einem Muster, das nichts trifft. Das Format der Datei ist genau das,
+      # das der Schritt erwartet (Prüfsumme, zwei Leerzeichen, Name).
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Release-Text schreiben
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Was der macOS-Bau über seine Signatur gesagt hat (siehe
+          # `verteilung/macos/paket.sh`): signiert-und-notarisiert, signiert
+          # oder unsigniert.
+          macos=$(cat aus/paket-macos-arm64/SIGNIERT.txt 2>/dev/null || echo unbekannt)
+
+          # Der Text steht ohne Ausdrücke in der Datei, damit nichts doppelt
+          # ausgewertet wird; die Platzhalter ersetzt `sed` danach.
+          cat > release-text.md <<'TEXT'
+          ## mcp-quiver @VERSION@
+
+          Der Client `quiver` — ein Endpunkt für alle MCP-Werkzeuge des Geräts.
+          Das Server-Abbild baut weiterhin `abbild.yml`.
+
+          | Plattform | Dateien |
+          |---|---|
+          | macOS arm64 | `.dmg` mit `quiver.app` |
+          | macOS x86_64 | `.dmg` mit `quiver.app` |
+          | Windows x86_64 | `.msi` (je Benutzer) und portables `.zip` |
+          | Linux x86_64 | `.deb`, `.rpm`, AppImage, `.tar.gz` |
+          | Linux aarch64 | `.deb`, `.rpm`, AppImage, `.tar.gz` |
+
+          ### Signiert
+
+          macOS: **@MACOS@**. Windows: **unsigniert**.
+          TEXT
+
+          if [ "$macos" = unsigniert ] || [ "$macos" = unbekannt ]; then
+            cat >> release-text.md <<'TEXT'
+
+          Unsigniert heißt: Gatekeeper und SmartScreen fragen beim ersten Start
+          nach einer Bestätigung. macOS: Rechtsklick → *Öffnen* oder
+          *Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“*.
+          Windows: *Weitere Informationen → Trotzdem ausführen*.
+          TEXT
+          fi
+
+          cat >> release-text.md <<'TEXT'
+
+          ### Prüfen
+
+          ```bash
+          sha256sum -c SHA256SUMS
+          gh attestation verify <datei> --repo @REPOSITORY@
+          ```
+          TEXT
+
+          sed -i \
+            -e "s|@VERSION@|$VERSION|g" \
+            -e "s|@MACOS@|$macos|g" \
+            -e "s|@REPOSITORY@|$REPOSITORY|g" \
+            release-text.md
+          cat release-text.md
+
+      - name: Release anlegen oder ergänzen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-text.md
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file release-text.md --verify-tag
+          fi
+          gh release upload "$TAG" release/* -R "$GITHUB_REPOSITORY" --clobber

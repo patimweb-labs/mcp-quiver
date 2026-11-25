@@ -202,6 +202,34 @@ aufnehmen. Höchstens 200 Gruppen legt der Server auf diesem Weg an.
 | `QUIVER_PROXIES` | CIDR-Liste, von der `X-Forwarded-For` geglaubt wird |
 | `QUIVER_ALTGERAETE` | `gesperrt` (Standard, sobald Entra eingerichtet ist, sonst `erlaubt`) für Geräte ohne Benutzer |
 
+## Client installieren
+
+`quiver` ist das Programm auf dem Gerät: es richtet die Werkzeuge ein, führt sie
+aus, behält die Zugangsdaten und ist der eine Endpunkt, mit dem jeder Agent
+spricht. Fertige Pakete liegen unter
+[Releases](https://github.com/patimweb-labs/mcp-quiver/releases):
+
+| System | Datei | Installation |
+| --- | --- | --- |
+| macOS, Apple Silicon | `quiver-<version>-macos-arm64.dmg` | öffnen, `quiver.app` nach *Programme* ziehen |
+| macOS, Intel | `quiver-<version>-macos-x86_64.dmg` | genauso |
+| Windows x86_64 | `quiver-<version>-windows-x86_64.msi` | Doppelklick — installiert für den angemeldeten Benutzer, ohne Administrator |
+| Windows x86_64, portabel | `quiver-<version>-windows-x86_64.zip` | entpacken, `quiver.exe` starten |
+| Debian, Ubuntu | `mcp-quiver_<version>_<amd64\|arm64>.deb` | `sudo apt install ./mcp-quiver_<version>_amd64.deb` |
+| Fedora, openSUSE | `mcp-quiver-<version>.<x86_64\|aarch64>.rpm` | `sudo dnf install ./mcp-quiver-<version>.x86_64.rpm` |
+| jedes Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, starten |
+| jedes Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | entpacken, `bin/quiver` starten |
+
+Die Pakete sind **unsigniert**, solange der Betreuer sie nicht signiert:
+Gatekeeper und SmartScreen fragen beim ersten Start einmal nach (was das heißt
+und wie man daran vorbeikommt: [docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet)).
+Jedes Release trägt außerdem `SHA256SUMS` und einen Herkunftsnachweis, den man
+mit `gh attestation verify` prüft.
+
+Nach dem ersten Start sitzt der Client im Tray, und die Werkzeuge sind für
+Agenten unter `http://127.0.0.1:8741/mcp` erreichbar. Ein Paket selbst bauen:
+[docs/release.de.md](docs/release.de.md#ein-paket-lokal-bauen).
+
 ## Entwicklung
 
 ```bash

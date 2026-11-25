@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream-Metadaten für die Paketverwaltung. `__VERSION__` und `__DATUM__`
+  ersetzt `verteilung/linux/paket.sh` beim Bauen.
+
+  Die Kennung ist dieselbe wie die Wayland-App-Id des Clients und der Name der
+  `.desktop`-Datei (`de.weppelmann.mcp-quiver.desktop`).
+-->
+<component type="desktop-application">
+    <id>de.weppelmann.mcp-quiver</id>
+    <name>mcp-quiver</name>
+    <summary>One endpoint for all MCP tools on this device</summary>
+    <summary xml:lang="de">Ein Endpunkt für alle MCP-Werkzeuge dieses Geräts</summary>
+    <developer id="de.weppelmann">
+        <name>Patrick Weppelmann</name>
+    </developer>
+    <metadata_license>MIT</metadata_license>
+    <project_license>MIT</project_license>
+    <description>
+        <p>
+            mcp-quiver is the client of a central library of MCP tools. The
+            client installs, configures and runs the tools an administrator
+            assigned to the user's groups, keeps the credentials on the
+            device and offers them to every agent through a single local
+            endpoint.
+        </p>
+        <p>
+            Der Client gehört zu einer zentralen Bibliothek von MCP-Werkzeugen.
+            Er installiert, richtet ein und startet die Werkzeuge, die die
+            Verwaltung den Gruppen des Benutzers zugewiesen hat, behält die
+            Zugangsdaten auf dem Gerät und bietet sie jedem Agenten über einen
+            einzigen lokalen Endpunkt an.
+        </p>
+        <ul>
+            <li>One endpoint for pi, Hermes and every other MCP agent</li>
+            <li>Tool sets by Entra ID group, handed out by the server</li>
+            <li>Credentials stay on the device, in an encrypted vault file</li>
+        </ul>
+    </description>
+    <launchable type="desktop-id">de.weppelmann.mcp-quiver.desktop</launchable>
+    <url type="homepage">https://github.com/patimweb-labs/mcp-quiver</url>
+    <url type="bugtracker">https://github.com/patimweb-labs/mcp-quiver/issues</url>
+    <provides>
+        <binary>quiver</binary>
+    </provides>
+    <categories>
+        <category>Development</category>
+        <category>Utility</category>
+    </categories>
+    <content_rating type="oars-1.1"/>
+    <releases>
+        <release version="__VERSION__" date="__DATUM__"/>
+    </releases>
+</component>
