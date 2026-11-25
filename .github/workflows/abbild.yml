@@ -4,14 +4,18 @@
 #   Tag v1.2.3           -> 1.2.3, 1.2, latest, sha-<commit>
 #   „Run workflow“       -> sha-<commit>
 #
-# Bis der Branch gemergt ist, baut auch `feat/grundgeruest` (für den ersten Server).
+# Der Tag entsteht durch release-please. Weil ein von `GITHUB_TOKEN` erzeugter
+# Tag diesen Workflow nicht auslöst, startet `release.yml` ihn nach einem
+# Release ausdrücklich mit `workflow_dispatch` auf dem Tag; ein von Hand
+# geschobener Tag löst ihn selbst aus.
+#
 # Angemeldet wird mit den Repo-Secrets DOCKERHUB_USERNAME und DOCKERHUB_TOKEN;
 # fehlen sie, wird nichts gebaut und der Lauf sagt es.
 name: Abbild
 
 on:
   push:
-    branches: [main, feat/grundgeruest]
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 

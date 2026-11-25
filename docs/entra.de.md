@@ -15,7 +15,7 @@ Ohne Entra läuft quiver auch: Dann gibt es nur den Root-Benutzer und Einmal-Cod
 ## Was du brauchst
 
 - Einen quiver-Server mit eingerichtetem Root ([README](../README.de.md)).
-- Eine Adresse: `https://quiver.firma.de`. `http` geht nur auf dem eigenen Rechner (`http://localhost:8740`).
+- Eine Adresse: `https://quiver.example.test`. `http` geht nur auf dem eigenen Rechner (`http://localhost:8740`).
 - Im Tenant eine Rolle, die Apps anlegen und Zustimmung erteilen darf (z. B. **Anwendungsadministrator** oder **Cloudanwendungsadministrator**).
 - Um **Gruppen** einer App zuzuweisen, braucht der Tenant **Entra ID P1** oder höher.
 

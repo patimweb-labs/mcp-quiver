@@ -6,7 +6,7 @@
 //! „Kommandozeile“. Der laufende Server bemerkt Änderungen über
 //! `PRAGMA data_version` (siehe `beobachte_datenbank`).
 
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -162,27 +162,60 @@ fn zweimal_lesen() -> anyhow::Result<String> {
     Ok(erstes)
 }
 
-/// Liest eine Zeile ohne Anzeige, wo das geht (`stty`), sonst sichtbar.
+/// Liest eine Zeile, ohne sie anzuzeigen.
+///
+/// Verbergen kann nur `stty`. Fehlt es (im distroless-Abbild ist es nicht
+/// enthalten) und kommt die Eingabe von einem Terminal, bricht der Aufruf ab:
+/// ein Passwort wird nicht sichtbar gelesen. Von einer Pipe oder Datei wird
+/// ohnehin nichts angezeigt — dort geht es ohne `stty`, genau wie `--stdin`.
 fn verdeckt_lesen() -> anyhow::Result<String> {
-    let mut zeile = String::new();
+    let terminal = io::stdin().is_terminal();
     #[cfg(unix)]
-    let stumm = Command::new("stty")
-        .arg("-echo")
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
+    let stumm = terminal && schalte_echo(false);
     #[cfg(not(unix))]
     let stumm = false;
-    if !stumm {
-        eprintln!("Hinweis: Eingabe ist sichtbar (kein stty). Für Skripte: --stdin.");
-    }
-    let ergebnis = io::stdin().read_line(&mut zeile);
+
+    let ergebnis = zeile_lesen(terminal, stumm, &mut io::stdin().lock());
+
+    // Die Eingabe wieder anzeigen — auch wenn das Lesen scheiterte.
     #[cfg(unix)]
     if stumm {
-        let _ = Command::new("stty").arg("echo").status();
+        schalte_echo(true);
         eprintln!();
     }
-    ergebnis.context("Passwort lesen")?;
+    ergebnis
+}
+
+/// Schaltet die Anzeige der Eingabe an oder aus; `false`, wenn `stty` fehlt
+/// oder scheitert.
+#[cfg(unix)]
+fn schalte_echo(an: bool) -> bool {
+    Command::new("stty")
+        .arg(if an { "echo" } else { "-echo" })
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Die eigentliche Entscheidung, prüfbar ohne Terminal: liegt die Eingabe auf
+/// einem Terminal (`terminal`) und lässt sie sich dort **nicht** verbergen
+/// (`stumm`), wird nichts gelesen.
+fn zeile_lesen<R: std::io::BufRead>(
+    terminal: bool,
+    stumm: bool,
+    quelle: &mut R,
+) -> anyhow::Result<String> {
+    if terminal && !stumm {
+        anyhow::bail!(
+            "Die Eingabe lässt sich hier nicht verbergen (kein `stty`); ein Passwort \
+             wird nicht sichtbar gelesen. Übergabe über `--stdin`, z. B.\n  \
+             read -rsp 'Neues Passwort: ' P; echo\n  \
+             printf '%s\\n' \"$P\" | quiver-server root-setzen <email> --stdin\n  \
+             unset P"
+        );
+    }
+    let mut zeile = String::new();
+    quelle.read_line(&mut zeile).context("Passwort lesen")?;
     Ok(zeile.trim_end_matches(['\n', '\r']).to_string())
 }
 
@@ -373,5 +406,36 @@ mod tests {
         assert!(ist_gesund(&["gesund".into()]));
         assert!(!ist_gesund(&["gesund".into(), "x".into()]));
         assert!(!ist_gesund(&["root-setzen".into()]));
+    }
+
+    /// Ohne `stty` (distroless-Abbild) darf ein Passwort nicht sichtbar von
+    /// einem Terminal gelesen werden — lieber abbrechen und `--stdin` nennen.
+    #[test]
+    fn sichtbare_passworteingabe_wird_abgelehnt() {
+        let mut quelle = std::io::Cursor::new("geheim\n");
+        let fehler = zeile_lesen(true, false, &mut quelle)
+            .expect_err("sichtbares Lesen muss abbrechen")
+            .to_string();
+        assert!(
+            fehler.contains("--stdin"),
+            "die Meldung muss den Ausweg nennen: {fehler}"
+        );
+        assert!(
+            fehler.contains("stty"),
+            "die Meldung muss den Grund nennen: {fehler}"
+        );
+        // Nichts wurde gelesen: das Passwort bleibt in der Quelle.
+        assert_eq!(quelle.position(), 0);
+    }
+
+    /// Verdeckt am Terminal und ohne Terminal (Pipe, `--stdin`) wird gelesen.
+    #[test]
+    fn verdeckt_und_ohne_terminal_wird_gelesen() {
+        let mut quelle = std::io::Cursor::new("erstes\nzweite Zeile\n");
+        assert_eq!(zeile_lesen(true, true, &mut quelle).unwrap(), "erstes");
+        assert_eq!(
+            zeile_lesen(false, false, &mut quelle).unwrap(),
+            "zweite Zeile"
+        );
     }
 }

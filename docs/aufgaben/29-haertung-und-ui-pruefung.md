@@ -28,7 +28,7 @@ Ausdrücklicher Wunsch des Nutzers. Gemeinsam durchgehen, Punkt für Punkt: Wie 
 | Nachvollziehbarkeit | Prüfspur vollständig und nicht veränderbar? Datenschutz und Löschfristen |
 | Notfall | Gerät gestohlen, Konto übernommen, Schlüssel verloren, Server kompromittiert: Übung am Testserver |
 
-Ablauf: Bedrohungsmodell → Code-Durchsicht je Bereich durch zwei getrennte Prüfer (nicht der Entwickler) → Werkzeuge (`cargo audit/deny`, Geheimnis-Suche im gesamten Git-Verlauf, OWASP ASVS Stufe 2 für die Verwaltung) → Angriffstest am Testserver → Befunde beheben → Nachtest. Nur gegen eigene Testsysteme, nie gegen echte Dienste. Empfehlung: vor dem Einsatz außerhalb von neoimpulse zusätzlich ein externer Test.
+Ablauf: Bedrohungsmodell → Code-Durchsicht je Bereich durch zwei getrennte Prüfer (nicht der Entwickler) → Werkzeuge (`cargo audit/deny`, Geheimnis-Suche im gesamten Git-Verlauf, OWASP ASVS Stufe 2 für die Verwaltung) → Angriffstest am Testserver → Befunde beheben → Nachtest. Nur gegen eigene Testsysteme, nie gegen echte Dienste. Empfehlung: vor dem Einsatz außerhalb des eigenen Betriebs zusätzlich ein externer Test.
 
 ## B. Oberfläche (Client und Verwaltung)
 

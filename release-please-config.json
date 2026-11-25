@@ -1,0 +1,69 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "pull-request-title-pattern": "chore: Release ${version}",
+  "pull-request-header": "Wenn dieser PR gemergt wird, entsteht das Release ${version}: Tag, Client-Pakete für macOS, Windows und Linux, Prüfsummen, Herkunftsnachweis und das Server-Abbild.",
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Neu"
+    },
+    {
+      "type": "fix",
+      "section": "Behoben"
+    },
+    {
+      "type": "perf",
+      "section": "Schneller"
+    },
+    {
+      "type": "refactor",
+      "section": "Umgebaut"
+    },
+    {
+      "type": "docs",
+      "section": "Dokumentation"
+    },
+    {
+      "type": "build",
+      "section": "Bau und Pakete"
+    },
+    {
+      "type": "ci",
+      "section": "CI",
+      "hidden": true
+    },
+    {
+      "type": "test",
+      "section": "Tests",
+      "hidden": true
+    },
+    {
+      "type": "chore",
+      "section": "Sonstiges",
+      "hidden": true
+    }
+  ],
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "mcp-quiver",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == 'quiver-domain' || @.name.value == 'quiver-bibliothek' || @.name.value == 'quiver-protocol' || @.name.value == 'quiver-server' || @.name.value == 'quiver-client' || @.name.value == 'quiver-oberflaeche' || @.name.value == 'quiver-fenster')].version"
+        }
+      ]
+    }
+  }
+}

@@ -23,8 +23,8 @@ npm run dev        # Vite auf 5173; /api geht an http://127.0.0.1:8740
 npm run build      # nach admin/dist (der Server liefert sie unter / aus)
 npm run typecheck  # vue-tsc
 npm test           # vitest, reine Logik
-npm run bilder     # Bildschirmfotos: Muster immer, Verwaltung mit Server
-npm run bilder:benutzer     # Benutzer, Prüfspur, Geräte mit Entra (eigener Server)
+npm run bilder     # Bildschirmfotos: Muster und die Seiten vor der Anmeldung
+npm run bilder:benutzer     # Bibliothek, Gruppen, Benutzer, Prüfspur, Geräte (eigener Server)
 npm run pruefung            # Browser-Prüfung gegen den echten Server
 npm run pruefung:anmeldung  # Browser-Prüfung der Geräteanmeldung (+ Entra-Nachbau)
 ```
@@ -167,12 +167,17 @@ Stand gibt es sie nicht.
   Skript ersetzt im Browser die Antworten von `/auth/stand` und
   `/api/v1/auth/ich`, damit jeder Zustand einmal zu sehen ist. Kein Server,
   keine Zugangsdaten.
-- `admin-{dark,light}-{bibliothek,geraete}.png` — dafür muss ein Server mit
-  Daten und gesetztem Root laufen und `admin/dist` gebaut sein (`npm run
-  build`); die Adresse kommt aus `QUIVER_BILD_BASIS` (Standard
-  `http://127.0.0.1:8740`), die Anmeldung über die echte Seite aus
-  `QUIVER_BILD_EMAIL` und `QUIVER_BILD_PASSWORT`. Fehlen sie, bleiben diese
-  Bilder unverändert.
+
+Die Seiten **hinter** der Anmeldung schreibt `npm run bilder:benutzer`:
+
+- `admin-{dark,light,mono}-{bibliothek,gruppen,benutzer,pruefspur,geraete}.png`
+  (1440 × 900) und je eine schmale Fassung (560 px) — gegen einen **eigenen**
+  `quiver-server` auf einem freien Port, mit temporärer Datenbank, gebautem
+  `admin/dist` und einem Entra-Nachbau: ein erfundener Katalog (`example.test`),
+  zwei Personen („Alex Beispiel“, „Ben Beispiel“), eine Gruppe aus Entra, eine
+  lokale. Aus einem echten Profil entsteht bewusst kein Bild.
+  `QUIVER_BILD_SEITEN=bibliothek,gruppen` schreibt nur diese Seiten und lässt
+  die übrigen unverändert.
 
 ## Prüfungen im Browser
 

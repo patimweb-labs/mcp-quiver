@@ -1,12 +1,25 @@
 # Client-Pakete für macOS (arm64 + Intel), Windows und Linux (x86_64 +
 # aarch64), dazu ein GitHub-Release mit Prüfsummen und Herkunftsnachweis.
 #
-#   Tag vX.Y.Z           -> bauen, Release anlegen (oder ergänzen), alles anhängen
-#   „Run workflow“       -> nur bauen, Pakete liegen als Artefakte am Lauf
-#   Pull Request         -> nur bauen, wenn Pipelines oder Paket-Skripte sich
-#                           ändern (kein Release, keine Geheimnisse)
+#   Merge eines Release-PR  -> release-please legt Tag und Release an, danach
+#                              wird im **selben** Lauf gebaut und angehängt
+#   Tag vX.Y.Z (von Hand)   -> bauen, Release anlegen (oder ergänzen), anhängen
+#   Push nach main ohne
+#   neues Release           -> nur der Release-PR wird geführt, nichts gebaut
+#   „Run workflow“          -> nur bauen, Pakete liegen als Artefakte am Lauf
+#   Pull Request            -> nur bauen, wenn Pipelines oder Paket-Skripte sich
+#                              ändern (kein Release, keine Geheimnisse)
 #
-# Das Server-Abbild ist nicht hier: `abbild.yml` baut es weiterhin.
+# Warum Tag und Bau in einem Lauf: Ein Tag, den `GITHUB_TOKEN` anlegt, löst
+# **keine** weiteren Workflows aus. release-please erzeugt den Tag hier, also
+# muss dieser Lauf auch bauen und veröffentlichen. Der Weg „Tag von Hand“
+# bleibt daneben bestehen; er löst den Lauf direkt aus.
+#
+# Das Server-Abbild baut weiterhin `abbild.yml`. Weil ein Tag von
+# `GITHUB_TOKEN` auch dort keinen Lauf auslöst, stößt der Job `abbild` den
+# Workflow nach einem von release-please erzeugten Tag ausdrücklich an
+# (`workflow_dispatch` ist die Ausnahme von dieser Regel). Bei einem Tag von
+# Hand löst der Tag selbst `abbild.yml` aus.
 #
 # Was hier gebaut wird, steht in `verteilung/` und läuft auch lokal:
 #   verteilung/macos/paket.sh      .app + .dmg (ad hoc oder signiert/notarisiert)
@@ -21,15 +34,22 @@
 # ohne sie.
 #
 # Rechte: `permissions` ist überall leer, jeder Job nimmt sich nur, was er
-# braucht (Lesen); schreiben darf allein der letzte Job.
+# braucht (Lesen); schreiben darf allein der Release-Job.
+#
+# Bedingungen: In einem Job **ohne** Statusfunktion prüft GitHub stillschweigend
+# `success()` über **alle** Vorfahren. Ein übersprungener Job (etwa
+# `release_please` bei einem Tag von Hand, bei einem Pull Request oder bei
+# „Run workflow“) würde damit `pakete`, `veroeffentlichen` und `abbild`
+# mitreißen. Deshalb steht überall ausdrücklich `!cancelled() &&
+# needs.<job>.result == 'success' && …`; `!cancelled()` statt `always()`, weil
+# ein abgebrochener Lauf auch nicht weiterbauen soll.
 
 name: Release
 
 on:
   push:
     tags: ["v*"]
-    # Nur zum Erproben, kommt vor dem Merge wieder weg: baut, veröffentlicht nichts.
-    branches: [feat/release]
+    branches: [main]
   pull_request:
     paths:
       - ".github/workflows/release.yml"
@@ -51,10 +71,34 @@ env:
   AWS_LC_SYS_PREBUILT_NASM: "1"
 
 jobs:
+  # Hält den Release-PR aktuell und legt beim Merge des Release-PR den Tag und
+  # das GitHub-Release an. Die Version steht in `release-please-config.json`
+  # (Cargo.toml und Cargo.lock), die Historie in `.release-please-manifest.json`.
+  release_please:
+    name: Release-PR und Tag
+    if: "!cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   # Der Tag muss die Version aus `[workspace.package]` tragen — sonst hieße das
   # Release anders als das Programm in seinem eigenen Protokoll.
   version:
     name: Version und Tag
+    needs: release_please
+    # `skipped` ist der Normalfall: bei einem Tag von Hand, einem Pull Request
+    # und „Run workflow“ läuft release-please nicht.
+    if: "!cancelled() && (needs.release_please.result == 'success' || needs.release_please.result == 'skipped')"
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -62,6 +106,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
       veroeffentlichen: ${{ steps.v.outputs.veroeffentlichen }}
+      selbst_erzeugt: ${{ steps.v.outputs.selbst_erzeugt }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -74,14 +119,22 @@ jobs:
           EREIGNIS: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
+          RP_RELEASED: ${{ needs.release_please.outputs.released }}
+          RP_TAG: ${{ needs.release_please.outputs.tag }}
         run: |
           set -euo pipefail
           version=$(verteilung/version.sh)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
           tag=""
+          selbst_erzeugt=nein
           if [ "$EREIGNIS" = "push" ] && [ "${REF#refs/tags/}" != "$REF" ]; then
+            # Tag von Hand: dieser Lauf ist der Bau dazu.
             tag="$REF_NAME"
+          elif [ "$EREIGNIS" = "push" ] && [ "${REF#refs/heads/}" != "$REF" ] && [ "$RP_RELEASED" = "true" ]; then
+            # release-please hat in diesem Lauf Tag und Release angelegt.
+            tag="$RP_TAG"
+            selbst_erzeugt=ja
           fi
 
           if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then
@@ -90,6 +143,7 @@ jobs:
           fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "selbst_erzeugt=$selbst_erzeugt" >> "$GITHUB_OUTPUT"
           if [ -n "$tag" ]; then
             echo "veroeffentlichen=ja" >> "$GITHUB_OUTPUT"
           else
@@ -101,10 +155,16 @@ jobs:
   # Emulation braucht eine Stunde statt Minuten.
   #
   # `fail-fast: false`: ein gescheitertes Linux ist kein Grund, macOS nicht
-  # hochzuladen. Der Lauf bleibt rot, ein zweiter Anlauf ergänzt das Fehlende.
+  # zu bauen — so steht in einem Lauf da, **welche** Plattformen brechen. Der
+  # Lauf bleibt rot, und weil `veroeffentlichen` `needs.pakete.result ==
+  # 'success'` verlangt, wird dann nichts veröffentlicht.
   pakete:
     name: Paket ${{ matrix.name }}
     needs: version
+    # Auf einem Push nach main ohne neues Release gibt es nichts zu bauen.
+    # Gebaut wird auf jedem Weg, der Pakete liefern kann: Tag von Hand,
+    # gemergter Release-PR, Pull Request und „Run workflow“.
+    if: "!cancelled() && needs.version.result == 'success' && (needs.version.outputs.veroeffentlichen == 'ja' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')"
     strategy:
       fail-fast: false
       matrix:
@@ -187,7 +247,10 @@ jobs:
   veroeffentlichen:
     name: Prüfsummen und Release
     needs: [version, pakete]
-    if: needs.version.outputs.veroeffentlichen == 'ja'
+    # Nur mit Tag **und** mit allen gebauten Paketen. Bei einem Pull Request
+    # und bei „Run workflow“ setzt `version` `veroeffentlichen=nein`; hier wird
+    # dann nichts angelegt und nichts hochgeladen.
+    if: "!cancelled() && needs.version.result == 'success' && needs.pakete.result == 'success' && needs.version.outputs.veroeffentlichen == 'ja'"
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -250,7 +313,7 @@ jobs:
           ## mcp-quiver @VERSION@
 
           Der Client `quiver` — ein Endpunkt für alle MCP-Werkzeuge des Geräts.
-          Das Server-Abbild baut weiterhin `abbild.yml`.
+          Das Server-Abbild baut `abbild.yml` für denselben Tag.
 
           | Plattform | Dateien |
           |---|---|
@@ -298,10 +361,37 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
+          # Der Block unten steht unter einer Marke. So bleiben die Notizen von
+          # release-please erhalten, und ein zweiter Lauf ersetzt den Block,
+          # statt ihn zu verdoppeln.
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-text.md
+            gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body -q .body > vorhanden.md
+            sed '/<!-- quiver-pakete -->/,$d' vorhanden.md > release-notizen.md
+            printf '\n%s\n' '<!-- quiver-pakete -->' >> release-notizen.md
+            cat release-text.md >> release-notizen.md
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-notizen.md
           else
+            { printf '%s\n\n' '<!-- quiver-pakete -->'; cat release-text.md; } > release-notizen.md
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --title "$TAG" --notes-file release-text.md --verify-tag
+              --title "$TAG" --notes-file release-notizen.md --verify-tag
           fi
           gh release upload "$TAG" release/* -R "$GITHUB_REPOSITORY" --clobber
+
+  # Ein Tag, den `GITHUB_TOKEN` anlegt, löst `abbild.yml` nicht aus. Nach einem
+  # von release-please erzeugten Release wird das Abbild deshalb hier
+  # angestoßen; `workflow_dispatch` ist die eine Ausnahme, die auch mit
+  # `GITHUB_TOKEN` einen Lauf startet. Bei einem Tag von Hand hat der Tag
+  # `abbild.yml` bereits selbst ausgelöst.
+  abbild:
+    name: Server-Abbild anstoßen
+    needs: [version, veroeffentlichen]
+    if: "!cancelled() && needs.version.result == 'success' && needs.veroeffentlichen.result == 'success' && needs.version.outputs.selbst_erzeugt == 'ja'"
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Abbild-Workflow für den Tag starten
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh workflow run abbild.yml --ref "$TAG" -R "$GITHUB_REPOSITORY"

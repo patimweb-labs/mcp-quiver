@@ -1,13 +1,19 @@
-// Bildschirmfotos der neuen Seiten (Aufgabe 21) – Benutzer, Prüfspur und die
-// Geräte mit eingerichtetem Entra.
+// Bildschirmfotos der Seiten der Verwaltung – Bibliothek, Gruppen, Benutzer,
+// Prüfspur und die Geräte mit eingerichtetem Entra (Aufgaben 21 und 32).
 //
 // Dafür läuft der **echte** `quiver-server` auf Loopback mit einem temporären
 // Datenordner, gebautem `admin/dist` und einem Entra-Nachbau. Zwei Benutzer
 // entstehen über den echten Geräte-Weg (start → bestätigen → Tausch); danach
-// setzt das Skript Rollen, eine Sperre und einige Prüfspur-Einträge, damit die
-// Bilder etwas zeigen. Keine Firmendaten: alles `example.test`.
+// setzt das Skript eine kleine Bibliothek, einen Satz, Rollen, eine Sperre und
+// einige Prüfspur-Einträge, damit die Bilder etwas zeigen. Keine Firmendaten
+// und kein echtes Profil: alles `example.test`, die Personen heißen
+// „Alex Beispiel“ und „Ben Beispiel“.
 //
 //   npm run build && cargo build -p quiver-server && npm run bilder:benutzer
+//
+// Nur einzelne Seiten (die anderen Bilder bleiben dann unangetastet):
+//
+//   QUIVER_BILD_SEITEN=bibliothek,gruppen npm run bilder:benutzer
 
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -30,23 +36,81 @@ const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 const ROOT_EMAIL = "root@example.test";
 const ROOT_PASSWORT = "ein-sehr-langes-testpasswort";
 
-const ANNA = {
+const ALEX = {
   oid: "aaaaaaaa-9999-8888-7777-666666666666",
-  email: "Annemarie.Mustermann-Beispielhausen@beispielunternehmen.example.test",
-  name: "Annemarie Mustermann-Beispielhausen",
+  email: "alex.beispiel@example.test",
+  name: "Alex Beispiel",
 };
 const BEN = {
   oid: "bbbbbbbb-9999-8888-7777-666666666666",
-  email: "ben@example.test",
+  email: "ben.beispiel@example.test",
   name: "Ben Beispiel",
 };
 
 const THEMEN = ["dark", "light", "mono"];
 const SEITEN = [
+  { id: "bibliothek", datei: "bibliothek", titel: "Bibliothek" },
+  { id: "gruppen", datei: "gruppen", titel: "Gruppen" },
   { id: "benutzer", datei: "benutzer", titel: "Benutzer" },
   { id: "pruefspur", datei: "pruefspur", titel: "Prüfspur" },
   { id: "geraete", datei: "geraete", titel: "Geräte" },
-  { id: "gruppen", datei: "gruppen", titel: "Gruppen" },
+];
+/** Nur diese Seiten schreiben; leer heißt alle (`QUIVER_BILD_SEITEN`). */
+const AUSWAHL = (process.env.QUIVER_BILD_SEITEN ?? "")
+  .split(",")
+  .map((wert) => wert.trim())
+  .filter(Boolean);
+const GEWAEHLT = AUSWAHL.length
+  ? SEITEN.filter((seite) => AUSWAHL.includes(seite.id))
+  : SEITEN;
+
+/**
+ * Eine kleine, erfundene Bibliothek. Genug, um die Seite zu zeigen: drei
+ * Einträge laufen, einer ist abgeschaltet. Nur `example.test`, keine echten
+ * Server und keine echten Werkzeuge — gebaut wird aus diesem Katalog nichts.
+ */
+const BIBLIOTHEK = [
+  {
+    id: "dateien",
+    version: "1.0.0",
+    titel: "Dateien",
+    beschreibung: "Liest und schreibt Dateien in einem freigegebenen Ordner.",
+    herkunft: "eigen",
+    laufzeit: { art: "stdio", befehl: "quiver-dateien" },
+    felder: [
+      {
+        name: "PFAD",
+        beschreibung: "Ordner auf dem Gerät",
+        quelle: "client",
+        titel: "Ordner",
+      },
+    ],
+  },
+  {
+    id: "notizen",
+    version: "1.0.0",
+    titel: "Notizen",
+    beschreibung: "Notizen lesen, schreiben und durchsuchen.",
+    herkunft: "eigen",
+    laufzeit: { art: "stdio", befehl: "quiver-notizen" },
+  },
+  {
+    id: "kalender",
+    version: "1.0.0",
+    titel: "Kalender",
+    beschreibung: "Termine lesen und anlegen, nach Anmeldung im Browser.",
+    herkunft: "fremd",
+    laufzeit: { art: "remote", url: "https://kalender.example.test/mcp" },
+  },
+  {
+    id: "wetter",
+    version: "1.0.0",
+    titel: "Wetterdienst",
+    beschreibung: "Wetterdaten über einen fremden MCP-Server.",
+    herkunft: "fremd",
+    laufzeit: { art: "remote", url: "https://wetter.example.test/mcp" },
+    aktiv: false,
+  },
 ];
 
 function b64url(bytes) {
@@ -150,11 +214,17 @@ async function bild(browser, { thema, breite, hoehe, seite, datei, cookie, basis
       .waitFor({ timeout: 15000 });
     if (seite.id === "benutzer") {
       try {
-        await page.getByRole("row", { name: /Annemarie/ }).waitFor();
+        await page.getByRole("row", { name: /Alex/ }).waitFor();
       } catch (fehler) {
         console.log("DEBUG Benutzer:\n" + (await page.locator("body").innerText()));
         throw fehler;
       }
+    }
+    if (seite.id === "bibliothek") {
+      // Erst wenn die Einträge da sind, zeigt das Bild etwas.
+      await page
+        .getByRole("heading", { level: 3, name: "Dateien" })
+        .waitFor();
     }
     if (seite.id === "pruefspur") {
       await page.getByRole("button", { name: "Nachladen" }).waitFor();
@@ -182,7 +252,7 @@ async function main() {
   const ordner = await mkdtemp(join(tmpdir(), "quiver-bilder-"));
   const geheimnisDatei = join(ordner, "entra-secret");
   await writeFile(geheimnisDatei, GEHEIMNIS, { mode: 0o600 });
-  const nachbau = await entraNachbau({ objektId: ANNA.oid });
+  const nachbau = await entraNachbau({ objektId: ALEX.oid });
   const server = await serverStarten({
     dist: DIST,
     umgebung: entraUmgebung(nachbau, geheimnisDatei),
@@ -201,14 +271,72 @@ async function main() {
     }
     const cookie = sitzungscookie(eingerichtet);
     if (!cookie) throw new Error("kein Sitzungscookie beim Einrichten");
+
+    // Erst die Bibliothek, dann der Satz (er verweist auf die Einträge), dann
+    // die Gruppe (sie bekommt den Satz). Alles erfunden und neutral.
+    for (const eintrag of BIBLIOTHEK) {
+      const gesetzt = await anfrage(
+        server.basis,
+        `/api/v1/admin/eintraege/${eintrag.id}`,
+        {
+          methode: "PUT",
+          cookie,
+          kopf: { Origin: server.basis },
+          rumpf: eintrag,
+        },
+      );
+      if (gesetzt.status !== 200) {
+        throw new Error(
+          `Eintrag ${eintrag.id}: ${gesetzt.status} ${gesetzt.text}`,
+        );
+      }
+    }
+    const satz = await anfrage(server.basis, "/api/v1/admin/saetze/basis", {
+      methode: "PUT",
+      cookie,
+      kopf: { Origin: server.basis },
+      rumpf: {
+        id: "basis",
+        titel: "Basis",
+        eintraege: BIBLIOTHEK.map((eintrag) => ({ eintrag: eintrag.id })),
+      },
+    });
+    if (satz.status !== 200) {
+      throw new Error(`Satz: ${satz.status} ${satz.text}`);
+    }
+
     const gruppe = await anfrage(server.basis, "/api/v1/admin/gruppen/team", {
       methode: "PUT",
       cookie,
       kopf: { Origin: server.basis },
-      rumpf: { id: "team", titel: "Team", saetze: [], entra: [nachbau.gruppe] },
+      rumpf: {
+        id: "team",
+        titel: "Team",
+        saetze: ["basis"],
+        entra: [nachbau.gruppe],
+      },
     });
     if (gruppe.status !== 200) {
       throw new Error(`Gruppe: ${gruppe.status} ${gruppe.text}`);
+    }
+    // Eine zweite, rein lokale Gruppe — so zeigt das Bild beide Arten.
+    const lokal = await anfrage(
+      server.basis,
+      "/api/v1/admin/gruppen/entwicklung",
+      {
+        methode: "PUT",
+        cookie,
+        kopf: { Origin: server.basis },
+        rumpf: {
+          id: "entwicklung",
+          titel: "Entwicklung",
+          saetze: ["basis"],
+          entra: [],
+        },
+      },
+    );
+    if (lokal.status !== 200) {
+      throw new Error(`Gruppe: ${lokal.status} ${lokal.text}`);
     }
 
     browser = await browserStarten();
@@ -222,8 +350,8 @@ async function main() {
     );
 
     // Zwei Benutzer über den echten Geräte-Weg; danach Rollen und eine Sperre.
-    nachbau.setzeIdentitaet({ objektId: ANNA.oid, email: ANNA.email, name: ANNA.name });
-    await geraetAnmelden(vorbereitung, server.basis, "Arbeitsplatz Anna");
+    nachbau.setzeIdentitaet({ objektId: ALEX.oid, email: ALEX.email, name: ALEX.name });
+    await geraetAnmelden(vorbereitung, server.basis, "Arbeitsplatz Alex");
     nachbau.setzeIdentitaet({ objektId: BEN.oid, email: BEN.email, name: BEN.name });
     await geraetAnmelden(vorbereitung, server.basis, "Notebook Ben");
 
@@ -237,7 +365,7 @@ async function main() {
         rumpf: { anzeigename: "Alle Mitarbeiter mit verwalteten Geräten" },
       },
     );
-    await anfrage(server.basis, `/api/v1/admin/benutzer/${ANNA.oid}`, {
+    await anfrage(server.basis, `/api/v1/admin/benutzer/${ALEX.oid}`, {
       methode: "PUT",
       cookie,
       kopf: { Origin: server.basis },
@@ -258,11 +386,11 @@ async function main() {
       kopf: { Origin: server.basis },
       rumpf: { email: ROOT_EMAIL, passwort: ROOT_PASSWORT },
     });
-    nachbau.setzeIdentitaet({ objektId: ANNA.oid, email: ANNA.email, name: ANNA.name });
+    nachbau.setzeIdentitaet({ objektId: ALEX.oid, email: ALEX.email, name: ALEX.name });
     for (let i = 0; i < 11; i += 1) {
       const geprueft = await anfrage(
         server.basis,
-        `/api/v1/admin/benutzer/${ANNA.oid}/pruefen`,
+        `/api/v1/admin/benutzer/${ALEX.oid}/pruefen`,
         { methode: "POST", cookie, kopf: { Origin: server.basis } },
       );
       if (geprueft.status !== 200) {
@@ -278,7 +406,7 @@ async function main() {
     vorbereitung = undefined;
 
     for (const thema of THEMEN) {
-      for (const seite of SEITEN) {
+      for (const seite of GEWAEHLT) {
         await bild(browser, {
           thema,
           breite: 1440,
@@ -291,8 +419,8 @@ async function main() {
       }
     }
 
-    // Die drei neuen Seiten einmal schmal (560 px), wie in Aufgabe 18.
-    for (const seite of SEITEN) {
+    // Die Seiten einmal schmal (560 px), wie in Aufgabe 18.
+    for (const seite of GEWAEHLT) {
       await bild(browser, {
         thema: "dark",
         breite: 560,

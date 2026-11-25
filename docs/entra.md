@@ -17,7 +17,7 @@ quiver also runs without Entra: then there is only the root user and one-time co
 ## What you need
 
 - A quiver server with a configured root user ([README](../README.md)).
-- An address: `https://quiver.firma.de`. `http` only works on the machine itself (`http://localhost:8740`).
+- An address: `https://quiver.example.test`. `http` only works on the machine itself (`http://localhost:8740`).
 - In the tenant, a role that may create apps and grant consent (for example **Application Administrator** or **Cloud Application Administrator**).
 - To assign **groups** to an app, the tenant needs **Entra ID P1** or higher.
 

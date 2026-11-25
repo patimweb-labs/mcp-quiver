@@ -2,14 +2,18 @@ Deutsch: [release.de.md](release.de.md)
 
 # Releasing quiver
 
-A tag `vX.Y.Z` builds the client for macOS (Apple Silicon and Intel), Windows
-and Linux (x86_64 and aarch64), creates the GitHub release and attaches every
-package plus `SHA256SUMS`. The server image is not built here — `abbild.yml`
-does that, with the same tags.
+A release is prepared by release-please. Merging the release pull request
+creates the tag `vX.Y.Z`, and the **same** workflow builds the client for macOS
+(Apple Silicon and Intel), Windows and Linux (x86_64 and aarch64), creates the
+GitHub release and attaches every package plus `SHA256SUMS`. The server image is
+built by `abbild.yml`: for a tag this workflow created itself, it starts that
+workflow explicitly; a tag pushed by hand triggers it directly.
 
 | File | Watches over |
 | --- | --- |
-| `.github/workflows/release.yml` | version check, five build jobs, checksums, provenance, release |
+| `.github/workflows/release.yml` | release-please, version check, five build jobs, checksums, provenance, release |
+| `release-please-config.json` | which files a release bumps (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`) |
+| `.release-please-manifest.json` | the last released version |
 | `verteilung/macos/paket.sh` | `quiver.app`, `.dmg`, signing and notarisation |
 | `verteilung/linux/paket.sh` | `.tar.gz`, `.deb`, `.rpm`, AppImage |
 | `verteilung/windows/paket.ps1` | `.msi` (per user) and portable `.zip` |
@@ -17,26 +21,69 @@ does that, with the same tags.
 
 ## Making a release
 
-1. **Raise the version.** It lives in one place, `[workspace.package] version`
-   in `Cargo.toml`; the crates inherit it (`version.workspace = true`).
-2. **Refresh `Cargo.lock`.** The lock file carries the crates' versions, so
-   `cargo build --locked` in the CI fails if it is stale:
+Releases are prepared by [release-please](https://github.com/googleapis/release-please)
+from Conventional Commits. The version lives in one place,
+`[workspace.package] version` in `Cargo.toml`; the crates inherit it, and
+`release-please-config.json` keeps `Cargo.toml`, `Cargo.lock` and
+`CHANGELOG.md` in step.
 
-   ```bash
-   cargo check --workspace --locked || cargo check --workspace
-   git add Cargo.toml Cargo.lock
-   ```
+1. **Merge work into `main`** through a pull request, with commit messages
+   release-please understands (`feat:`, `fix:`, `perf:`, …). Every push to
+   `main` updates or opens the release pull request `chore: Release <version>`.
+2. **Merge the release pull request.** It only raises the version, the lock
+   file and the changelog; a pull request opened by `GITHUB_TOKEN` does not
+   start other workflows, so run the check locally before merging.
+3. **The same push builds and publishes.** release-please creates the tag
+   `v<version>` and the release; the rest of `release.yml` builds the five
+   packages, writes `SHA256SUMS` and the provenance, appends the package block
+   to the release notes and starts `abbild.yml` for the same tag. Tag and build
+   are one workflow because a tag created with `GITHUB_TOKEN` does not trigger
+   another workflow. `workflow_dispatch` is the one exception, which is how the
+   image workflow is started.
+4. **Watch the run.** *Actions → Release*. When it is green, the release is at
+   *Releases* with all packages, `SHA256SUMS`, the provenance attestations and
+   the image tags `X.Y.Z`, `X.Y`, `latest`, `sha-<commit>`.
 
-3. **Run the full check** (AGENTS.md §4) and merge through a pull request.
-4. **Tag and push the tag:**
+### Which job runs when
+
+GitHub silently checks `success()` over **all** ancestors in a job that has no
+status function. A skipped job would therefore take the following ones with
+it — for a tag pushed by hand, a pull request or *Run workflow*, `release_please`
+is skipped and `pakete`, `veroeffentlichen` and `abbild` would be skipped too.
+That is why every condition spells out
+`!cancelled() && needs.<job>.result == 'success' && …`; `!cancelled()` instead
+of `always()`, so that a cancelled run does not keep building either.
+
+| Trigger | `release_please` | `version` | `pakete` | `veroeffentlichen` | `abbild` |
+| --- | --- | --- | --- | --- | --- |
+| Tag `vX.Y.Z` pushed by hand | skipped | checks the tag | builds five packages | creates the release or extends it | skipped — the tag started `abbild.yml` itself |
+| Release PR merged (push to `main`) | creates tag and release | checks the tag, `selbst_erzeugt=ja` | builds five packages | attaches packages, checksums and provenance | starts `abbild.yml` for the tag |
+| Push to `main` without a new release | only maintains the release PR | no tag, `veroeffentlichen=nein` | skipped | skipped | skipped |
+| Pull request | skipped (only runs on `main`) | no tag, `veroeffentlichen=nein` | builds, without secrets | skipped | skipped |
+| *Run workflow* | skipped | no tag, `veroeffentlichen=nein` | builds | skipped | skipped |
+
+**A pull request and *Run workflow* never publish.** `version` only sets
+`veroeffentlichen=ja` when a tag is involved: a tag push, or a tag that
+release-please created in this run. Every other path ends at `nein`, and
+`veroeffentlichen` additionally requires `needs.pakete.result == 'success'`.
+Nothing is created, changed or uploaded there.
+
+### Tag by hand (fallback)
+
+Without release-please the manual way still works:
+
+1. Raise `[workspace.package] version`, refresh `Cargo.lock`
+   (`cargo check --workspace`), run the full check (AGENTS.md §4) and merge
+   through a pull request.
+2. Tag and push:
 
    ```bash
    git tag -a v0.2.0 -m "quiver 0.2.0"
    git push origin v0.2.0
    ```
 
-5. **Watch the run.** *Actions → Release*. When it is green, the release is at
-   *Releases* with all packages, `SHA256SUMS` and the provenance attestations.
+3. The tag push runs `release.yml` (build and release) and `abbild.yml` (image)
+   by itself. No release-please involved.
 
 The first job compares the tag with the version from `Cargo.toml`. `v0.2.0`
 next to `0.1.0` stops the run before anything is built — the release name and
@@ -48,9 +95,14 @@ the version the program reports to the server must not drift apart.
   run; it does **not** touch a release. Good for trying a fix.
 * A push of the same tag is not possible; delete and re-push only if the
   release is to be replaced.
-* One platform failed, the others worked: the run is red and the release
-  carries what was built. Fixing means a new tag (`v0.2.1`) — or, as long as
-  the tag is not yet out, delete the release and the tag, fix, tag again.
+* One platform failed, the others worked: the run is red and **nothing is
+  published** — `veroeffentlichen` only starts when all five build jobs
+  succeeded. The packages of the successful legs stay as artifacts of the run.
+  Fix the cause and tag again (`v0.2.1`); as long as the tag is not yet out,
+  delete release and tag, fix, tag again.
+* The image workflow was not started: start it by hand (*Actions → Abbild →
+  Run workflow*) on the tag. It checks out the tag and tags the image with its
+  version.
 
 ## What is built where
 

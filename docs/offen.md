@@ -28,8 +28,6 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       nicht gegen einen hängenden oder riesigen Nachbau getestet.
 - [ ] Die Drossel liegt im Arbeitsspeicher; ein Neustart vergisst die Versuche.
       Bei mehreren Instanzen zählt jede für sich.
-- [ ] Die Prüfspur hat noch keine Seite und keine Suche; sie ist nur über
-      `GET /api/v1/admin/pruefspur` lesbar (Aufgabe 21).
 - [ ] Zu offene Rechte an `entra-secret` ergeben eine Warnung, keinen Abbruch.
 - [ ] Die Sitzungs-Id wird nur bei der Anmeldung neu vergeben, nicht laufend
       rotiert.
@@ -165,6 +163,4 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Das AppImage wird mit `--no-appstream` gebaut; die mitgelieferten
       Metainfo-Daten werden dabei nicht geprüft.
 - [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
-- [ ] Kein Release-Please/`CHANGELOG.md`: die Version wird von Hand gehoben
-      (AGENTS.md §6 nennt release-please, Aufgabe 31 verlangt es nicht).
 - [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.

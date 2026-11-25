@@ -1,204 +1,196 @@
+<p align="right">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/marke/logo-dunkel.png">
+    <img src="assets/marke/logo-hell.png" alt="mcp-quiver" width="120">
+  </picture>
+</p>
+
 # mcp-quiver
+
+[![Check](https://github.com/patimweb-labs/mcp-quiver/actions/workflows/pruefen.yml/badge.svg)](https://github.com/patimweb-labs/mcp-quiver/actions/workflows/pruefen.yml)
+[![Release](https://img.shields.io/github/v/release/patimweb-labs/mcp-quiver)](https://github.com/patimweb-labs/mcp-quiver/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Docker Hub](https://img.shields.io/docker/v/smotherer/mcp-quiver-server?label=docker%20hub&sort=semver)](https://hub.docker.com/r/smotherer/mcp-quiver-server)
 
 **Deutsch:** [README.de.md](README.de.md)
 
-> **Status: MVP in progress.** Server, client and admin interface work end to end;
-> see [SPEC.md](SPEC.md) §0 for the scope and [docs/offen.md](docs/offen.md) for known gaps.
+**One quiver of tools for every agent on every device.** mcp-quiver is a central
+library of [MCP](https://modelcontextprotocol.io/) tools plus a small client on
+each device: admins assign tool sets to groups, the client installs and runs
+them, and every agent on the device talks to exactly one local endpoint.
+Server and client are pure Rust; the administration is Vue, and both surfaces
+are built from the same tokens.
 
-**One quiver of tools for all your agents.** mcp-quiver is a central library of
-[MCP](https://modelcontextprotocol.io/) tools plus a small client on every
-device. Admins decide in a web interface which tools a group gets, the client
-installs and configures them, and every agent on the device – pi, Hermes and
-more to come – talks to exactly one endpoint. Logins happen once, in the
-client. Agents never see a password or a token.
+![Client window, dark: tools, agents and protocol in one window](docs/bilder/fenster-dark-tools-1200-en.png)
 
-Pure Rust: server, client and the client window. The admin interface is Vue
-and looks exactly like the client.
+![The same window in the light theme](docs/bilder/fenster-light-tools-1200-en.png)
 
-## The idea
+**Contents** · [What it does](#what-it-does) · [Who it is for](#who-it-is-for) ·
+[What it looks like](#what-it-looks-like) · [How it works](#how-it-works) ·
+[Installation](#installation) · [First steps](#first-steps) ·
+[Security and data](#security-and-data) · [Operation](#operation) ·
+[Troubleshooting](#troubleshooting) · [Today's state](#todays-state) ·
+[Contributing](#contributing) · [License](#license)
+
+## What it does
+
+- **A library on the server.** Own tools and external MCP servers in one
+  catalogue, based on the official [`server.json`](https://github.com/modelcontextprotocol/registry)
+  format of the MCP Registry. Every entry carries a version and can be switched
+  off without being deleted.
+- **Assignment by group.** An admin bundles entries into a set and assigns
+  sets to groups — local groups or Microsoft Entra ID groups. A device gets the
+  union of its user's sets, installed, updated and removed automatically.
+  Conflicts between pre-filled values are resolved by the set's priority.
+- **Configuration in layers.** The server knows endpoints, tenant and defaults.
+  The client fills in what only the device knows: local paths, personal values
+  and secrets. Missing fields are named on the card, not guessed.
+- **Any runtime an MCP server needs.** Stdio processes (own binaries, `npx`,
+  `uvx`, `docker`) and remote MCP servers over Streamable HTTP. No shell, no
+  package manager and no tool runs on the server.
+- **One endpoint for all agents.** The client serves every tool at
+  `http://127.0.0.1:8741/mcp`. Agents are paired once in the window and get a
+  ready-made snippet for pi, Claude Code, OpenCode, GitHub Copilot or Hermes.
+  Each agent has its own token, renewable at any time.
+- **Credentials stay on the device.** Tool passwords and tokens live in an
+  encrypted vault file, never on the server and never in an agent. Sign-in and
+  setup for a tool run in the browser, started from the client.
+- **Profiles and connections.** Entries can manage several wikis, mailboxes,
+  hosts or SAP systems; the client keeps a list the user fills one by one, with
+  per-entry secrets that can be deleted individually.
+- **Fields with a purpose.** Text, password, number, switch, address or a fixed
+  choice list, each with an optional title, a required check and a help link
+  whose placeholders are filled from the dialog.
+- **Switches that mean something.** An admin can deactivate an entry without
+  deleting it; the user can switch an entry off on one device without touching
+  the others. Agents cannot switch anything.
+- **Backup and restore of settings.** Export values, connections and — if
+  wanted, encrypted with XChaCha20-Poly1305 and Argon2id — secrets, then merge
+  them on another device.
+- **A protocol you can read.** Every agent call with time, entry, tool, agent,
+  duration and result; tool stderr in a second tab. Secrets are masked. The log
+  never leaves the device.
+- **Small, but not plain.** Three themes (`dark`, `light`, `mono`) from one set
+  of tokens, German and English client texts, keyboard operation, visible
+  focus, roles and names set. The client window and the admin interface look
+  the same.
+
+## Who it is for
+
+| Situation | What mcp-quiver does |
+| --- | --- |
+| A team or company with Microsoft Entra ID and several agents (pi, Hermes, more) | one library, one assignment per group, one endpoint per device |
+| Admins who no longer want to install and configure MCP servers by hand | entries, sets and groups in the browser; the client does the rest |
+| Developers who write their own MCP tools in Rust | the tool becomes one entry in the same catalogue as external servers |
+| Security and works councils asking where credentials live | only on the device, encrypted, never on the server, never in an agent |
+| Mixed macOS, Windows and Linux desktops | packages for all three; the server is one container |
+
+Not built for: phones and tablets, a hosted service that stores your tool
+credentials, or running tools centrally on the server. The server is a library
+and a control plane only — by design.
+
+## What it looks like
+
+Client and administration share layout, type and tokens; only the content
+differs.
+
+| Client | Administration |
+| --- | --- |
+| ![Pairing an agent: pi, Claude Code, OpenCode, GitHub Copilot, Hermes](docs/bilder/fenster-dark-koppeln-800-en.png) | ![Library in the dark theme: entries with version, state and switches](docs/bilder/admin-dark-bibliothek.png) |
+| ![Protocol page: every call with agent, tool, state and duration](docs/bilder/fenster-dark-protokoll-800-en.png) | ![The same library in the light theme](docs/bilder/admin-light-bibliothek.png) |
+
+Groups decide who gets which set — local groups or Microsoft Entra ID:
+
+![Groups: one mapped from Microsoft Entra ID, one local, each with its sets](docs/bilder/admin-dark-gruppen.png)
+
+More screenshots of both surfaces are in [`docs/bilder/`](docs/bilder/). They
+are **generated**, not taken by hand: the UI tests draw every page and dialog
+at three sizes with a stand-in core, and Playwright does the same for the
+administration (see [development](docs/entwicklung.md#screenshots)). The
+English pictures come from the same run with the language switch set to
+English.
+
+## How it works
 
 ```
- pi-agent ──┐                        ┌──────────── quiver-server ────────────┐
- Hermes   ──┼──► quiver (client) ◄──►│ library of MCP tools (own + external)│
- …        ──┘    one endpoint        │ assignment by Entra ID groups         │
-                 runs the tools      │ admin interface (Vue)                 │
-                 holds the logins    └───────────────────────────────────────┘
+ pi agent ──┐                        ┌──────────── quiver-server ────────────┐
+ Hermes   ──┼──► quiver (client) ◄──►│ library of MCP tools (own + external) │
+ …        ──┘    one endpoint        │ assignment by groups (Entra ID)       │
+                  runs the tools     │ admin interface (Vue)                 │
+                  holds the logins   └───────────────────────────────────────┘
 ```
 
-- **Library on the server.** Own tools (written in Rust) and external MCP
-  servers in one catalogue, versioned, based on the official `server.json`
-  format of the MCP Registry.
-- **Assignment by group.** An admin assigns tool sets to Microsoft Entra ID
-  groups. Each device gets what its user's groups allow – installed, updated
-  and removed automatically.
-- **Configuration in layers.** The server pushes what it knows (endpoints,
-  tenant, defaults). The client completes what only the device knows (local
-  paths, personal secrets in an encrypted vault file).
-- **Auth in one place.** Agent → client and client → server. Nothing else.
-  The client adds credentials to each tool call. The agent only ever sees
-  tools.
-- **Microsoft first.** The first tool set covers Microsoft 365 via Microsoft
-  Graph and acts with the signed-in user's own permissions, so Microsoft's
-  role and permission model applies unchanged.
-- **Any agent.** Agents that speak MCP connect directly. For others there are
-  plugins, written in Rust (pi via Node binding, Hermes via Python binding).
+1. **The device signs in.** Client → browser → server, through Entra or a
+   one-time code. The server returns a device token.
+2. **The server computes the target.** Groups of the user → sets → entries and
+   pre-filled values.
+3. **The client syncs.** Desired state against actual state: install, update,
+   remove.
+4. **The client completes.** It asks only for fields that are missing on this
+   device and stores secrets in the vault.
+5. **The client serves.** One MCP endpoint with all allowed tools.
+6. **A call happens.** Agent → client → tool. The client supplies the
+   credentials; the agent only ever sees tools.
 
-## Platforms
+The reasoning, the data model and the price of every decision are in
+[SPEC.md](SPEC.md); the decisions as records in [`docs/adr/`](docs/adr/).
 
-- **Server:** one container image (Docker, Azure Container Apps, anywhere).
-- **Client:** macOS, Windows and Linux.
+## Installation
 
-## Run the server (Docker)
+Two parts: the **server** (once, at the operator) and the **client** (on every
+device).
+
+### Server (Docker)
 
 The image is built for lean operation: the runtime is the program and nothing
 else — **no shell, no package manager** (distroless), user `10001:999`, all base
-images pinned by digest. There is no shell inside to be exploited.
+images pinned by digest. One port (`8740`), one volume (`/daten`).
+
+```yaml
+# compose.yaml
+services:
+  quiver:
+    image: smotherer/mcp-quiver-server:latest
+    container_name: quiver
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8740:8740"   # loopback only; for https a TLS proxy sits here
+    environment:
+      # for production: https://quiver.example.test (with a TLS proxy in front)
+      QUIVER_OEFFENTLICH: http://localhost:8740
+    volumes:
+      - quiver-daten:/daten
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
+
+volumes:
+  quiver-daten:
+```
 
 ```bash
-docker build -t mcp-quiver-server .
-docker run -d --name quiver -p 127.0.0.1:8740:8740 \
-  -e QUIVER_OEFFENTLICH=http://localhost:8740 \
-  --read-only --tmpfs /tmp:size=32m,mode=1777 \
-  --cap-drop=ALL --security-opt=no-new-privileges:true \
-  --memory 512m --pids-limit 256 \
-  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
-  -v quiver-daten:/daten mcp-quiver-server
+docker compose up -d
+docker compose logs -f quiver          # shows the one-time setup code
 ```
 
-Details, Werte und Tests: [docs/haertung.md](docs/haertung.md).
-`compose.yaml` is the same call in a file (`docker compose up -d`), and
-`tools/container-pruefung.sh` starts exactly such a container under its own
-name and volume (`quiver-pruefung-*`) on a free port, checks it and removes it
-again. The container reports its health through `quiver-server gesund`, which
-asks the server over loopback only; `docker exec quiver quiver-server …` keeps
-working without a shell.
+Then open the base URL and create the one root user. Use the **same** address
+in `QUIVER_OEFFENTLICH` and in the browser, otherwise the server answers `421`.
+`http` is only allowed on loopback; anything else must be `https`.
 
-Existing volumes keep working: the data directory belongs to `10001:999` (UID
-*and* GID), so a volume created by an earlier version opens without a manual
-`chown`. Inside the volume the data directory is `0700` and `quiver.db`,
-`-wal`, `-shm`, the backups (`.vor-*`), `entra-*` and `schluessel` are `0600`;
-only the last three backups are kept. The process sets its umask at start-up,
-so these permissions apply from the first second, and a restart corrects files
-that were changed by hand (symlinks are not followed).
+The image is [`smotherer/mcp-quiver-server`](https://hub.docker.com/r/smotherer/mcp-quiver-server).
+Hardening details, the full environment table, backups and upgrades:
+[docs/betrieb.md](docs/betrieb.md). The repository's `compose.yaml` is the same
+call and can build locally: `docker compose up -d --build`.
 
-Then open `http://localhost:8740`. The first page is the **initial setup**: it
-asks for the e-mail and password of the one root user (12 to 256 characters,
-Argon2id) and signs that user in. The setup is only available for 15 minutes
-after the server starts, and only with a one-time code that the server prints
-once at start-up — the code is required whenever the server listens on more
-than loopback (so always in the container), regardless of the base URL:
+### Client
 
-```
-INFO quiver_server::einrichtung: Ersteinrichtung: Code für diesen Start: …
-```
-
-The window follows the server's uptime, not the wall clock; after it closes,
-restart the server. `docker exec -it quiver quiver-server root-setzen
-admin@example.test` remains the way to set a forgotten password. There is no
-admin token any more; `QUIVER_ADMIN_TOKEN` is ignored and `daten/admin-token`
-is removed as soon as a root user exists. Without a Docker Hub login, build
-with `--build-arg BASIS=public.ecr.aws/docker/library`.
-
-The container always listens on all addresses; the publish above keeps it on
-`127.0.0.1` only. That is why the base URL may be plain `http`: with anything
-but an https base URL the server refuses to start unless the host is loopback.
-The one-time code is still required, because the listen address decides, not
-the base URL. Only an explicit `QUIVER_EINRICHTUNG=ohne-code` together with a
-loopback base URL lifts it, and that is logged loudly at start-up. Whoever can
-reach the port during the first 15 minutes could otherwise create the root.
-Publish on `127.0.0.1` (as above) or use an `https` base URL.
-
-| First start (dark) | Sign-in (light) | Closed window (dark) |
-| --- | --- | --- |
-| ![Initial setup](docs/bilder/admin-dark-einrichtung.png) | ![Sign-in](docs/bilder/admin-light-anmeldung.png) | ![Setup closed](docs/bilder/admin-dark-geschlossen.png) |
-
-Sign-in itself: e-mail and password for the root, and **Sign in with
-Microsoft** once Entra is configured. The session lives in an HttpOnly cookie
-(`SameSite=Lax`, `Secure` and `__Host-` on https, 12 h absolute, 60 min idle);
-nothing is kept in the browser's storage.
-
-### Sign-in with Entra ID (optional)
-
-**Full guide, click by click and with the Azure CLI, including troubleshooting:
-[docs/entra.md](docs/entra.md).** This is the short version.
-
-Without Entra the server issues one-time device codes from the admin UI. With
-Entra, devices sign in through the browser and groups come from the token.
-
-1. Register an application in your Entra tenant (single tenant). Add
-   `<base URL>/auth/callback` as a redirect URI (web platform). Leave
-   implicit ID and access tokens **off**.
-2. Make the app emit the groups assigned to the application (`groups` claim,
-   object ids only, no directory read permission). Very large group lists are
-   rejected on purpose; limit the assignment instead.
-3. Choose an identity – **exactly one** of the two:
-   * **Certificate (recommended, `private_key_jwt`):** `quiver-server
-     entra-schluessel` creates an RSA 3072 key and a self-signed certificate
-     valid for one year. It prints **only** the public certificate, the
-     thumbprint and the expiry; upload that certificate to the application in
-     Entra (the certificate is also written to
-     `<data>/entra-schluessel.crt.pem`). The private key
-     (`<data>/entra-schluessel.pem`, mode 0600) never leaves the server. No
-     client secret, which many tenants forbid by policy.
-   * **Secret:** in `<data>/entra-secret` (or `QUIVER_ENTRA_SECRET_DATEI`).
-4. Start the server with `QUIVER_OEFFENTLICH=https://quiver.example.test`,
-   `QUIVER_ENTRA_TENANT=<tenant GUID>`, `QUIVER_ENTRA_CLIENT_ID=<app id>` and
-   the key (default `<data>/entra-schluessel.pem`, or
-   `QUIVER_ENTRA_SCHLUESSEL_DATEI`) **or** the secret. If both are present the
-   server refuses to start; if one of the three pieces is missing, it does not
-   start either. Permissions more open than 0600 are reported in the log.
-5. No mapping step: every group id seen in a token creates a group
-   "Entra-Gruppe <first 8 characters>" **once**, without tool sets – so it
-   grants nothing until an admin assigns a set in the admin UI. After that the
-   title and sets belong to the admin; Entra only replaces the members. Users
-   without a group get no tools. With `QUIVER_ENTRA_GRUPPENNAMEN=an` the server
-   also fetches the group's display name via Graph (read scope
-   `GroupMember.Read.All`; the app needs the tenant's consent). The name
-   replaces the automatic title as long as the admin has not set one of their
-   own, and is shown small below the title in the admin UI. Without the switch
-   the server never calls Graph; either way, permissions run on the object id
-   only.
-6. Root can appoint admins; an Entra user must sign in once before
-   `quiver-server admin-setzen --oid <object id>` works.
-
-**Rotating the certificate without downtime:** `quiver-server entra-schluessel
---erneuern` creates a second key (the active one stays untouched);
-`--umschalten` makes it active, and the running server picks it up without a
-restart. Both certificates are registered in Entra, so there is no gap. From 30
-days before expiry the server warns in the log, in the admin UI and in the audit
-trail (once per day). Existing keys are never overwritten.
-
-The server refreshes each user's token hourly (with jitter) and when a device
-connects after more than an hour. If Entra is unreachable, the last state stays
-valid for at most 24 hours. If a user is blocked, no longer assigned, or their
-token is revoked, their devices lose their tools on the next check. If an admin
-deletes a group that came from Entra, it stays deleted; the admin UI can adopt
-it again. At most 200 groups are created this way.
-
-### Server configuration
-
-| Variable | Meaning |
-| --- | --- |
-| `QUIVER_OEFFENTLICH` | Base URL (`https`, or `http` only on loopback; default `http://localhost:<port of QUIVER_ADRESSE>`) |
-| `QUIVER_ADRESSE` | Listen address (default `0.0.0.0:8740`) |
-| `QUIVER_DATEN` | Data folder (default `./daten`) |
-| `QUIVER_ADMIN_DIST` | Built admin UI (default `./admin/dist`) |
-| `QUIVER_ENTRA_TENANT` | Tenant GUID (never `common`/`organizations`) |
-| `QUIVER_ENTRA_CLIENT_ID` | Application (client) id |
-| `QUIVER_ENTRA_SECRET_DATEI` | Client secret file (default `<data>/entra-secret`); exactly one of secret and key |
-| `QUIVER_ENTRA_SCHLUESSEL_DATEI` | Private key for `private_key_jwt` (default `<data>/entra-schluessel.pem`) |
-| `QUIVER_EINRICHTUNG` | `mit-code` (default) or `ohne-code` (only with a loopback base URL) |
-| `QUIVER_ENTRA_AUTHORITY` | Alternative authority, loopback only (tests) |
-| `QUIVER_ENTRA_GRUPPENNAMEN` | `an` fetches group names via Graph; default `aus`, any other value prevents startup |
-| `QUIVER_ENTRA_GRAPH` | Base URL for Graph, loopback only (tests); fixed to `https://graph.microsoft.com` in production |
-| `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
-| `QUIVER_ALTGERAETE` | `gesperrt` (default once Entra is configured, otherwise `erlaubt`) for devices without a user |
-
-## Install the client
-
-`quiver` is the program on the device: it installs and runs the tools, keeps
-the credentials and is the one endpoint every agent talks to. Ready-made
-packages come from [Releases](https://github.com/patimweb-labs/mcp-quiver/releases):
+`quiver` is the program on the device. Ready-made packages come from
+[Releases](https://github.com/patimweb-labs/mcp-quiver/releases):
 
 | System | File | Install |
 | --- | --- | --- |
@@ -212,274 +204,179 @@ packages come from [Releases](https://github.com/patimweb-labs/mcp-quiver/releas
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | unpack, run `bin/quiver` |
 
 The packages are **unsigned** unless the maintainer signs them: Gatekeeper and
-SmartScreen ask once on the first start (what that means and how to get past
-it: [docs/release.md](docs/release.md#what-unsigned-means)). Every release
-also carries `SHA256SUMS` and a build provenance you can verify with
-`gh attestation verify`.
+SmartScreen ask once on the first start. What that means and how to get past it:
+[docs/release.md](docs/release.md#what-unsigned-means). Every release also
+carries `SHA256SUMS` and a build provenance you can verify:
 
-After the first start the client sits in the tray, and the tools are reachable
-for agents at `http://127.0.0.1:8741/mcp`. Building a package yourself:
+```bash
+sha256sum -c SHA256SUMS
+gh attestation verify <file> --repo patimweb-labs/mcp-quiver
+```
+
+After the first start the client sits in the tray and serves the tools at
+`http://127.0.0.1:8741/mcp`. Building a package yourself:
 [docs/release.md](docs/release.md#building-a-package-locally).
 
-## Development
+## First steps
 
-```bash
-# check everything (before every commit)
-cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace
-# supply chain: vulnerabilities (including unmaintained crates), licences,
-# sources (crates.io only), no duplicate crypto crates — rules in `deny.toml`
-cargo deny check
-npm --prefix admin audit --audit-level=high
-```
+1. **Set up the server.** Start the container, open the base URL and create the
+   one root user with the one-time code from the log. The setup window closes
+   after 15 minutes; afterwards a new password is set with:
 
-The token files in `tokens/` are the single source of colours, sizes and fonts —
-for the client window (egui) and for the admin interface (Vue). The admin CSS is
-generated from them and checked in; never edit it by hand:
+   ```bash
+   read -rsp 'New password: ' P; echo; printf '%s\n' "$P" | \
+     docker exec -i quiver quiver-server root-setzen <e-mail> --stdin; unset P
+   ```
 
-```bash
-cargo run -p quiver-oberflaeche --bin tokens_css > admin/src/styles/tokens.css
-# the pages the server itself delivers (confirmation, errors): dark by
-# default, light via `prefers-color-scheme`
-cargo run -p quiver-oberflaeche --bin tokens_seite_css > crates/server/seiten/system.css
-```
+   Always `--stdin` and `docker exec -i` (no `-t`): the image has no `stty`, so
+   the binary cannot hide the input and stops instead of reading the password
+   while it is visible. Details:
+   [docs/betrieb.md](docs/betrieb.md#first-setup).
+2. **Connect Entra ID (optional).** Register an app, add
+   `<base URL>/auth/callback`, upload the certificate that
+   `quiver-server entra-schluessel` prints, and start the server with tenant and
+   client id. Full guide with the Azure CLI:
+   [docs/entra.md](docs/entra.md). Without Entra, devices are paired with
+   one-time codes from the admin interface.
+3. **Fill the library and assign it.** Under *Library* create an entry or
+   import a `server.json`; bundle entries into a *Set*; under *Groups* assign
+   the set to a group. With Entra, groups appear after their first member signs
+   in — with no sets, so nothing is granted by accident.
+4. **Connect the client.** Install the package, open the window, enter the
+   server address and sign in. With Entra the browser opens; without it, enter
+   the one-time code from the admin interface. The device is confirmed in the
+   browser.
+5. **Attach an agent.** Under *Agents* choose *Pair agent*, pick the kind and
+   paste the snippet into the agent's configuration. The endpoint stays
+   `http://127.0.0.1:8741/mcp`; the token belongs to this agent and can be
+   replaced at any time.
 
-### Admin interface
+What the client does in detail — sign-in, tray, connections, setup, export,
+protocol: [docs/client.md](docs/client.md).
 
-```bash
-git submodule update --init admin/vendor/weppelmann-ui
-cd admin
-npm ci
-npm run dev     # Vite on 5173, /api → 127.0.0.1:8740
-npm run build   # to admin/dist; the server serves it at /
-npm run typecheck
-npm test
-```
+## Security and data
 
-Two browser checks run against the real server (built `admin/dist`, the
-server's own CSP, Chrome headless with a temporary profile, loopback and a
-temporary data folder — no real tenant, no real vault):
+- **The server runs no tools.** It stores the library, the assignment and the
+  users. It never sees a tool password, a tool token or a tool call.
+- **Credentials live on the device.** The client keeps them in an encrypted
+  vault file (`XChaCha20-Poly1305`, key file next to it, folder `0700`, files
+  `0600`). This protects against accidental reading — `cat`, `grep`, a backup of
+  one file, an agent. It is **not** a defence against someone who has the
+  user's account; that person can read the key file too. The same is true for
+  an OS keychain ([ADR 0001](docs/adr/0001-tresor-datei-statt-schluesselbund.md)).
+- **Agents see tools, not credentials.** Each agent gets its own token for the
+  local endpoint. It never receives a tool password or a Microsoft token; the
+  client adds those when it starts or calls the tool.
+- **Sign-in happens in the client and the browser.** The client never talks to
+  Microsoft; the server does. The admin session lives in an HttpOnly cookie,
+  changing requests carry a CSRF header and are checked against the base URL.
+- **The protocol stays local.** Every call is logged as JSONL under
+  `<profile>/protokoll/`, deleted after 7 days and capped at 50 MB. Secret keys
+  and every vault value are masked before a line is written. The server receives
+  no calls and no counters.
+- **The server is small on purpose.** Distroless, read-only file system,
+  `cap-drop=ALL`, `no-new-privileges`, memory and PID limits. The
+  `Host` header must match the base URL, CSP without inline, HSTS on https,
+  body and time limits, throttled sign-in, an audit trail that keeps 180 days.
+  Every value is in [docs/haertung.md](docs/haertung.md) (German).
+- **No telemetry.** No update check, no analytics, no call home. The server
+  talks to Microsoft only when Entra is configured.
 
-```bash
-cargo build -p quiver-server
-npm run pruefung            # setup → sign out → sign in → wrong password →
-                            # overview → change one set: 0 CSP violations,
-                            # 0 console errors
-npm run pruefung:anmeldung  # device sign-in → confirmation → redirect to
-                            # 127.0.0.1:<port>/quiver with a code, against a
-                            # local Entra stand-in
-```
+## Operation
 
-Layout, components and screenshots: [admin/README.md](admin/README.md).
+One container, one volume, one port. `docker compose up -d` starts it,
+`docker compose pull && docker compose up -d` updates it. Before a migration
+the server writes a backup and checks the integrity of database and backup;
+the last three backups stay in the data folder.
 
-### Client window
+The data folder holds `quiver.db` (with WAL and SHM), the key `schluessel` for
+encrypted refresh tokens, optional Entra key material and the backups. Back up
+the volume; keep `schluessel` **separate** from the database, because together
+they are a credential. A restore is: stop, replace the data folder, start.
 
-```bash
-cargo run -p quiver-fenster                  # the window
-cargo run -p quiver-fenster -- --hintergrund # tray and core only, no window
-cargo run -p quiver-fenster -- --headless    # only the core, until Ctrl+C
-```
+Health: `quiver-server gesund` asks the server over loopback; the image has the
+same check. Logs go to stdout and are rotated by Docker. All variables, the
+first setup, the proxy setup and every operational detail:
+[docs/betrieb.md](docs/betrieb.md).
 
-Closing the window does not stop quiver: the core, the MCP endpoint and the
-sync keep running, and the tray icon stays. **Quit** lives in the tray menu.
-Cmd+Q is not a quit either — it puts the window into the tray like closing.
-Strg+C and SIGTERM stop the core in order. Every end and every "left in the
-tray" is written to the log **with its cause** (tray, window, Cmd+Q, Ctrl+C,
-SIGTERM, second instance, system logout); only the tray really quits. A second
-start (double click while quiver sits in the tray) shows the window of the
-running instance and ends itself — one instance per device.
+## Troubleshooting
 
-#### Signing the device in
-
-The *Connection* page first asks **only** for the server address (`https`
-everywhere, `http` only on `127.0.0.1`, `::1` or `localhost`). The last address
-is pre-filled, also after signing out. **Continue** asks the server which ways
-it offers (`GET /api/v1/anmeldearten`) and then shows **either** *Sign in with
-Microsoft* **or** the one-time code field — never both. A server that offers
-neither says so in plain words.
-
-With Entra the browser opens; the client itself never talks to Microsoft. The
-server returns exactly one one-time code to a listener on `127.0.0.1` (path
-`/quiver`, free port, five minutes, one answer, `zustand` compared in constant
-time) and the client exchanges it with its own PKCE verifier. While waiting, the
-page says *Continue in the browser …* and offers *Open browser again* and
-*Cancel*. Afterwards it shows *Signed in as …* and the device. An old device
-token is sent along, so a repeated sign-in keeps the **same** device.
-
-If the server rejects the device, the reason decides what happens:
-`gesperrt` and `kein-zugriff` stop every tool, remove the token and say what to
-do; `neu-anmelden` (and any unknown reason) stops every tool but **keeps the
-device token and all settings** and offers *Sign in again*, with a hint in the
-tray. A 401 (device removed or token invalid) asks for a new sign-in as before.
-*Sign out* asks first, says what happens (agents lose all tools, settings
-remain), deletes the device **on the server** and keeps the server address. If
-the server cannot be reached, the client says so. An agent cannot trigger any
-of this.
-
-![Sign in to the server](docs/bilder/fenster-dark-verbindung-800.png)
-![Sign in with Microsoft](docs/bilder/fenster-light-verbindung-entra-560.png)
-![Sign in again](docs/bilder/fenster-dark-neu-anmelden-800.png)
-
-The tray menu shows the state (`Verbunden · 4 Tools · 1 Agent`), opens the
-window, toggles **Start at login** and quits. The same switch sits on the
-*Connection* page; whether it is on is read from the system (LaunchAgent,
-registry value or `.desktop` file), not remembered by the window. Autostart
-always starts with `--hintergrund`.
-
-Agents connect through the local endpoint and are paired **once** in the
-window (*Agents* → *Pair agent*). The kind decides the snippet: pi, Claude Code,
-OpenCode, GitHub Copilot and Hermes each bring their own ready-made text, and
-the token can be renewed at any time — the old one stops working immediately.
-
-![Pairing dialog](docs/bilder/fenster-dark-koppeln-800.png)
-
-On the admin side an entry can be switched off without deleting it (*Aktiv* in
-the edit dialog or the switch in the row). It stays in the library and in sets
-but runs on no device; the client stops it on its next sync.
-
-Some tools keep their credentials in **profiles** (several wikis, mailboxes,
-hosts, SAP systems). Such entries carry a *setup*; the tools card then shows
-**Set up**. The client runs the same program with the same environment and the
-same `${feld}` placeholders as the runtime and waits until the user closes the
-page in the browser: exit 0 means done and the entry restarts (new profiles take
-effect immediately), exit 1 means cancelled, anything else is shown as an error
-on the card. While it runs, **Cancel** sits next to it; after 15 minutes it ends
-by itself, and quitting the client cleans it up. Credentials never pass through
-an agent. In the admin interface the command sits in the *Einrichtung
-(optional)* section and the list shows a *mit Einrichtung* badge.
-
-![Setup on the tools card](docs/bilder/fenster-dark-einrichten-800.png)
-
-An entry can be **switched off on this device alone**: every card on the *Tools*
-page carries the switch *Active on this device* on the right, on by default.
-Switching it off ends the running process within a second, drops its tools from
-`tools/list` and tells every connected agent (`list_changed`). A call after that
-answers “<title> is switched off on this device — switch it on in the quiver
-window under Tools”, never “unknown”. Values, connections, secrets and the
-sign-in are kept — only *Sign in* and *Set up* are locked while it is off. The
-choice survives restarts, syncs, changes to the entry on the server and an
-import (**off stays off**; the backup carries it), and the admin interface shows
-“am Gerät abgeschaltet” as a neutral state, not a problem. Agents cannot switch
-anything; there is no tool for it.
-
-![Switched off on this device](docs/bilder/fenster-dark-abschaltung-800.png)
-
-Some tools need **several similar credentials** that the user adds one by one —
-SSH connections with a name, host, port and user, for instance. Such entries
-carry a *list of connections* (admin: *Mehrere Zugänge (optional)* with a
-heading, a singular label and fields, source only *device*); the tools card then
-shows “Verbindungen (2)” with **Verbindung hinzufügen** and the expandable list:
-edit, delete (with a confirmation) and, per stored secret, a separate **Geheimnis
-löschen** — handy when the login password should go once the key is set up.
-Secrets live in the encrypted vault file, the remaining values in the client configuration.
-On start the tool receives all connections as JSON in `QUIVER_ZUGAENGE`; an
-entry without any connection still runs and reports “no connection” itself.
-
-![Connections on the tools card](docs/bilder/fenster-dark-zugaenge-800.png)
-
-Some fields carry a **help link** next to the input (admin: *Link text* and
-*Link address*, `${feld}` placeholders allowed — for example
-`${url}/settings/api-and-access`). The button is only clickable once every
-placeholder can be filled from what stands in the dialog right now; otherwise
-it is greyed out and says which field is still missing. A click opens the
-address in the default browser — nothing else, no login, no listener.
-
-![Settings dialog with a help link](docs/bilder/fenster-dark-angaben-800.png)
-
-Fields carry a **kind** (admin: *Art* and *Titel*): text, password, number,
-switch (checkbox), address (checked for `http(s)://`) or a choice list with
-fixed options. A *title* replaces the field name in the dialog — “SAP-Benutzer”
-instead of `benutzer`. The field list scrolls with an always visible bar; while
-“Speichern” is disabled, the reason stands next to it (“Es fehlt: SAP-Benutzer,
-ADT-Adresse”). Empty, non-required fields are always allowed.
-
-The settings of a device can be **backed up and restored on another device**:
-the tools page carries *Exportieren* and *Importieren* in its header. The file
-`quiver-einstellungen-<date>.json` holds the values and connection lists of all
-tools; on request also the secrets — then encrypted with XChaCha20-Poly1305 and a
-key derived with Argon2id (password of at least eight characters, file mode
-0600). The device token, agent tokens and the tools' own sign-ins are never part
-of it; they belong to the device and to the sign-in. An import first shows a
-preview (new, changes, skipped), then merges instead of replacing — what exists
-only on this device stays — and restarts the affected entries. Entries this
-device does not have are skipped; a wrong password changes nothing. The choice
-“switched off on this device” travels with the file and shows up in the
-preview — off stays off.
-
-Environment (all optional):
-
-| Variable | Meaning |
+| Symptom | Cause and remedy |
 | --- | --- |
-| `QUIVER_PROFIL` | Profile folder (default `~/Library/Application Support/mcp-quiver` and equivalents) |
-| `QUIVER_MCP_ADRESSE` | MCP endpoint (default `127.0.0.1:8741`; a second port lets two instances run side by side) |
-| `QUIVER_AUTOSTART_DIR` | Folder for the autostart file (macOS and Linux; tests and other sessions) |
-| `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the vault file (for trying things out without traces) |
+| `421` on every page | `Host` and `QUIVER_OEFFENTLICH` differ. Open exactly that address; `localhost` ≠ `127.0.0.1`. Behind a proxy, pass `Host` through. |
+| The server does not start | The base URL is not `https` and not loopback, Entra is only half configured, or both secret and key are present. The log names the reason. |
+| The setup page says the window is closed | The first 15 minutes are over: `docker restart quiver`, reload. The code is in the log of **this** start. |
+| Gatekeeper or SmartScreen blocks the client | The package is unsigned. macOS: right click → *Open*. Windows: *More information → Run anyway*. |
+| A device gets no tools | The group has no set, the set is empty, or the entry is inactive. Also check that the user is a direct member of the Entra group. |
+| The client says "sign in again" | The device token is too old, unused for 60 days, or the device was removed. Settings and the device token stay. |
+| An agent sees no tools | It must be paired and use its token at `http://127.0.0.1:8741/mcp`; the entry must not be switched off on this device. |
+| Entra error `AADSTS…` | See the table in [docs/entra.md](docs/entra.md#when-it-gets-stuck). |
 
-## Protocol and privacy
+More client-side symptoms: [docs/client.md](docs/client.md#troubleshooting).
+More server-side symptoms: [docs/betrieb.md](docs/betrieb.md#troubleshooting).
 
-The window's **Protocol** page lists every tool call an agent triggers (time,
-agent, entry, tool, duration, result) and, in the *Tool logs* tab, what the tool
-printed on stderr. A click on a row opens the details: arguments, error text
-and a preview of the response. Filters narrow by entry, tool, agent, period
-(last hour, today, 7 days) and errors only.
+## Today's state
 
-Everything stays on the device: `<profil>/protokoll/aufrufe-YYYY-MM-DD.jsonl` and
-`prozesse-YYYY-MM-DD.jsonl`, deleted after 7 days and never more than 50 MB in
-total. The server receives no calls.
+What works and is tested:
 
-**Who may read it.** The profile folder is `0700`; everything inside — the
-profile state (`zustand.json`), the window settings (`oberflaeche.json`), the
-protocols, the vault files and the lock file — is `0600`. That holds when the
-files are created (atomic write: a temporary file next to the target, then a
-rename, so nothing is ever half written and a symlink at the target is replaced
-rather than followed) and again at every start, which corrects files that were
-changed by hand. On Windows these mode bits do not exist; there the ACL
-inheritance of the user profile is what keeps other accounts out, so the profile
-lives in the user's own `%APPDATA%`.
+- **Server, administration and client end to end** — setup, sign-in, library,
+  sets, groups, device sync, the MCP endpoint, running stdio and remote tools,
+  per-device switches, export/import, protocol.
+- **Entra ID optionally** — certificate or secret, groups from the token,
+  hourly refresh, certificate rotation without downtime. Without Entra the
+  one-time-code path is fully usable.
+- **One test run over the whole workspace** (`cargo test --workspace`), plus
+  browser checks against the real server and UI tests that draw every page at
+  three sizes and in both screenshot themes.
+- **Packages for macOS, Windows and Linux** from the same scripts the CI runs;
+  `SHA256SUMS` and provenance attestations per release.
+- **A container that is checked**: no shell, read-only, no capabilities, and a
+  script that starts it exactly like that.
 
-**Masked, always:** keys whose name contains `pass`, `token`, `secret`, `key`,
-`pat`, `auth` or `cookie` become `<verborgen>`, and every value from the vault
-is replaced — also as a substring, in arguments, preview, error text and tool
-log lines. Truncation: 200 characters per value, 4 KB of arguments, 500
-characters of preview, 2000 of error text.
+What is not there yet, honestly:
 
-Agents can read the protocol themselves through two read-only tools,
-`quiver__protokoll` and `quiver__tool_log`. Both return **only metadata** until
-“Agents may see log contents” is switched on under *Agents* (stored in
-`zustand.json`); error texts stay masked either way, and calls to these two
-tools never appear in the protocol themselves.
+- **Windows and Linux packages have not run on real machines.** The macOS
+  bundle was built and started locally; `.msi`, `.deb`, `.rpm` and AppImage are
+  produced by the same scripts but have no field test yet.
+- **Signing is unproven.** Without certificates every package is unsigned; the
+  signing and notarisation path exists but has never run with real secrets.
+- **No Flatpak, no mobile apps, no WASM runtime.** The data model has room for
+  WASM; it is not implemented.
+- **No central execution.** The server never runs a tool
+  ([SPEC.md](SPEC.md) §2); this is a decision, not a gap.
+- **No tool filtering per agent yet.** Every paired agent sees every tool the
+  device is allowed to run ([docs/offen.md](docs/offen.md)).
+- **No protocol export** — the JSONL files can be read by hand.
+- **Some agent snippets are untested.** The texts for OpenCode, GitHub Copilot
+  and the header form of Hermes come from their documentation, not from a run
+  against the CLI; pi, Claude Code and the session form of Hermes are checked.
+- **The architecture documents are still missing** (`docs/architektur.md`,
+  `docs/datenfluss.md`).
+- **The administration is German only.** The client window speaks German and
+  English; the admin interface does not have a language switch yet.
+- **The Microsoft 365 tool set is a separate project**
+  ([quiver-tools](https://github.com/patimweb-labs/quiver-tools)); this
+  repository ships server, client, admin and the library format.
 
-![Protocol page](docs/bilder/fenster-dark-protokoll-800.png)
+The complete, continuously updated list of known gaps and deliberate cheats is
+in [docs/offen.md](docs/offen.md) (German).
 
-Same layout as the admin interface: header, navigation on the left, content as
-cards, three themes from the same tokens.
+## Contributing
 
-**Window size.** Below 760 px the navigation shrinks to icons (the name sits in
-the tooltip), the content stops at 1100 px and stays centred, and filter and
-button bars wrap instead of running over the edge. Below 700 px a form puts its
-label above the field and the header moves theme and language into a menu; the
-protocol table then drops *Agent* and *Duration* (both stay in the detail
-dialog). The breakpoints are tokens (`breakpoint.*`), so the admin interface
-uses the same numbers.
-
-The screenshots are produced by the UI test (with a stand-in core, no server and
-no runtime) — every page and dialog at 560 × 460, 800 × 600 and 1200 × 820, as
-`fenster-<theme>-<page>-<width>.png`:
+Issues and pull requests are welcome. The binding rules for people and agents
+are in [AGENTS.md](AGENTS.md); the short version for your first pull request is
+in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-QUIVER_BILDER=docs/bilder cargo test -p quiver-fenster --test oberflaeche
-QUIVER_BILDER=docs/bilder cargo test -p quiver-oberflaeche --test muster
+cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace
 ```
 
-The `muster` test draws the comparison page that the admin interface also has
-under `/muster` (development build only); both read the same token files, so
-the two images differ only in font smoothing:
+`main` is always runnable; work happens on a branch and through a pull request.
+Commits follow Conventional Commits, releases are prepared by release-please
+from those lines.
 
-![Musterseite, egui](docs/bilder/muster-egui-dark.png)
-![Musterseite, Vue](docs/bilder/muster-vue-dark.png)
-
-![Client window, dark](docs/bilder/fenster-dark-tools-1200.png)
-![Client window, light](docs/bilder/fenster-light-tools-1200.png)
-![Admin library, dark](docs/bilder/admin-dark-bibliothek.png)
+Please report security issues **not** as a public issue but through GitHub
+Private Vulnerability Reporting — see [SECURITY.md](SECURITY.md).
 
 ## License
 

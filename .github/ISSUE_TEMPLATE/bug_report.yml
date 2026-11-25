@@ -1,0 +1,86 @@
+name: Fehlerbericht
+description: Etwas funktioniert nicht wie beschrieben.
+title: "[Fehler]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für den Bericht. Bitte **keine** Passwörter, Token, Tresor-Dateien
+        oder echten Tool-Aufrufe einfügen — die Logs reichen meist ohne sie.
+
+        Eine **Sicherheitslücke** gehört nicht hierher, sondern in das
+        [Private Vulnerability Reporting](https://github.com/patimweb-labs/mcp-quiver/security/advisories/new).
+  - type: dropdown
+    id: teil
+    attributes:
+      label: Welcher Teil?
+      options:
+        - Client (quiver-Fenster)
+        - Server (quiver-server)
+        - Verwaltung (Browser)
+        - Paket oder Installation
+        - Dokumentation
+        - Weiß nicht
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tag oder Paketname, zum Beispiel 0.1.0.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux (Debian/Ubuntu)
+        - Linux (Fedora/openSUSE)
+        - Linux (andere)
+        - Docker / Server
+        - Weiß nicht
+    validations:
+      required: true
+  - type: textarea
+    id: was
+    attributes:
+      label: Was passiert?
+      description: Was hast du gesehen, und was stand in der Oberfläche?
+    validations:
+      required: true
+  - type: textarea
+    id: erwartet
+    attributes:
+      label: Was hast du erwartet?
+    validations:
+      required: true
+  - type: textarea
+    id: schritte
+    attributes:
+      label: Schritte zum Nachstellen
+      description: Am besten nummeriert, beginnend beim Start.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log oder Protokoll
+      description: Server-Log, Client-Protokoll oder Konsolenausgabe — ohne Geheimnisse.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: geprueft
+    attributes:
+      label: Vor dem Absenden
+      options:
+        - label: Ich habe in docs/offen.md nachgesehen, ob der Punkt schon bekannt ist.
+          required: true
+        - label: Im Bericht stehen keine Passwörter, Token, Tresor-Dateien oder echten Daten.
+          required: true

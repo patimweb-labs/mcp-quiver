@@ -1,0 +1,59 @@
+name: Wunsch
+description: Eine Funktion fehlt oder sollte anders arbeiten.
+title: "[Wunsch]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für den Vorschlag. Bitte beschreibe die Lage, nicht nur die
+        Lösung — oft gibt es einen einfacheren Weg, der zum Datenmodell passt.
+        Was bewusst offen ist, steht in [docs/offen.md](https://github.com/patimweb-labs/mcp-quiver/blob/main/docs/offen.md).
+  - type: textarea
+    id: lage
+    attributes:
+      label: Die Lage
+      description: Wer arbeitet womit, und wo hakt es?
+    validations:
+      required: true
+  - type: textarea
+    id: heute
+    attributes:
+      label: Was passiert heute?
+      description: Der aktuelle Weg und was daran stört.
+    validations:
+      required: true
+  - type: textarea
+    id: wunsch
+    attributes:
+      label: Was würde helfen?
+      description: Der gewünschte Ablauf, gern mit einem Beispiel.
+    validations:
+      required: true
+  - type: dropdown
+    id: teil
+    attributes:
+      label: Welcher Teil?
+      options:
+        - Client (quiver-Fenster)
+        - Server (quiver-server)
+        - Verwaltung (Browser)
+        - Bibliothek und Zuweisung
+        - Pakete und Installation
+        - Dokumentation
+        - Weiß nicht
+    validations:
+      required: true
+  - type: textarea
+    id: alternativen
+    attributes:
+      label: Was hast du schon versucht?
+    validations:
+      required: false
+  - type: checkboxes
+    id: geprueft
+    attributes:
+      label: Vor dem Absenden
+      options:
+        - label: Ich habe in docs/offen.md und SPEC.md nachgesehen, ob das schon geplant oder bewusst weggelassen ist.
+          required: true

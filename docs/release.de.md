@@ -2,14 +2,19 @@ English: [release.md](release.md)
 
 # quiver ausliefern
 
-Ein Tag `vX.Y.Z` baut den Client für macOS (Apple Silicon und Intel), Windows
-und Linux (x86_64 und aarch64), legt das GitHub-Release an und hängt alle
-Pakete samt `SHA256SUMS` daran. Das Server-Abbild entsteht nicht hier —
-das macht `abbild.yml`, mit denselben Tags.
+Ein Release bereitet release-please vor. Wird der Release-Pull-Request gemergt,
+entsteht der Tag `vX.Y.Z`, und **derselbe** Workflow baut den Client für macOS
+(Apple Silicon und Intel), Windows und Linux (x86_64 und aarch64), legt das
+GitHub-Release an und hängt alle Pakete samt `SHA256SUMS` daran. Das
+Server-Abbild baut `abbild.yml`: Bei einem Tag, den dieser Workflow selbst
+erzeugt hat, stößt er den Workflow ausdrücklich an; ein von Hand geschobener Tag
+löst ihn direkt aus.
 
 | Datei | Wofür |
 | --- | --- |
-| `.github/workflows/release.yml` | Versionsprüfung, fünf Baujobs, Prüfsummen, Herkunft, Release |
+| `.github/workflows/release.yml` | release-please, Versionsprüfung, fünf Baujobs, Prüfsummen, Herkunft, Release |
+| `release-please-config.json` | welche Dateien ein Release anhebt (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`) |
+| `.release-please-manifest.json` | die zuletzt veröffentlichte Version |
 | `verteilung/macos/paket.sh` | `quiver.app`, `.dmg`, Signieren und Notarisieren |
 | `verteilung/linux/paket.sh` | `.tar.gz`, `.deb`, `.rpm`, AppImage |
 | `verteilung/windows/paket.ps1` | `.msi` (je Benutzer) und portables `.zip` |
@@ -17,27 +22,71 @@ das macht `abbild.yml`, mit denselben Tags.
 
 ## Ein Release machen
 
-1. **Version anheben.** Sie steht an einer Stelle, `[workspace.package] version`
-   in `Cargo.toml`; die Kisten erben sie (`version.workspace = true`).
-2. **`Cargo.lock` auffrischen.** Die Sperrdatei trägt die Versionen der Kisten
-   mit; ist sie veraltet, scheitert `cargo build --locked` in der CI:
+Releases bereitet [release-please](https://github.com/googleapis/release-please)
+aus den Conventional Commits vor. Die Version steht an einer Stelle,
+`[workspace.package] version` in `Cargo.toml`; die Kisten erben sie, und
+`release-please-config.json` hält `Cargo.toml`, `Cargo.lock` und
+`CHANGELOG.md` zusammen.
 
-   ```bash
-   cargo check --workspace --locked || cargo check --workspace
-   git add Cargo.toml Cargo.lock
-   ```
+1. **Arbeit nach `main` mergen** — über einen Pull Request, mit
+   Commit-Zeilen, die release-please versteht (`feat:`, `fix:`, `perf:`, …).
+   Jeder Push auf `main` aktualisiert oder öffnet den Release-Pull-Request
+   `chore: Release <version>`.
+2. **Den Release-Pull-Request mergen.** Er hebt nur Version, Sperrdatei und
+   Changelog an; ein von `GITHUB_TOKEN` geöffneter Pull Request startet keine
+   weiteren Workflows, deshalb vorher lokal prüfen.
+3. **Derselbe Push baut und veröffentlicht.** release-please legt den Tag
+   `v<version>` und das Release an; der Rest von `release.yml` baut die fünf
+   Pakete, schreibt `SHA256SUMS` und den Herkunftsnachweis, hängt den
+   Paketblock an die Release-Notizen und stößt `abbild.yml` für denselben Tag
+   an. Tag und Bau sind ein Workflow, weil ein von `GITHUB_TOKEN` erzeugter Tag
+   keinen weiteren Workflow auslöst. `workflow_dispatch` ist die eine Ausnahme,
+   über die das Abbild angestoßen wird.
+4. **Dem Lauf zusehen.** *Actions → Release*. Ist er grün, steht das Release
+   unter *Releases* — mit allen Paketen, `SHA256SUMS`, den Herkunftsnachweisen
+   und den Abbild-Namen `X.Y.Z`, `X.Y`, `latest`, `sha-<commit>`.
 
-3. **Alles prüfen** (AGENTS.md §4) und über einen Pull Request mergen.
-4. **Tag setzen und schieben:**
+### Welcher Job wann läuft
+
+GitHub prüft in einem Job **ohne** Statusfunktion stillschweigend `success()`
+über **alle** Vorfahren. Ein übersprungener Job würde damit die folgenden
+mitreißen — bei einem Tag von Hand, einem Pull Request oder *Run workflow*
+bliebe `release_please` leer, und `pakete`, `veroeffentlichen` und `abbild`
+fielen mit aus. Deshalb steht in jeder Bedingung ausdrücklich
+`!cancelled() && needs.<job>.result == 'success' && …`; `!cancelled()` statt
+`always()`, damit ein abgebrochener Lauf nicht weiterbaut.
+
+| Auslöser | `release_please` | `version` | `pakete` | `veroeffentlichen` | `abbild` |
+| --- | --- | --- | --- | --- | --- |
+| Tag `vX.Y.Z` von Hand geschoben | übersprungen | prüft den Tag | baut fünf Pakete | legt das Release an oder ergänzt es | übersprungen — der Tag hat `abbild.yml` selbst gestartet |
+| Release-PR gemergt (Push nach `main`) | legt Tag und Release an | prüft den Tag, `selbst_erzeugt=ja` | baut fünf Pakete | hängt Pakete, Prüfsummen und Herkunft an | stößt `abbild.yml` für den Tag an |
+| Push nach `main` ohne neues Release | führt nur den Release-PR | kein Tag, `veroeffentlichen=nein` | übersprungen | übersprungen | übersprungen |
+| Pull Request | übersprungen (läuft nur auf `main`) | kein Tag, `veroeffentlichen=nein` | baut, ohne Geheimnisse | übersprungen | übersprungen |
+| *Run workflow* | übersprungen | kein Tag, `veroeffentlichen=nein` | baut | übersprungen | übersprungen |
+
+**Bei einem Pull Request und bei *Run workflow* wird nie veröffentlicht.**
+`version` setzt `veroeffentlichen=ja` nur, wenn ein Tag im Spiel ist: ein
+Tag-Push oder ein Tag, den release-please in diesem Lauf angelegt hat. Jeder
+andere Weg endet bei `nein`, und `veroeffentlichen` verlangt zusätzlich
+`needs.pakete.result == 'success'`. Angelegt, geändert oder hochgeladen wird
+dort also nichts.
+
+### Tag von Hand (Rückweg)
+
+Ohne release-please geht der Weg von Hand weiterhin:
+
+1. `[workspace.package] version` anheben, `Cargo.lock` auffrischen
+   (`cargo check --workspace`), alles prüfen (AGENTS.md §4) und über einen
+   Pull Request mergen.
+2. Tag setzen und schieben:
 
    ```bash
    git tag -a v0.2.0 -m "quiver 0.2.0"
    git push origin v0.2.0
    ```
 
-5. **Dem Lauf zusehen.** *Actions → Release*. Ist er grün, steht das Release
-   unter *Releases* — mit allen Paketen, `SHA256SUMS` und den
-   Herkunftsnachweisen.
+3. Der Tag-Push löst `release.yml` (Bau und Release) und `abbild.yml` (Abbild)
+   selbst aus. release-please ist nicht beteiligt.
 
 Der erste Job vergleicht den Tag mit der Version aus `Cargo.toml`. `v0.2.0`
 neben `0.1.0` bricht ab, **bevor** etwas gebaut wird: der Name des Releases
@@ -50,10 +99,14 @@ auseinanderlaufen.
   ein Release wird dabei **nicht** angefasst. Gut zum Ausprobieren eines Fixes.
 * Denselben Tag noch einmal schieben geht nicht; löschen und neu schieben nur,
   wenn das Release ersetzt werden soll.
-* Eine Plattform ist gescheitert, die anderen liefen: der Lauf ist rot, am
-  Release hängt, was gebaut wurde. Sauber wird es mit einem neuen Tag
-  (`v0.2.1`) — oder, solange der Tag noch nicht draußen ist, Release und Tag
-  löschen, reparieren, neu taggen.
+* Eine Plattform ist gescheitert, die anderen liefen: der Lauf ist rot und es
+  wird **nichts veröffentlicht** — `veroeffentlichen` startet nur, wenn alle
+  fünf Baujobs erfolgreich waren. Die Pakete der gelungenen Läufe bleiben als
+  Artefakte am Lauf. Reparieren und neu taggen (`v0.2.1`) — oder, solange der
+  Tag noch nicht draußen ist, Release und Tag löschen, reparieren, neu taggen.
+* Das Abbild wurde nicht angestoßen: von Hand *Actions → Abbild → Run
+  workflow* auf dem Tag starten. Der Lauf checkt den Tag aus und benennt das
+  Abbild mit seiner Version.
 
 ## Was wo gebaut wird
 

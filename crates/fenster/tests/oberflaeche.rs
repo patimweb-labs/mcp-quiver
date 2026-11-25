@@ -336,6 +336,71 @@ fn eintraege() -> Vec<EintragSicht> {
     vec![laeuft, wartet, fehler]
 }
 
+/// Das Titelbild des Clients in README und Doku: die Tools laufen (grün),
+/// **ein** Eintrag braucht noch Angaben, keiner steht auf Fehler. Die
+/// Zustände aller drei kommen in [`eintraege`] vor; hier geht es allein um
+/// das Bild, das ein neuer Leser zuerst sieht.
+///
+/// Titel und Beschreibungen sind Inhalt, nicht Oberfläche — im englischen
+/// README sollen sie trotzdem englisch sein.
+fn titel_eintraege(sprache: quiver_fenster::texte::Sprache) -> Vec<EintragSicht> {
+    use quiver_fenster::texte::Sprache;
+
+    let [(echo_titel, echo_text), (notizen_titel, notizen_text), (dateien_titel, dateien_text)] =
+        match sprache {
+            Sprache::De => [
+                ("Echo", "Werkzeuge zum Ausprobieren der Verbindung."),
+                ("Notizen", "Notizen lesen, schreiben und durchsuchen."),
+                ("Dateien", "Liest Dateien aus einem Ordner."),
+            ],
+            Sprache::En => [
+                ("Echo", "Tools for trying out the connection."),
+                ("Notes", "Read, write and search notes."),
+                ("Files", "Reads files from a folder."),
+            ],
+        };
+    let pfad_text = match sprache {
+        Sprache::De => "Ordner, den das Tool lesen darf",
+        Sprache::En => "Folder the tool may read",
+    };
+
+    let mut echo = eintrag(
+        "echo",
+        echo_titel,
+        echo_text,
+        EintragZustand::Laeuft { tools: 2 },
+        Vec::new(),
+    );
+    echo.tools = vec!["echo".into(), "ping".into()];
+
+    let mut notizen = eintrag(
+        "notizen",
+        notizen_titel,
+        notizen_text,
+        EintragZustand::Laeuft { tools: 3 },
+        Vec::new(),
+    );
+    notizen.tools = vec!["lesen".into(), "schreiben".into(), "suchen".into()];
+
+    // Genau einer braucht Angaben — mehr wäre kein gutes Titelbild.
+    let mut dateien = eintrag(
+        "dateien",
+        dateien_titel,
+        dateien_text,
+        EintragZustand::WartetAufWerte {
+            felder: vec!["PFAD".into()],
+        },
+        vec![feld("PFAD", Quelle::Client, pfad_text)],
+    );
+    dateien.fehlende = vec![FehlendesFeld {
+        name: "PFAD".into(),
+        beschreibung: pfad_text.into(),
+        quelle: Quelle::Client,
+    }];
+
+    vec![echo, notizen, dateien]
+}
+
 /// Ein Eintrag, der eine Anmeldung braucht, in einem bestimmten Zustand.
 fn anmelde_eintrag(id: &str, titel: &str, anmeldung: AnmeldeZustand) -> EintragSicht {
     let mut eintrag = eintrag(
@@ -1916,13 +1981,42 @@ fn foto(
     thema: Thema,
     px: u32,
 ) {
+    foto_in(
+        h,
+        ziel,
+        seite,
+        thema,
+        px,
+        quiver_fenster::texte::Sprache::De,
+    );
+}
+
+/// Dasselbe Bild in einer bestimmten Sprache. `README.de.md` zeigt die
+/// deutschen Bilder, `README.md` die englischen (der Client schaltet die
+/// Sprache um); die englische Fassung heißt `…-en.png`.
+fn foto_in(
+    h: &mut Harness<'static, Stand>,
+    ziel: &std::path::Path,
+    seite: &str,
+    thema: Thema,
+    px: u32,
+    sprache: quiver_fenster::texte::Sprache,
+) {
+    h.state_mut().0.sicht.sprache = sprache;
     // Der Zeiger steht nach einem Klick über einem Knopf; fürs Bild wandert er
     // aus dem Fenster, damit er nichts verdeckt.
     h.event(egui::Event::PointerMoved(egui::pos2(-100.0, -100.0)));
     h.run();
+    let sprache = match sprache {
+        quiver_fenster::texte::Sprache::De => "",
+        quiver_fenster::texte::Sprache::En => "-en",
+    };
     let bild = h.render().expect("zeichnen (wgpu)");
-    bild.save(ziel.join(format!("fenster-{}-{seite}-{px}.png", thema.name())))
-        .expect("Bild schreibbar");
+    bild.save(ziel.join(format!(
+        "fenster-{}-{seite}-{px}{sprache}.png",
+        thema.name()
+    )))
+    .expect("Bild schreibbar");
 }
 
 /// Kein Steuerelement ragt seitlich aus dem Fenster (Aufgabe 18). Geprüft
@@ -1990,11 +2084,82 @@ fn alle_seiten_in_allen_themes() {
                     "{name}: Navigation fehlt"
                 );
                 if let (Some(ziel), true) = (&ziel, BILDER_THEMEN.contains(&thema)) {
-                    foto(&mut h, ziel, name, thema, groesse.px);
+                    if name == "tools" {
+                        // Titelbild: dieselbe Seite, aber mit dem Modell, das
+                        // die Tools laufen zeigt (kein Fehler, höchstens ein
+                        // Eintrag mit fehlenden Angaben).
+                        let mut h = fenster(
+                            modell(
+                                verbunden(),
+                                titel_eintraege(quiver_fenster::texte::Sprache::De),
+                            ),
+                            Some(seite),
+                            thema,
+                            groesse.masse,
+                        );
+                        zur_ruhe(&mut h);
+                        foto(&mut h, ziel, name, thema, groesse.px);
+                    } else {
+                        foto(&mut h, ziel, name, thema, groesse.px);
+                    }
                 }
             }
         }
     }
+}
+
+/// Die englischen Fassungen der Bilder, die `README.md` zeigt: dasselbe
+/// Fenster, nur über den Sprachschalter auf Englisch (`README.de.md` zeigt die
+/// deutschen). Nur diese Seiten und Größen, damit nicht das halbe Verzeichnis
+/// doppelt entsteht.
+#[test]
+fn bildschirmfoto_auf_englisch() {
+    use quiver_fenster::texte::Sprache;
+
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+
+    // Titelbild (hell und dunkel), dieselbe Seite wie im deutschen README.
+    for thema in BILDER_THEMEN {
+        let mut h = fenster(
+            modell(
+                verbunden(),
+                titel_eintraege(quiver_fenster::texte::Sprache::En),
+            ),
+            Some(Seite::Tools),
+            thema,
+            (1200.0, 820.0),
+        );
+        zur_ruhe(&mut h);
+        foto_in(&mut h, &ziel, "tools", thema, 1200, Sprache::En);
+    }
+
+    // Koppeln-Dialog, 800 px, dunkel.
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Agenten),
+        Thema::Dunkel,
+        (800.0, 600.0),
+    );
+    zur_ruhe(&mut h);
+    h.state_mut().0.sicht.sprache = Sprache::En;
+    zur_ruhe(&mut h);
+    h.get_by_role_and_label(Role::Button, "Pair agent").click();
+    zur_ruhe(&mut h);
+    assert!(matches!(h.state().0.sicht.dialog, Dialog::Koppeln { .. }));
+    foto_in(&mut h, &ziel, "koppeln", Thema::Dunkel, 800, Sprache::En);
+
+    // Protokollseite, 800 px, dunkel.
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Protokoll),
+        Thema::Dunkel,
+        (800.0, 600.0),
+    );
+    zur_ruhe(&mut h);
+    foto_in(&mut h, &ziel, "protokoll", Thema::Dunkel, 800, Sprache::En);
 }
 
 /// Die Verbindungsseite mit Microsoft-Weg und der Zustand „neu anmelden“
