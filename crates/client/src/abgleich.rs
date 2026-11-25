@@ -80,17 +80,29 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
                         if !gilt_noch(&innen, &token) {
                             continue;
                         }
-                        tracing::warn!("{fehler:#} – alle Tools gestoppt");
-                        innen.ablehnung_behandeln(&server, &fehler).await;
-                        tokio::select! {
-                            _ = innen.ende.warten() => return,
-                            _ = innen.erneut.notified() => {}
+                        if nach_ablehnung_warten(&innen, &server, &fehler).await {
+                            return;
                         }
                         continue;
                     }
                     StromEnde::Fehler(fehler) => {
                         if !gilt_noch(&innen, &token) {
                             continue;
+                        }
+                        // Das Ende des Stroms ist ein Anlass nachzufragen, kein
+                        // Grund zu warten: der Entzug hängt nicht am Ereignis.
+                        match nachfragen(&innen, &server, &token).await {
+                            Ok(true) => {}
+                            Ok(false) => continue,
+                            Err(neuer) if ist_abgelehnt(&neuer) => {
+                                if nach_ablehnung_warten(&innen, &server, &neuer).await {
+                                    return;
+                                }
+                                continue;
+                            }
+                            Err(neuer) => {
+                                tracing::warn!("Nachfrage am Ende des Stroms: {neuer:#}");
+                            }
                         }
                         let text = format!("{fehler:#}");
                         tracing::warn!("Ereignis-Strom weg: {text}");
@@ -105,11 +117,8 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
                 if !gilt_noch(&innen, &token) {
                     continue;
                 }
-                tracing::warn!("{fehler:#} – alle Tools gestoppt");
-                innen.ablehnung_behandeln(&server, &fehler).await;
-                tokio::select! {
-                    _ = innen.ende.warten() => return,
-                    _ = innen.erneut.notified() => {}
+                if nach_ablehnung_warten(&innen, &server, &fehler).await {
+                    return;
                 }
                 continue;
             }
@@ -142,6 +151,39 @@ fn gilt_noch(innen: &Arc<Innen>, token: &str) -> bool {
     innen.zugang().1.as_deref() == Some(token)
 }
 
+/// Eine Ablehnung des Geräts behandeln und auf den nächsten Anlass warten.
+///
+/// `true` heißt: der Kern fährt herunter, der Aufrufer soll zurückkehren.
+async fn nach_ablehnung_warten(innen: &Arc<Innen>, server: &str, fehler: &anyhow::Error) -> bool {
+    tracing::warn!("{fehler:#} – alle Tools gestoppt");
+    innen.ablehnung_behandeln(server, fehler).await;
+    tokio::select! {
+        _ = innen.ende.warten() => true,
+        _ = innen.erneut.notified() => false,
+    }
+}
+
+/// Den Soll-Zustand nachfragen und anwenden, wenn er sich geändert hat.
+///
+/// Ein Entzug darf nicht von einem einzelnen Ereignis abhängen: deshalb fragt
+/// der Client direkt nach dem Öffnen und am Ende des Ereignis-Stroms nach. Ein
+/// Ereignis, das niemand hörte (der Strom war noch nicht offen), ist damit
+/// folgenlos; ein 403 kommt hier an und stoppt sofort alle Werkzeuge.
+///
+/// `Ok(false)` heißt: das Geräte-Token gilt nicht mehr (abgemeldet oder neu
+/// angemeldet) – der Durchlauf ist überholt.
+async fn nachfragen(innen: &Arc<Innen>, server: &str, token: &str) -> anyhow::Result<bool> {
+    let letzte = innen.stand().soll.revision.clone();
+    let soll = soll_holen(&innen.http, server, token).await?;
+    if !gilt_noch(innen, token) {
+        return Ok(false);
+    }
+    if soll.revision != letzte {
+        anwenden(innen, soll).await;
+    }
+    Ok(true)
+}
+
 /// Der Ereignis-Strom: sofort die aktuelle Revision, danach bei jeder Änderung.
 ///
 /// Zusätzlich wird der Soll-Zustand alle [`NACHFRAGE_ABSTAND`] (± Streuung)
@@ -162,6 +204,16 @@ async fn strom(innen: &Arc<Innen>, server: &str, token: &str) -> StromEnde {
         Ok(antwort) => antwort,
         Err(fehler) => return StromEnde::Fehler(fehler),
     };
+    // Direkt nach dem Öffnen nachfragen. Der Strom, der eben entstanden ist,
+    // kann für ein Ereignis zu spät kommen: was zwischen dem letzten Soll und
+    // diesem Abonnement passiert ist, hat niemand gehört – und die Revision
+    // bleibt dabei gleich, weil der Server sie aus dem gespeicherten Stand des
+    // Geräts rechnet. Ein entzogener Zugang wäre dann unsichtbar.
+    match nachfragen(innen, server, token).await {
+        Ok(true) => {}
+        Ok(false) => return StromEnde::NeuVerbinden,
+        Err(fehler) => return StromEnde::Fehler(fehler),
+    }
 
     let mut koerper = antwort.bytes_stream();
     let mut leser = sse::Leser::default();
@@ -179,14 +231,9 @@ async fn strom(innen: &Arc<Innen>, server: &str, token: &str) -> StromEnde {
             _ = nachfrage.tick() => {
                 // Von selbst nachfragen: nur, wenn sich die Revision ändert,
                 // wird etwas angewendet.
-                let letzte = innen.stand().soll.revision.clone();
-                match soll_holen(&innen.http, server, token).await {
-                    Ok(soll) if gilt_noch(innen, token) => {
-                        if soll.revision != letzte {
-                            anwenden(innen, soll).await;
-                        }
-                    }
-                    Ok(_) => return StromEnde::NeuVerbinden,
+                match nachfragen(innen, server, token).await {
+                    Ok(true) => {}
+                    Ok(false) => return StromEnde::NeuVerbinden,
                     Err(fehler) => return StromEnde::Fehler(fehler),
                 }
                 continue;

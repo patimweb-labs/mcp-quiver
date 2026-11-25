@@ -165,6 +165,23 @@ enum Stand {
     KeinZugriff,
 }
 
+/// Wie [`geraet_erlaubt`], aber **mit** dem Grund: 401/403 samt
+/// maschinenlesbarem `grund`. Für Wege, die den Zugang sofort verweigern
+/// müssen, statt nur „nein“ zu sagen – ein Client, der den Grund kennt, stoppt
+/// sofort alle Werkzeuge und sagt warum.
+pub(crate) async fn geraet_zugang(
+    zustand: &Arc<Zustand>,
+    id: &quiver_domain::GeraetId,
+) -> Ergebnis<()> {
+    let kennung = id.clone();
+    let zeile = db(zustand, move |conn| {
+        speicher::hole_geraet(conn, kennung.als_str())
+    })
+    .await?
+    .ok_or_else(|| FehlerAntwort::nicht_angemeldet(format!("Gerät {id} gibt es nicht")))?;
+    geraet_pruefen(zustand, &zeile).await
+}
+
 /// Kurzform für den Ereignis-Strom: endet der Strom?
 pub(crate) async fn geraet_erlaubt(zustand: &Arc<Zustand>, id: &quiver_domain::GeraetId) -> bool {
     let kennung = id.clone();
