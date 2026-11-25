@@ -1,35 +1,27 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Wo die mitgelieferten Werkzeuge liegen und wie aus einem Programmnamen ein
-//! Pfad wird (Aufgabe 35).
+//! Welches Programm ein Eintrag startet (Aufgabe 37).
 //!
-//! Ein Eintrag der Bibliothek nennt nur den **Programmnamen**
-//! (`quiver-devops`). Ein Client aus dem Paket bringt die Werkzeuge selbst
-//! mit und sucht sie deshalb zuerst neben dem eigenen Programm, dann im
-//! `PATH`; ein fester Pfad funktioniert weiterhin.
+//! Der Client bringt **keine** Werkzeuge mehr mit. Es gibt zwei Fälle:
 //!
-//! Gesucht wird überall gleich — Start, Anmeldung, Status, Einrichtung und
-//! Testen gehen durch [`fuer_eintrag`]. Damit kann keine Stelle die Regel
-//! umgehen.
+//! - **Vom Server verteilt:** ein reiner Name, der mit `quiver-` beginnt. Das
+//!   Programm liegt im Profil unter `tools/<name>/<sha256>/<programm>`
+//!   ([`crate::werkzeuge`]) und wird vor jedem Start geprüft.
+//! - **Alles andere:** `npx`, `uvx`, `docker`, ein Pfad zu einem eigenen
+//!   Programm. Das gilt wie bisher: ein reiner Name wird im `PATH` gesucht,
+//!   ein Pfad genommen, wie er dasteht.
+//!
+//! Ein Eintrag mit einem **alten festen Pfad** auf ein verteiltes Programm
+//! heilt sich selbst: es zählt nur noch der Programmname (Altbestand).
+//!
+//! [`ORDNER_SCHALTER`] (`QUIVER_TOOLS_DIR`) bleibt für die Entwicklung: ein
+//! Ordner, in dem die Programme flach liegen, überschreibt die Ablage im
+//! Profil. Damit lässt sich ein ausgecheckter Stand ohne Server ausprobieren.
 //!
 //! Die Meldung an den Benutzer nennt nie einen fremden Dateipfad, sondern nur
 //! den Programmnamen und den Grund; der volle Pfad steht allein im örtlichen
-//! Protokoll (`tracing`) und, beim Altbestand, in der Protokollseite.
-//!
-//! Welcher Ordner „neben dem Programm“ liegt, hängt von der Verpackung ab:
-//!
-//! | Paket | Programm | Werkzeuge |
-//! |---|---|---|
-//! | macOS | `quiver.app/Contents/MacOS/quiver` | `quiver.app/Contents/Resources/tools` |
-//! | Windows | `<Installation>\quiver.exe` | `<Installation>\tools` |
-//! | Linux (.deb/.rpm/.tar.gz) | `/usr/bin/quiver` | `/usr/lib/mcp-quiver/tools` |
-//! | AppImage | `<AppDir>/usr/bin/quiver` | `<AppDir>/usr/lib/mcp-quiver/tools` |
-//!
-//! Statt die Plattform abzufragen (`cfg(target_os)`), werden die Kandidaten
-//! der Reihe nach probiert und der erste genommen, der existiert
-//! (AGENTS.md §2.10): dieselbe Regel gilt damit auch für ein Bündel, das
-//! jemand anders zusammengestellt hat.
+//! Protokoll (`tracing`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -38,15 +30,15 @@ use quiver_domain::{EintragId, Laufzeit};
 
 use crate::protokoll::Protokoll;
 
-/// Der Schalter für die Entwicklung: ein Ordner mit Werkzeugen, der alles
-/// andere überschreibt.
+/// Der Schalter für die Entwicklung: ein Ordner mit den Programmen darin,
+/// flach, ohne Prüfsummen-Ordner.
 pub const ORDNER_SCHALTER: &str = "QUIVER_TOOLS_DIR";
 
 /// Woher ein Programm kommt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Herkunft {
-    /// Aus dem Ordner neben dem Programm — mitgeliefert.
-    Mitgeliefert,
+    /// Aus `QUIVER_TOOLS_DIR` (Entwicklung).
+    Entwicklung,
     /// Im `PATH` gefunden.
     Pfad,
     /// Ein fester Pfad aus der Bibliothek.
@@ -60,9 +52,6 @@ pub struct Fund {
     pub pfad: PathBuf,
     /// Woran er erkannt wurde.
     pub herkunft: Herkunft,
-    /// Ein fester Pfad zeigte ins Leere, dieser Name liegt aber im Paket: der
-    /// alte Eintrag der Bibliothek heilt sich so von selbst (Altbestand).
-    pub ersetzt: Option<String>,
 }
 
 impl Fund {
@@ -75,10 +64,10 @@ impl Fund {
 /// Warum kein Programm gefunden wurde.
 ///
 /// Die Meldung nennt nur den Namen und den Grund — nie einen Pfad: sie steht
-/// auf der Tool-Karte im Fenster (Aufgabe 35).
+/// auf der Tool-Karte im Fenster.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum NichtGefunden {
-    #[error("»{0}« wurde nicht gefunden – weder mitgeliefert noch im PATH")]
+    #[error("»{0}« wurde auf diesem Gerät nicht gefunden")]
     Nirgends(String),
     #[error("für diesen Eintrag ist kein Programm eingetragen")]
     OhneNamen,
@@ -88,25 +77,21 @@ pub enum NichtGefunden {
 /// Test von Hand gesetzt.
 #[derive(Debug, Clone)]
 pub struct Suche {
-    /// Das laufende Programm; der Ordner daneben gehört dem Paket.
-    pub programm: PathBuf,
     /// `QUIVER_TOOLS_DIR`, wenn gesetzt (Entwicklung).
     pub eigener: Option<PathBuf>,
     /// Die Einträge von `PATH`.
     pub pfad: Vec<PathBuf>,
-    /// `APPDIR` eines laufenden AppImage, wenn gesetzt.
-    pub appdir: Option<PathBuf>,
 }
 
 impl Suche {
     /// Die Suche, wie sie im Betrieb gilt – gemerkt, solange sich die Umgebung
     /// nicht ändert.
     ///
-    /// Sie hängt nur an der Umgebung und am eigenen Programm, beides ändert
-    /// sich im Betrieb nicht mehr; deshalb wird sie gemerkt, statt bei jedem
-    /// Eintrag und jedem Bild des Fensters neu aufgebaut zu werden. Ändert
-    /// sich `QUIVER_TOOLS_DIR` doch (Tests, Werkzeuge aus einem Checkout),
-    /// wird sie neu gebaut — sonst liefe ein Test mit dem Ordner eines anderen.
+    /// Sie hängt nur an der Umgebung, die sich im Betrieb nicht mehr ändert;
+    /// deshalb wird sie gemerkt, statt bei jedem Eintrag und jedem Bild des
+    /// Fensters neu aufgebaut zu werden. Ändert sich `QUIVER_TOOLS_DIR` doch
+    /// (Tests, Werkzeuge aus einem Checkout), wird sie neu gebaut — sonst
+    /// liefe ein Test mit dem Ordner eines anderen.
     pub fn gemerkt() -> Suche {
         static SUCHE: Mutex<Option<(Option<PathBuf>, Suche)>> = Mutex::new(None);
         let eigener = umgebungsordner(ORDNER_SCHALTER);
@@ -126,49 +111,19 @@ impl Suche {
     /// Die Suche, wie sie im Betrieb gilt.
     pub fn aus_umgebung() -> Self {
         Self {
-            programm: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quiver")),
             eigener: umgebungsordner(ORDNER_SCHALTER),
             pfad: std::env::var_os("PATH")
                 .map(|pfad| std::env::split_paths(&pfad).collect())
                 .unwrap_or_default(),
-            appdir: umgebungsordner("APPDIR"),
         }
-    }
-
-    /// Der Ordner mit den mitgelieferten Werkzeugen: der erste, den es gibt.
-    ///
-    /// `QUIVER_TOOLS_DIR` gilt, wenn gesetzt — auch wenn der Ordner leer ist.
-    pub fn ordner(&self) -> Option<PathBuf> {
-        if let Some(eigener) = &self.eigener {
-            return Some(eigener.clone());
-        }
-        let daneben = self.programm.parent().unwrap_or(Path::new("."));
-        // Ein `..` steht nicht im Weg: die Ebene darüber wird gerechnet, damit
-        // der gefundene Pfad ohne Umweg lesbar bleibt.
-        let darueber = daneben.parent().unwrap_or(daneben);
-        let mut kandidaten = vec![
-            daneben.join("tools"),
-            daneben.join("Resources").join("tools"),
-            darueber.join("Resources").join("tools"),
-            darueber.join("lib").join("mcp-quiver").join("tools"),
-        ];
-        if let Some(appdir) = &self.appdir {
-            kandidaten.push(
-                appdir
-                    .join("usr")
-                    .join("lib")
-                    .join("mcp-quiver")
-                    .join("tools"),
-            );
-        }
-        kandidaten.into_iter().find(|ordner| ordner.is_dir())
     }
 
     /// Ein Programm finden.
     ///
-    /// Ein Name ohne Trennzeichen wird zuerst im Paket gesucht, dann im
-    /// `PATH`; ein Pfad (mit `/` oder `\`) gilt, wie er dasteht. Gibt es ihn
-    /// nicht, dessen Dateiname aber schon, kommt die mitgelieferte Fassung.
+    /// Ein Name ohne Trennzeichen wird zuerst im Entwicklungsordner gesucht,
+    /// dann im `PATH`; ein Pfad gilt, wie er dasteht. Gibt es den Pfad nicht
+    /// mehr, zählt sein Dateiname (Altbestand): der Eintrag heilt sich, sobald
+    /// das Programm als Name gefunden wird.
     pub fn finden(&self, programm: &str) -> Result<Fund, NichtGefunden> {
         let programm = programm.trim();
         if programm.is_empty() {
@@ -180,32 +135,26 @@ impl Suche {
                 return Ok(Fund {
                     pfad: pfad.to_path_buf(),
                     herkunft: Herkunft::Fest,
-                    ersetzt: None,
                 });
             }
             let name = dateiname(programm);
-            if let Some(mut fund) = self.mitgeliefert(&name) {
-                fund.ersetzt = Some(programm.to_string());
-                return Ok(fund);
-            }
-            return Err(NichtGefunden::Nirgends(name));
+            return self.nach_namen(&name).ok_or(NichtGefunden::Nirgends(name));
         }
-        if let Some(fund) = self.mitgeliefert(programm) {
-            return Ok(fund);
-        }
-        self.im_pfad(programm)
+        self.nach_namen(programm)
             .ok_or_else(|| NichtGefunden::Nirgends(programm.to_string()))
     }
 
-    /// Im Ordner neben dem Programm suchen — nur unter dem reinen Namen.
-    fn mitgeliefert(&self, name: &str) -> Option<Fund> {
-        let ordner = self.ordner()?;
-        let pfad = im_ordner(&ordner, name)?;
-        Some(Fund {
-            pfad,
-            herkunft: Herkunft::Mitgeliefert,
-            ersetzt: None,
-        })
+    /// Einen bloßen Namen suchen: erst der Entwicklungsordner, dann `PATH`.
+    fn nach_namen(&self, name: &str) -> Option<Fund> {
+        if let Some(ordner) = &self.eigener {
+            if let Some(pfad) = im_ordner(ordner, name) {
+                return Some(Fund {
+                    pfad,
+                    herkunft: Herkunft::Entwicklung,
+                });
+            }
+        }
+        self.im_pfad(name)
     }
 
     /// Im `PATH` suchen.
@@ -217,7 +166,6 @@ impl Suche {
                     return Some(Fund {
                         pfad,
                         herkunft: Herkunft::Pfad,
-                        ersetzt: None,
                     });
                 }
             }
@@ -226,10 +174,35 @@ impl Suche {
     }
 }
 
-/// Ein Programm für einen Eintrag suchen und den Altbestand vermerken.
+/// Ist das ein Programm, das der Server verteilt (Aufgabe 37)?
+///
+/// `Some(name)` heißt: der Eintrag erwartet ein Programm vom Server, und zwar
+/// unter diesem Namen – auch dann, wenn er noch als alter Pfad dasteht
+/// (Altbestand). `None` heißt: der Eintrag startet ein fremdes Programm
+/// (`npx`, `uvx`, `docker`, ein Pfad zu einem eigenen Programm).
+pub fn verteilt_name(laufzeit: &Laufzeit) -> Option<String> {
+    let Laufzeit::Stdio { befehl, .. } = laufzeit else {
+        return None;
+    };
+    let befehl = befehl.trim();
+    if quiver_domain::ist_verteilt(befehl) {
+        return Some(befehl.to_string());
+    }
+    if ist_pfad(befehl) && !Path::new(befehl).is_file() {
+        let name = dateiname(befehl);
+        if quiver_domain::ist_verteilt(&name) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Ein Programm für einen Eintrag suchen.
 ///
 /// Die eine Stelle, durch die Start, Anmeldung, Status, Einrichtung und
-/// Testen gehen.
+/// Testen gehen. Verteilt der Server das Programm, löst der Aufrufer es vorher
+/// über [`crate::werkzeuge`] auf; hier landen nur fremde Programme und feste
+/// Pfade.
 pub(crate) fn fuer_eintrag(
     id: &EintragId,
     programm: &str,
@@ -239,47 +212,35 @@ pub(crate) fn fuer_eintrag(
     let fund = match suche.finden(programm) {
         Ok(fund) => fund,
         Err(fehler) => {
-            // Der Benutzer kann nichts tun, der Admin muss das Werkzeug
-            // mitliefern: der Hinweis gehört ins Protokoll, nicht auf die
-            // Karte (Aufgabe 35, §5).
+            // Der Benutzer kann nichts tun, der Admin muss das Programm auf
+            // dem Server bereitstellen: der Hinweis gehört ins Protokoll,
+            // nicht auf die Karte.
             tracing::warn!(eintrag = %id, "Programm nicht gefunden: {fehler}");
             protokoll.zeile_schreiben(
                 id,
                 &format!(
-                    "{fehler}. Bitte den Admin bitten, das Programm mit dem Paket \
-                     mitzuliefern oder in den PATH zu legen."
+                    "{fehler}. Bitte den Admin bitten, das Programm auf dem Server \
+                     bereitzustellen oder in den PATH zu legen."
                 ),
             );
             return Err(fehler.into());
         }
     };
     tracing::debug!(eintrag = %id, programm = %fund.pfad.display(), "Programm gefunden");
-    if let Some(alt) = &fund.ersetzt {
-        // Der alte Eintrag der Bibliothek zeigt auf einen Pfad, den es hier
-        // nicht gibt; der Name ist aber mitgeliefert. Der volle Pfad gehört
-        // ins Protokoll, nicht in eine Meldung.
-        tracing::info!(eintrag = %id, "»{alt}« gibt es nicht, es läuft {}", fund.pfad.display());
-        protokoll.zeile_schreiben(
-            id,
-            &format!(
-                "»{alt}« gibt es auf diesem Gerät nicht – es läuft die mitgelieferte Fassung von {}.",
-                fund.name()
-            ),
-        );
-    }
     Ok(fund)
 }
 
 /// Fehlt das Programm dieses Eintrags auf diesem Gerät?
 ///
-/// `Some(name)`, wenn der Eintrag ein Programm startet, das weder mitgeliefert
-/// noch im `PATH` liegt. Die Karte schreibt dann „Dieses Tool ist auf diesem
-/// Gerät nicht installiert.“ statt eines technischen Fehlers und bietet keine
-/// Anmeldung an (Aufgabe 35, §5).
-///
-/// Gemeldet wird nur „gibt es nicht“, nie ein Pfad: auch diese Frage bekommt
-/// niemanden zu sehen, der nicht auf diesem Gerät sitzt.
+/// `Some(name)`, wenn der Eintrag ein Programm startet, das **nicht** vom
+/// Server kommt und weder im Entwicklungsordner noch im `PATH` liegt. Die
+/// Karte schreibt dann „Dieses Tool ist auf diesem Gerät nicht installiert.“
+/// und bietet keine Anmeldung an. Verteilt der Server das Programm, ist das
+/// hier nie der Fall – darum kümmert sich der Abgleich.
 pub(crate) fn fehlt(laufzeit: &Laufzeit) -> Option<String> {
+    if verteilt_name(laufzeit).is_some() {
+        return None;
+    }
     let Laufzeit::Stdio { befehl, .. } = laufzeit else {
         return None;
     };
@@ -288,16 +249,6 @@ pub(crate) fn fehlt(laufzeit: &Laufzeit) -> Option<String> {
         Err(NichtGefunden::OhneNamen) => None,
         Err(NichtGefunden::Nirgends(name)) => Some(name),
     }
-}
-
-/// Gibt es den Ordner mit den mitgelieferten Werkzeugen neben dem Programm
-/// (Aufgabe 35, §6)?
-///
-/// `false` heißt: ein Programm, das der Eintrag über seinen bloßen Namen
-/// nennt, ist hier nicht zu finden – bei einem entpackten ZIP fehlt dann der
-/// Ordner `tools`.
-pub(crate) fn ordner_da() -> bool {
-    Suche::gemerkt().ordner().is_some()
 }
 
 /// Ist das ein Pfad und kein bloßer Name? (auch `C:\…`, das auf einem anderen
@@ -320,10 +271,10 @@ fn kandidaten(name: &str) -> Vec<String> {
     aus
 }
 
-/// Ein Programm im Ordner der mitgelieferten Werkzeuge suchen — ohne Ausbruch.
+/// Ein Programm in einem Ordner suchen — ohne Ausbruch.
 ///
 /// Ein Name mit Trennzeichen wird nie angehängt, und ein Verweis, der aus dem
-/// Ordner herauszeigt, gilt nicht: das Paket ist die Grenze.
+/// Ordner herauszeigt, gilt nicht: der Ordner ist die Grenze.
 fn im_ordner(ordner: &Path, name: &str) -> Option<PathBuf> {
     let Ok(basis) = ordner.canonicalize() else {
         return None;
@@ -343,7 +294,7 @@ fn im_ordner(ordner: &Path, name: &str) -> Option<PathBuf> {
 
 /// Der Programmname ohne Ordner und ohne `.exe` — so, wie ihn ein Benutzer
 /// nennt.
-fn dateiname(programm: &str) -> String {
+pub(crate) fn dateiname(programm: &str) -> String {
     let name = programm
         .rsplit(['/', '\\'])
         .next()
@@ -361,6 +312,15 @@ fn dateiname(programm: &str) -> String {
     }
 }
 
+/// Liegt ein Programm dieses Namens im Entwicklungsordner (`QUIVER_TOOLS_DIR`)?
+///
+/// Nur für die Entwicklung: ein ausgecheckter Stand lässt sich so ohne Server
+/// ausprobieren. Im Betrieb ist der Schalter leer.
+pub fn im_entwicklungsordner(name: &str) -> Option<PathBuf> {
+    let ordner = Suche::gemerkt().eigener?;
+    im_ordner(&ordner, name)
+}
+
 /// Eine Umgebungsvariable als Ordner; ein leerer Wert zählt nicht.
 fn umgebungsordner(name: &str) -> Option<PathBuf> {
     std::env::var_os(name)
@@ -373,13 +333,16 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// Ein eigener Ordner je Test unter `target` — kein Aufräumen nötig, und
+    /// Ein eigener Ordner je Test unter `temp` — kein Aufräumen nötig, und
     /// kein Test sieht die Bäume eines anderen.
     fn baum(name: &str) -> PathBuf {
         let ordner = std::env::temp_dir().join(format!(
             "quiver-tools-{}-{name}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|dauer| dauer.as_nanos())
+                .unwrap_or(0)
         ));
         fs::remove_dir_all(&ordner).ok();
         fs::create_dir_all(&ordner).expect("Testordner");
@@ -393,124 +356,33 @@ mod tests {
         fs::write(pfad, b"#!/bin/sh\n").expect("Programm");
     }
 
-    fn suche(programm: &Path) -> Suche {
-        Suche {
-            programm: programm.to_path_buf(),
-            eigener: None,
-            pfad: Vec::new(),
-            appdir: None,
-        }
-    }
-
     #[test]
-    fn macos_buendel_findet_die_werkzeuge_in_resources() {
-        let baum = baum("macos");
-        let programm = baum.join("quiver.app/Contents/MacOS/quiver");
-        werkzeug(&programm);
-        werkzeug(&baum.join("quiver.app/Contents/Resources/tools/quiver-devops"));
-
-        let fund = suche(&programm).finden("quiver-devops").expect("gefunden");
-        assert_eq!(fund.herkunft, Herkunft::Mitgeliefert);
-        assert_eq!(
-            fund.pfad,
-            baum.join("quiver.app/Contents/Resources/tools/quiver-devops")
-        );
-        assert_eq!(fund.name(), "quiver-devops");
-        assert_eq!(fund.ersetzt, None);
-    }
-
-    #[test]
-    fn windows_installation_findet_die_werkzeuge_im_ordner_tools() {
-        let baum = baum("windows");
-        let programm = baum.join("Programme/mcp-quiver/quiver.exe");
-        werkzeug(&programm);
-        werkzeug(&baum.join("Programme/mcp-quiver/tools/quiver-devops.exe"));
-
-        let mut gesucht = suche(&programm);
-        gesucht.pfad = vec![baum.join("Programme/mcp-quiver/tools")];
-        let fund = gesucht.finden("quiver-devops").expect("gefunden");
-        assert_eq!(fund.herkunft, Herkunft::Mitgeliefert);
-        assert_eq!(fund.name(), "quiver-devops", "ohne .exe");
-    }
-
-    #[test]
-    fn linux_paket_findet_die_werkzeuge_unter_lib() {
-        let baum = baum("linux");
-        let programm = baum.join("usr/bin/quiver");
-        werkzeug(&programm);
-        werkzeug(&baum.join("usr/lib/mcp-quiver/tools/quiver-devops"));
-
-        let fund = suche(&programm).finden("quiver-devops").expect("gefunden");
-        assert_eq!(fund.herkunft, Herkunft::Mitgeliefert);
-        assert_eq!(
-            fund.pfad,
-            baum.join("usr/lib/mcp-quiver/tools/quiver-devops")
-        );
-    }
-
-    #[test]
-    fn appimage_findet_die_werkzeuge_ueber_appdir() {
-        let baum = baum("appimage");
-        let appdir = baum.join("AppDir");
-        // Das Programm steht woanders (etwa entpackt): APPDIR entscheidet.
-        let programm = baum.join("sonstwo/quiver");
-        werkzeug(&programm);
-        werkzeug(&appdir.join("usr/lib/mcp-quiver/tools/quiver-devops"));
-
-        let mut gesucht = suche(&programm);
-        gesucht.appdir = Some(appdir.clone());
-        let fund = gesucht.finden("quiver-devops").expect("gefunden");
-        assert_eq!(fund.herkunft, Herkunft::Mitgeliefert);
-        assert_eq!(
-            fund.pfad,
-            appdir.join("usr/lib/mcp-quiver/tools/quiver-devops")
-        );
-    }
-
-    #[test]
-    fn eigener_ordner_ueberschreibt_das_paket() {
-        let baum = baum("eigener");
-        let programm = baum.join("quiver.app/Contents/MacOS/quiver");
-        werkzeug(&programm);
-        werkzeug(&baum.join("quiver.app/Contents/Resources/tools/quiver-devops"));
-        let eigen = baum.join("aus-checkout");
-        werkzeug(&eigen.join("quiver-devops"));
-
-        let mut gesucht = suche(&programm);
-        gesucht.eigener = Some(eigen.clone());
-        let fund = gesucht.finden("quiver-devops").expect("gefunden");
-        assert_eq!(fund.pfad, eigen.join("quiver-devops"));
-
-        // Ein leerer eigener Ordner heißt: nichts mitgeliefert.
-        let leer = baum.join("leer");
-        fs::create_dir_all(&leer).expect("Ordner");
-        gesucht.eigener = Some(leer);
-        assert_eq!(
-            gesucht.finden("quiver-devops"),
-            Err(NichtGefunden::Nirgends("quiver-devops".into()))
-        );
-    }
-
-    #[test]
-    fn der_path_gilt_erst_nach_dem_paket() {
+    fn ein_blosser_name_kommt_aus_dem_path() {
         let baum = baum("pfad");
-        let programm = baum.join("usr/bin/quiver");
-        werkzeug(&programm);
-        werkzeug(&baum.join("usr/lib/mcp-quiver/tools/quiver-devops"));
         let im_pfad = baum.join("pfad");
         werkzeug(&im_pfad.join("quiver-devops"));
         werkzeug(&im_pfad.join("quiver-jira.exe"));
 
-        let mut gesucht = suche(&programm);
-        gesucht.pfad = vec![im_pfad.clone()];
+        let gesucht = Suche {
+            eigener: None,
+            pfad: vec![im_pfad.clone()],
+        };
         let fund = gesucht.finden("quiver-devops").expect("gefunden");
-        assert_eq!(fund.herkunft, Herkunft::Mitgeliefert, "das Paket geht vor");
-
-        // Was nicht mitgeliefert ist, kommt aus dem PATH — auch als .exe.
-        let fund = gesucht.finden("quiver-jira").expect("gefunden");
         assert_eq!(fund.herkunft, Herkunft::Pfad);
+        assert_eq!(fund.pfad, im_pfad.join("quiver-devops"));
+        assert_eq!(fund.name(), "quiver-devops");
+
+        // Auch als .exe gefunden und ohne Endung benannt.
+        let fund = gesucht.finden("quiver-jira").expect("gefunden");
         assert_eq!(fund.pfad, im_pfad.join("quiver-jira.exe"));
         assert_eq!(fund.name(), "quiver-jira");
+
+        // Fremde Programme ebenso.
+        werkzeug(&im_pfad.join("npx"));
+        assert_eq!(
+            gesucht.finden("npx").expect("gefunden").herkunft,
+            Herkunft::Pfad
+        );
 
         assert_eq!(
             gesucht.finden("quiver-gibtsnicht"),
@@ -519,51 +391,77 @@ mod tests {
     }
 
     #[test]
+    fn der_entwicklungsordner_geht_vor_dem_path() {
+        let baum = baum("entwicklung");
+        let eigen = baum.join("aus-checkout");
+        werkzeug(&eigen.join("quiver-devops"));
+        let im_pfad = baum.join("pfad");
+        werkzeug(&im_pfad.join("quiver-devops"));
+
+        let gesucht = Suche {
+            eigener: Some(eigen.clone()),
+            pfad: vec![im_pfad],
+        };
+        let fund = gesucht.finden("quiver-devops").expect("gefunden");
+        assert_eq!(fund.herkunft, Herkunft::Entwicklung);
+        assert_eq!(fund.pfad, eigen.join("quiver-devops"));
+    }
+
+    #[test]
     fn ein_fester_pfad_gilt_wie_er_dasteht() {
         let baum = baum("fest");
-        let programm = baum.join("usr/bin/quiver");
-        werkzeug(&programm);
-        let anderswo = baum.join("opt/werkzeuge/quiver-devops");
+        let anderswo = baum.join("opt/werkzeuge/mein-programm");
         werkzeug(&anderswo);
 
-        let gesucht = suche(&programm);
+        let gesucht = Suche {
+            eigener: None,
+            pfad: Vec::new(),
+        };
         let fund = gesucht
             .finden(&anderswo.to_string_lossy())
             .expect("gefunden");
         assert_eq!(fund.herkunft, Herkunft::Fest);
         assert_eq!(fund.pfad, anderswo);
-        assert_eq!(fund.ersetzt, None);
     }
 
     #[test]
-    fn altbestand_heilt_sich_aus_dem_paket() {
+    fn ein_alter_pfad_heilt_sich_ueber_den_namen() {
         // Der Server kennt den Eintrag noch mit dem Pfad einer
-        // Entwicklermaschine; derselbe Name liegt im Paket.
+        // Entwicklermaschine; derselbe Name liegt im PATH.
         let baum = baum("altbestand");
-        let programm = baum.join("usr/bin/quiver");
-        werkzeug(&programm);
-        werkzeug(&baum.join("usr/lib/mcp-quiver/tools/quiver-devops"));
+        let im_pfad = baum.join("pfad");
+        werkzeug(&im_pfad.join("quiver-devops"));
         let alt = "/home/entwickler/quiver-tools/target/release/quiver-devops";
 
-        let fund = suche(&programm).finden(alt).expect("gefunden");
-        assert_eq!(fund.herkunft, Herkunft::Mitgeliefert);
-        assert_eq!(
-            fund.pfad,
-            baum.join("usr/lib/mcp-quiver/tools/quiver-devops")
-        );
-        assert_eq!(fund.ersetzt.as_deref(), Some(alt));
+        let gesucht = Suche {
+            eigener: None,
+            pfad: vec![im_pfad.clone()],
+        };
+        let fund = gesucht.finden(alt).expect("gefunden");
+        assert_eq!(fund.herkunft, Herkunft::Pfad);
+        assert_eq!(fund.pfad, im_pfad.join("quiver-devops"));
+
+        // Und der Name ist als verteilt erkennbar, obwohl ein Pfad dasteht.
+        let laufzeit = Laufzeit::Stdio {
+            befehl: alt.into(),
+            argumente: Vec::new(),
+            umgebung: quiver_domain::Werte::new(),
+        };
+        assert_eq!(verteilt_name(&laufzeit).as_deref(), Some("quiver-devops"));
     }
 
     #[test]
-    fn ein_alter_pfad_ohne_namen_im_paket_bleibt_ein_fehler() {
+    fn ein_alter_pfad_ohne_namen_bleibt_ein_fehler() {
         let baum = baum("altbestand-fehler");
-        let programm = baum.join("usr/bin/quiver");
-        werkzeug(&programm);
-        werkzeug(&baum.join("usr/lib/mcp-quiver/tools/quiver-devops"));
+        let im_pfad = baum.join("pfad");
+        werkzeug(&im_pfad.join("quiver-devops"));
 
-        let fehler = suche(&programm)
-            .finden("/home/entwickler/quiver-tools/target/release/quiver-nix")
-            .expect_err("nicht gefunden");
+        let fehler = Suche {
+            eigener: None,
+            pfad: vec![im_pfad],
+        }
+        .finden("/home/entwickler/quiver-tools/target/release/quiver-nix")
+        .expect_err("nicht gefunden");
         assert_eq!(fehler, NichtGefunden::Nirgends("quiver-nix".into()));
         // Die Meldung nennt den Namen und den Grund, keinen Pfad.
         let text = fehler.to_string();
@@ -574,17 +472,18 @@ mod tests {
     #[test]
     fn kein_name_mit_trennzeichen_wird_angehaengt() {
         let baum = baum("ausbruch");
-        let programm = baum.join("usr/bin/quiver");
-        werkzeug(&programm);
-        let werkzeuge = baum.join("usr/lib/mcp-quiver/tools");
-        werkzeug(&werkzeuge.join("quiver-devops"));
+        let eigen = baum.join("eigen");
+        werkzeug(&eigen.join("quiver-devops"));
         // Ein Verweis nach draußen: er gilt nicht.
         let draussen = baum.join("draussen/quiver-boese");
         werkzeug(&draussen);
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&draussen, werkzeuge.join("quiver-boese")).expect("Verweis");
+        std::os::unix::fs::symlink(&draussen, eigen.join("quiver-boese")).expect("Verweis");
 
-        let gesucht = suche(&programm);
+        let gesucht = Suche {
+            eigener: Some(eigen),
+            pfad: Vec::new(),
+        };
         // Kein Ausbruch: weder mit `..` noch nach draußen.
         assert!(gesucht.finden("../../etc/passwd").is_err());
         #[cfg(unix)]
@@ -593,6 +492,31 @@ mod tests {
             "ein Verweis aus dem Ordner heraus gilt nicht"
         );
         assert!(gesucht.finden("").is_err());
+    }
+
+    /// Nur eigene Programme kommen vom Server. Fremde Läufer und Pfade bleiben,
+    /// wie sie sind (Aufgabe 37).
+    #[test]
+    fn nur_eigene_programme_kommen_vom_server() {
+        let stdio = |befehl: &str| Laufzeit::Stdio {
+            befehl: befehl.into(),
+            argumente: Vec::new(),
+            umgebung: quiver_domain::Werte::new(),
+        };
+        assert_eq!(
+            verteilt_name(&stdio("quiver-devops")).as_deref(),
+            Some("quiver-devops")
+        );
+        for fremd in ["npx", "uvx", "docker", "/opt/eigenes-programm"] {
+            assert_eq!(verteilt_name(&stdio(fremd)), None, "{fremd}");
+        }
+        assert_eq!(
+            verteilt_name(&Laufzeit::Remote {
+                url: "https://example.test/mcp".into(),
+                kopfzeilen: quiver_domain::Werte::new(),
+            }),
+            None
+        );
     }
 
     #[test]

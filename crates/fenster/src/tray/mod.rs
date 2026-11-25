@@ -62,6 +62,9 @@ pub enum Befehl {
     Beenden,
     /// Autostart ein- oder ausschalten.
     AutostartUmschalten,
+    /// Sofort beim Server nachfragen, ob es neue Programme gibt (Nachtrag zu
+    /// Aufgabe 37).
+    ToolsAktualisieren,
 }
 
 /// Was das Tray-Menü zeigt und wohin seine Klicks gehen. Geteilt zwischen

@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use quiver_domain::{Eintrag, Geraet, Gruppe, Satz};
+use quiver_domain::{Eintrag, Geraet, Gruppe, Programm, Satz};
 use quiver_protocol::{Code, CodeAnlegen, GeraetAendern, GeraetStand, Ueberblick};
 
 use crate::fehler::{Ergebnis, FehlerAntwort, Koerper};
@@ -578,4 +578,17 @@ pub(crate) async fn ueberblick(State(zustand): State<Arc<Zustand>>) -> Ergebnis<
         geraete_verbunden: u32::try_from(zustand.verbundene().len()).unwrap_or(u32::MAX),
         server_version: env!("CARGO_PKG_VERSION").to_string(),
     }))
+}
+
+/// `GET /admin/programme` (Aufgabe 37): welche Programme der Server für welche
+/// Systeme bereithält und in welcher Fassung.
+///
+/// Die Verwaltung zeigt damit je Eintrag, ob sein Programm bereitliegt, und je
+/// Gerät, welche Fassung dort läuft (aus der Meldung des Geräts). Geändert wird
+/// hier nichts: was gilt, entscheiden die Dateien im Ordner (nur root am
+/// Server) – so kann keine Weboberfläche ein Programm unterschieben.
+pub(crate) async fn programme(
+    State(zustand): State<Arc<Zustand>>,
+) -> Ergebnis<Json<Vec<Programm>>> {
+    Ok(Json(zustand.programme.alle()))
 }

@@ -11,7 +11,8 @@
 //! | Methode | Pfad | Wer | Rumpf → Antwort |
 //! |---|---|---|---|
 //! | POST | `/anmelden` | – | [`Anmelden`] → [`AnmeldenAntwort`] |
-//! | GET | `/geraet/soll` | Gerät | → [`quiver_domain::Soll`] |
+//! | GET | `/geraet/soll` | Gerät | → [`quiver_domain::Soll`], `?system=…&arch=…` |
+//! | GET | `/geraet/tools/{name}` | Gerät | Programm, `?system=…&arch=…` (Aufgabe 37) |
 //! | GET | `/geraet/ereignisse` | Gerät | SSE, Ereignis `soll`, Daten = Revision |
 //! | POST | `/geraet/meldung` | Gerät | [`Meldung`] → 204 |
 //! | POST | `/geraet/abmelden` | Gerät | → 204, das Gerät ist am Server gelöscht |
@@ -23,6 +24,7 @@
 //! | PUT/DELETE | `/admin/geraete/{id}` | Admin | [`GeraetAendern`] → [`GeraetStand`] |
 //! | POST | `/admin/codes` | Admin | [`CodeAnlegen`] → [`Code`] |
 //! | GET | `/admin/ueberblick` | Admin | → [`Ueberblick`] |
+//! | GET | `/admin/programme` | Admin | → `Vec<`[`quiver_domain::Programm`]`>` |
 //!
 //! Ohne `/api/v1` liegen die offenen Wege der Anmeldung: `/auth/stand` →
 //! [`AuthStand`] und `/auth/einrichten` → [`Ich`] (Aufgabe 25).
@@ -103,6 +105,11 @@ pub enum EintragZustand {
         felder: Vec<String>,
     },
     Startet,
+    /// Das Programm wird gerade vom Server geladen (Aufgabe 37).
+    WirdGeladen,
+    /// Das Programm wird ersetzt, weil seine Prüfsumme nicht mehr stimmt
+    /// (Aufgabe 37).
+    Aktualisiert,
     /// Der User hat den Eintrag auf **diesem** Gerät abgeschaltet
     /// (Aufgabe 19). Kein Fehler: es ist seine Wahl.
     AmGeraetAus,
@@ -121,6 +128,11 @@ pub struct Meldung {
     pub revision: String,
     pub client_version: String,
     pub eintraege: Vec<(EintragId, EintragZustand)>,
+    /// Die Programme, die dieses Gerät vom Server geladen hat und in welcher
+    /// Fassung sie laufen (Aufgabe 37). Nur zur Anzeige in der Verwaltung;
+    /// fehlt bei älteren Clients.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub programme: Vec<quiver_domain::Programm>,
 }
 
 /// Ein Gerät, wie die Admin-Oberfläche es sieht.

@@ -150,39 +150,73 @@ preview — off stays off.
 
 ## Where the programs come from
 
-The client ships the tools from
-[`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) itself — the
-same ones on macOS, Windows and Linux. An entry therefore normally names just
-the **program name**, such as `quiver-devops`. A client from the package looks
-for it first in the bundled folder next to its own program, then in `PATH`:
+The client no longer ships any tools. It receives them from the server
+(task 37): on sign-in, at start-up and on every sync it compares the desired
+state with what is in the profile. If a program is missing or its checksum does
+not match, it downloads it, verifies size and SHA-256 and restarts it. Tools are
+therefore always at the server's version.
 
-| Package | Program | Tools |
-| --- | --- | --- |
-| macOS | `quiver.app/Contents/MacOS/quiver` | `quiver.app/Contents/Resources/tools` |
-| Windows | `<install dir>\quiver.exe` | `<install dir>\tools` |
-| Linux (.deb, .rpm, .tar.gz) | `/usr/bin/quiver` | `/usr/lib/mcp-quiver/tools` |
-| AppImage | `<AppDir>/usr/bin/quiver` | `<AppDir>/usr/lib/mcp-quiver/tools` |
+Storage in the profile: `tools/<name>/<sha256>/<program>` — directory 0700,
+file 0700 (on Windows: the user only, via the profile's permissions). It is
+written to a temporary file in the target directory, size and checksum are
+counted while writing, then `fsync` and rename; only then is the file made
+executable. Before **every** start it is verified again (same file, no link,
+size and SHA-256); if anything is off, it is downloaded again. Old versions are
+removed after the first successful start.
 
-There is exactly **one** place that searches: start, sign-in, status, setup and
-test all use the same rule. Escaping the folder is not possible — a name with a
-`/` is never appended there, and a link that points out of the folder does not
-count.
+An entry therefore names just the **program name**, such as `quiver-devops`.
+Only our own programs (`quiver-*`) are distributed; an entry with `npx`, `uvx`,
+`docker` or a fixed path works as before. What the server has for which system:
 
-A **fixed path** (`/usr/local/bin/quiver-jira`, `C:\…\quiver-m365.exe`) still
-works, but only on machines where the program sits exactly there; the admin
-warns when saving and lets you save anyway. If such a path points at a program
-that is not there and its file name matches a bundled tool, the client runs the
-bundled one and notes it in the log — an old library entry heals itself.
+| System | Query |
+| --- | --- |
+| Windows x64 | `system=windows&arch=x64` |
+| macOS arm64 | `system=macos&arch=arm64` |
+| macOS x64 | `system=macos&arch=x64` |
+| Linux x64 | `system=linux&arch=x64` |
+| Linux arm64 | `system=linux&arch=arm64` |
 
-Messages in the window name the program and the reason, never someone else's
-file path; the full path only appears in the log.
+If the server does not have the program for the device's system, the card says
+“This tool does not exist for this system.” — not an error, no red state. An
+entry with an **old fixed path** heals itself: only the program name counts.
+Messages in the window never name someone else's file path, only the name and
+the reason; the full path is in the log.
 
-If the `tools` folder is missing altogether — say only `quiver.exe` was taken
-out of the ZIP — the window says above the cards: “The ‘tools’ folder next to
-quiver is missing. Please unpack the whole ZIP.” The client always finds that
-folder next to its own file, whatever the working directory is and whether a
-link (shortcut, autostart) points at it; spaces and umlauts in the path are
-fine.
+When an entry is no longer assigned (removed from the group, locked, access
+withdrawn) the client stops the tool and **deletes the program**; the
+configuration (settings, accounts, secrets, the tool's sign-in) stays and
+applies again as soon as the entry comes back. Signing out on the device
+likewise deletes only the programs. While loading, the card shows “Downloading
+from the server …” or “Updated”. If the server cannot be reached, the programs
+already downloaded keep running under the previous rules.
+
+`QUIVER_TOOLS_DIR` remains for development: a folder with the programs lying
+flat (for instance a checkout). It overrides the profile store so a program can
+be tried without a server.
+
+### The display while loading
+
+While syncing or downloading, a sentence with a spinner sits at the top of the
+tools page: “Connecting to the server …”, “Downloading tools (3 of 12)”,
+“Starting …”. At the end it briefly says “Everything up to date” (or “2 tools
+updated”) and disappears after four seconds. On the card it says “Downloading …
+42 %” (the share, as soon as the size is known) or “Updated”; the tray shows the
+same state in short form.
+
+The display appears **only when there is something to do**: anything shorter
+than 300 ms is not shown (no flicker), and while nothing runs the window does
+not repaint. If the system asks for reduced motion (egui without animations),
+the sentence appears without a spinning ring.
+
+The **“Update tools”** button (on the page and in the tray) asks the server
+immediately. It is disabled while a sync runs. Afterwards the display reports
+“Everything up to date” or how many programs came; if there is no connection
+(not yet bound or just disconnected), the client says so in the note above the
+cards instead of asking into the void.
+
+If something goes wrong while loading, the card names the reason and offers
+**“Try again”** next to it. A program that fails to load does not hold up the
+others.
 
 ## Signing a tool in
 
@@ -211,8 +245,10 @@ knows when its token expires reports it with **exit 3**; the card then offers
 
 If the program is missing on this device, the card says **once**: “This tool is
 not installed on this device.” — no technical error, no sign-in and no setup
-button (there would be nothing to start). The hint for the admin (“please ship
-it with the package”) goes to the entry's log.
+button (there would be nothing to start). The hint for the admin (“please
+provide it on the server”) goes to the entry's log. If the server does not have
+the program for this system, the card says “This tool does not exist for this
+system.” instead — also without a button.
 
 On **Windows** the client starts tools and sign-in commands without a console
 window of their own (`CREATE_NO_WINDOW`): no black console flashes up, and a
@@ -300,7 +336,7 @@ All optional:
 | `QUIVER_MCP_ADRESSE` | MCP endpoint (default `127.0.0.1:8741`; a second port lets two instances run side by side) |
 | `QUIVER_AUTOSTART_DIR` | Folder for the autostart file (macOS and Linux; tests and other sessions) |
 | `QUIVER_TRESOR=speicher` | Keep secrets in memory instead of the vault file (for trying things out without traces) |
-| `QUIVER_TOOLS_DIR` | Folder with the tools instead of the bundled one (development; overrides the search next to the program) |
+| `QUIVER_TOOLS_DIR` | Folder with the programs lying flat instead of the profile store (development) |
 
 `--headless` runs the core only (until Ctrl+C); `--hintergrund` brings the tray
 without the window.
@@ -313,8 +349,9 @@ without the window.
 | "The server cannot be reached" | Check the address: `https` everywhere except loopback, and no trailing path. The admin UI must be reachable under that address too. |
 | The client shows "Sign in again" | The server asked for a new sign-in (token too old, unused for 60 days, or device removed). Settings and the device token are kept. |
 | Tools stay "missing settings" | The card names the fields. Fill them under the pencil; secrets go into the vault. |
-| “This tool is not installed on this device.” | The entry names a program that neither the package nor `PATH` knows. It is among the bundled programs (see *Where the programs come from*) — or enter a fixed path. The reason (name and places searched) is in the entry's log. |
-| “The ‘tools’ folder next to quiver is missing” | Only `quiver` was taken out of the ZIP. Unpack the whole ZIP into a folder and start `quiver` from there (the folder stays next to the program, also through a shortcut). |
+| “This tool is not installed on this device.” | The entry names a foreign program (`npx`, `uvx`, …) that `PATH` does not know. Enter a fixed path or make sure it is on `PATH`. The reason is in the entry's log. |
+| “This tool does not exist for this system.” | The server does not have the program for this OS/architecture. The admin puts it on the server (see *Operations*); not an error on the device. |
+| The card stays on “Downloading from the server …” | The server cannot be reached or the checksum does not match. The entry's log names the reason; programs already downloaded keep running. |
 | The card stays on “Signing in via browser …” or “Checking sign-in …” | A tool is not answering. After 10 s (check) or 5 min (browser) it ends by itself with a sentence and a button; if it keeps hanging, look at the entry's log and restart the client. |
 | A tool fails with "process ended" | Open *Tool logs* on the Protocol page; stderr is kept there (masked). |
 | An agent sees no tools | It must be paired and use the token from *Agents*. Check the endpoint `http://127.0.0.1:8741/mcp` and that the entry is not switched off on this device. |

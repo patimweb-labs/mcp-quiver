@@ -926,6 +926,9 @@ mod tests {
             "quiver-endpunkt-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|dauer| dauer.as_nanos())
+                .unwrap_or(0)
         ));
         let protokoll = Protokoll::neu(&ordner);
         let ergebnis = log_lesen(&protokoll, Some(&JsonObject::new()), true, Some("pi"));

@@ -227,13 +227,19 @@ pub struct Konfig {
     /// So viele Anmeldevorgänge dürfen gleichzeitig offen sein
     /// ([`crate::anmeldung::OFFENE_VORGAENGE_MAX`]). Im Test kleiner.
     pub offene_vorgaenge_max: usize,
+    /// Wo die Programme liegen, die der Server an die Geräte verteilt
+    /// (Aufgabe 37), in der Reihenfolge, in der sie gelten: erst was der
+    /// Betreiber ablegt, dann was das Abbild mitbringt.
+    pub programme: Vec<PathBuf>,
 }
 
 impl Konfig {
     /// Eine Konfiguration für Tests und den alten Weg ohne Entra.
     pub fn neu(daten: impl Into<PathBuf>) -> Self {
+        let daten: PathBuf = daten.into();
+        let programme = programme_ordner(&daten);
         Self {
-            daten: daten.into(),
+            daten,
             admin_dist: None,
             // Die Vorgabe von `Konfig::neu` ist Loopback: Tests und die
             // Entwicklung laufen so, ohne dass ein Code nötig wäre.
@@ -247,6 +253,7 @@ impl Konfig {
             laufzeit: Laufzeit::neu(),
             rumpf_zeit: crate::RUMPF_ZEIT,
             offene_vorgaenge_max: crate::anmeldung::OFFENE_VORGAENGE_MAX,
+            programme,
         }
     }
 
@@ -437,7 +444,7 @@ impl Konfig {
         )?;
 
         Ok(Self {
-            daten,
+            daten: daten.clone(),
             admin_dist: None,
             adresse,
             oeffentlich,
@@ -449,6 +456,7 @@ impl Konfig {
             laufzeit: Laufzeit::neu(),
             rumpf_zeit: crate::RUMPF_ZEIT,
             offene_vorgaenge_max: crate::anmeldung::OFFENE_VORGAENGE_MAX,
+            programme: programme_ordner(&daten),
         })
     }
 
@@ -461,6 +469,30 @@ impl Konfig {
     pub fn ist_https(&self) -> bool {
         self.oeffentlich.starts_with("https://")
     }
+}
+
+/// Wo die Programme liegen, die der Server an die Geräte verteilt
+/// (Aufgabe 37).
+///
+/// Immer dabei: `<daten>/tools` — der Betreiber legt dort ab, was er selbst
+/// verteilen will (nur root am Server, nicht über die Weboberfläche). Dazu
+/// kommt `QUIVER_PROGRAMME` (mehrere Ordner, durch `:` oder `;` getrennt),
+/// sonst der Ordner des Abbilds (`/opt/quiver/tools`). Die Reihenfolge ist die
+/// Geltung: was zuerst gefunden wird, gilt.
+pub fn programme_ordner(daten: &std::path::Path) -> Vec<PathBuf> {
+    let mut ordner = vec![daten.join("tools")];
+    match std::env::var("QUIVER_PROGRAMME") {
+        Ok(wert) if !wert.trim().is_empty() => {
+            ordner.extend(
+                wert.split([':', ';'])
+                    .map(str::trim)
+                    .filter(|teil| !teil.is_empty())
+                    .map(PathBuf::from),
+            );
+        }
+        _ => ordner.push(PathBuf::from("/opt/quiver/tools")),
+    }
+    ordner
 }
 
 /// Den Schalter `QUIVER_ENTRA_GRUPPENNAMEN` lesen: Standard aus, sonst Startfehler.

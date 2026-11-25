@@ -40,7 +40,9 @@ are built from the same tokens.
   off without being deleted.
 - **Assignment by group.** An admin bundles entries into a set and assigns
   sets to groups — local groups or Microsoft Entra ID groups. A device gets the
-  union of its user's sets, installed, updated and removed automatically.
+  union of its user's sets: the client downloads the programs from the
+  server, keeps them at its version, verifies them and removes them again when
+  an entry is no longer assigned.
   Conflicts between pre-filled values are resolved by the set's priority.
 - **Configuration in layers.** The server knows endpoints, tenant and defaults.
   The client fills in what only the device knows: local paths, personal values
@@ -132,8 +134,8 @@ English.
    one-time code. The server returns a device token.
 2. **The server computes the target.** Groups of the user → sets → entries and
    pre-filled values.
-3. **The client syncs.** Desired state against actual state: install, update,
-   remove.
+3. **The client syncs.** Desired state against actual state: download programs
+   from the server, update, remove.
 4. **The client completes.** It asks only for fields that are missing on this
    device and stores secrets in the vault.
 5. **The client serves.** One MCP endpoint with all allowed tools.

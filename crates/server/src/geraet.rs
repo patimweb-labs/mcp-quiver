@@ -5,13 +5,13 @@
 
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
-use axum::extract::{Extension, State};
-use axum::http::StatusCode;
+use axum::extract::{Extension, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures_util::StreamExt;
-use quiver_domain::{Geraet, GeraetId, Soll};
+use quiver_domain::{Geraet, GeraetId, Laufzeit, Programm, Soll, System};
 use quiver_protocol::{Anmelden, AnmeldenAntwort, Meldung, EREIGNIS_SOLL};
 use time::OffsetDateTime;
 use tokio_stream::wrappers::BroadcastStream;
@@ -20,7 +20,7 @@ use crate::fehler::{Ergebnis, FehlerAntwort, Koerper};
 use crate::hilfen;
 use crate::speicher;
 use crate::zustand::{Stromwaechter, Zustand};
-use crate::{db, soll_fuer};
+use crate::{db, soll_fuer_system};
 
 /// Gerät mit Einmal-Code einbinden; Antwort enthält das Geräte-Token (nur diesmal).
 pub(crate) async fn anmelden(
@@ -158,12 +158,44 @@ pub(crate) async fn abmelden(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Welches System meldet das Gerät? (Aufgabe 37)
+///
+/// Beide Angaben sind freiwillig: ein älterer Client nennt sie nicht und
+/// bekommt dann kein Programm, sondern sucht wie bisher. Sind sie da, müssen
+/// sie bekannt sein – ein unbekannter Wert ist ein Fehler, kein Rateversuch.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub(crate) struct SystemAbfrage {
+    #[serde(default)]
+    system: Option<String>,
+    #[serde(default)]
+    arch: Option<String>,
+}
+
+impl SystemAbfrage {
+    /// `Ok(None)`: keine Angabe. `Err`: eine Angabe, die es nicht gibt.
+    fn lesen(&self) -> Result<Option<System>, FehlerAntwort> {
+        match (self.system.as_deref(), self.arch.as_deref()) {
+            (None, None) => Ok(None),
+            (Some(system), Some(arch)) => {
+                System::aus_teilen(system, arch).map(Some).ok_or_else(|| {
+                    FehlerAntwort::ungueltig(
+                        "system und arch sind unbekannt (windows|macos|linux, x64|arm64)",
+                    )
+                })
+            }
+            _ => Err(FehlerAntwort::ungueltig("system und arch gehören zusammen")),
+        }
+    }
+}
+
 /// Soll-Zustand holen und den Zeitstempel „zuletzt gesehen" nachziehen.
 pub(crate) async fn soll(
     State(zustand): State<Arc<Zustand>>,
     Extension(id): Extension<GeraetId>,
+    Query(abfrage): Query<SystemAbfrage>,
 ) -> Ergebnis<Json<Soll>> {
-    let soll = soll_fuer(&zustand, &id).await?;
+    let system = abfrage.lesen()?;
+    let soll = soll_fuer_system(&zustand, &id, system).await?;
     let gesehen = hilfen::als_text(hilfen::jetzt());
     let kennung = id.clone();
     db(&zustand, move |conn| {
@@ -172,6 +204,147 @@ pub(crate) async fn soll(
     })
     .await?;
     Ok(Json(soll))
+}
+
+/// `GET /geraet/tools/{name}?system=…&arch=…` (Aufgabe 37): ein Programm.
+///
+/// Nur mit Geräte-Token (die Wache davor prüft Zugang, Sperre und Entzug),
+/// nur für ein Programm aus dem Soll **dieses** Geräts und nur für das
+/// gemeldete System. Ausgeliefert wird gestreamt und größenbegrenzt; `ETag`
+/// und `If-None-Match` sparen den zweiten Durchlauf.
+pub(crate) async fn tools(
+    State(zustand): State<Arc<Zustand>>,
+    Extension(id): Extension<GeraetId>,
+    Path(name): Path<String>,
+    Query(abfrage): Query<SystemAbfrage>,
+    kopf: HeaderMap,
+) -> Ergebnis<Response> {
+    if !quiver_domain::ist_verteilt(&name) {
+        return Err(FehlerAntwort::nicht_gefunden(
+            "so ein Programm verteilt dieser Server nicht",
+        ));
+    }
+    let Some(system) = abfrage.lesen()? else {
+        return Err(FehlerAntwort::ungueltig(
+            "system und arch fehlen (windows|macos|linux, x64|arm64)",
+        ));
+    };
+
+    // Drossel: ein Gerät lädt nicht beliebig oft. Sie zählt Zugriffe, nicht
+    // Fehler – die Grenze ist hoch genug für einen Abgleich.
+    let jetzt = zustand.uhr.jetzt();
+    if let Some(sekunden) = zustand.drossel.treffer(&format!("programme:{id}"), jetzt) {
+        return Err(FehlerAntwort::neu(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("zu viele Abrufe; bitte {sekunden} Sekunden warten"),
+        ));
+    }
+
+    // Nur, was in diesem Soll steht: Entzug wirkt sofort, ein fremdes Gerät
+    // bekommt nichts, und ein nicht zugewiesenes Programm ist ein 403.
+    let soll = soll_fuer_system(&zustand, &id, Some(system.clone())).await?;
+    let zugewiesen = soll.eintraege.iter().any(|eintrag| {
+        matches!(&eintrag.eintrag.laufzeit, Laufzeit::Stdio { befehl, .. } if befehl.trim() == name)
+    });
+    if !zugewiesen {
+        tracing::info!(geraet = %id, programm = %name, "nicht zugewiesen – nicht ausgeliefert");
+        return Err(FehlerAntwort::verboten(
+            "dieses Programm gehört nicht zum Soll dieses Geräts",
+        ));
+    }
+    let Some(programm) = soll.programm(&name) else {
+        // Zugewiesen, aber für dieses System gibt es das Programm nicht: kein
+        // Fehler des Clients, sondern eine Auskunft.
+        return Err(FehlerAntwort::nicht_gefunden(
+            "für dieses System gibt es das Programm nicht",
+        ));
+    };
+    ausliefern(&zustand, &name, programm, &kopf).await
+}
+
+/// Ein Programm ausliefern: geprüft, gestreamt, mit `ETag`.
+async fn ausliefern(
+    zustand: &Arc<Zustand>,
+    name: &str,
+    programm: &Programm,
+    kopf: &HeaderMap,
+) -> Ergebnis<Response> {
+    let etag = format!("\"{}\"", programm.sha256);
+    if kopf
+        .get(axum::http::header::IF_NONE_MATCH)
+        .and_then(|wert| wert.to_str().ok())
+        .is_some_and(|wert| wert.split(',').any(|teil| teil.trim() == etag))
+    {
+        return Ok((
+            StatusCode::NOT_MODIFIED,
+            [(axum::http::header::ETAG, etag)],
+            "",
+        )
+            .into_response());
+    }
+
+    let Some(fund) = zustand.programme.finden(&system_von(programm), name) else {
+        // Zwischen Soll und Ausliefern ist das Programm verschwunden.
+        return Err(FehlerAntwort::nicht_verfuegbar(
+            "das Programm liegt nicht mehr bereit; bitte gleich noch einmal versuchen",
+        ));
+    };
+    if fund.programm.groesse != programm.groesse || fund.programm.sha256 != programm.sha256 {
+        // Die Datei hat sich seit dem Soll geändert. Nicht das halbe Programm
+        // schicken: der Client lädt nach dem nächsten Abgleich die neue Fassung.
+        tracing::warn!(
+            programm = %name,
+            "Programm hat sich seit dem Soll geändert – nicht ausgeliefert"
+        );
+        return Err(FehlerAntwort::nicht_verfuegbar(
+            "das Programm wurde gerade ersetzt; bitte gleich noch einmal versuchen",
+        ));
+    }
+    let datei = tokio::fs::File::open(&fund.datei).await.map_err(|fehler| {
+        tracing::warn!(programm = %name, "Programm nicht lesbar: {fehler}");
+        FehlerAntwort::nicht_verfuegbar("das Programm ist nicht lesbar")
+    })?;
+    let strom = datei_strom(datei, programm.groesse);
+    let antwort = Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/octet-stream")
+        .header(axum::http::header::CONTENT_LENGTH, programm.groesse)
+        .header(axum::http::header::ETAG, etag)
+        .header(axum::http::header::CACHE_CONTROL, "no-store")
+        .body(axum::body::Body::from_stream(strom))
+        .map_err(|fehler| FehlerAntwort::intern_mit_kennung(&fehler))?;
+    Ok(antwort)
+}
+
+/// Das System eines Programms, wie es im Soll stand.
+fn system_von(programm: &Programm) -> System {
+    System {
+        system: programm.system.clone(),
+        arch: programm.arch.clone(),
+    }
+}
+
+/// Eine Datei als Strom, höchstens `rest` Bytes (keine Zeile über die Größe
+/// hinaus: was das Soll nennt, ist auch das Ende).
+fn datei_strom(
+    datei: tokio::fs::File,
+    rest: u64,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
+    futures_util::stream::unfold((datei, rest), |(mut datei, rest)| async move {
+        if rest == 0 {
+            return None;
+        }
+        use tokio::io::AsyncReadExt;
+        let mut puffer = vec![0u8; rest.min(64 * 1024) as usize];
+        match datei.read(&mut puffer).await {
+            Ok(0) => None,
+            Ok(gelesen) => {
+                puffer.truncate(gelesen);
+                Some((Ok(puffer), (datei, rest - gelesen as u64)))
+            }
+            Err(fehler) => Some((Err(fehler), (datei, 0))),
+        }
+    })
 }
 
 /// Letzte Meldung des Clients speichern.
@@ -219,7 +392,9 @@ pub(crate) async fn meldung(
 pub(crate) async fn ereignisse(
     State(zustand): State<Arc<Zustand>>,
     Extension(id): Extension<GeraetId>,
+    Query(abfrage): Query<SystemAbfrage>,
 ) -> Ergebnis<axum::response::Response> {
+    let system = abfrage.lesen()?;
     let Some(waechter) = Stromwaechter::neu(zustand.clone(), id.clone()) else {
         return Err(FehlerAntwort::neu(
             StatusCode::TOO_MANY_REQUESTS,
@@ -235,7 +410,9 @@ pub(crate) async fn ereignisse(
     // 2. Zugang prüfen – aber mit Grund (403), damit der Client weiß, warum.
     crate::auth::geraet_zugang(&zustand, &id).await?;
     // 3. Erst jetzt rechnen.
-    let start = soll_fuer(&zustand, &id).await?.revision;
+    let start = soll_fuer_system(&zustand, &id, system.clone())
+        .await?
+        .revision;
     let ende = zustand.ende_abo();
 
     let weitere = futures_util::stream::unfold(
@@ -246,8 +423,9 @@ pub(crate) async fn ereignisse(
             start.clone(),
             waechter,
             ende,
+            system,
         ),
-        |(mut empfaenger, zustand, id, letzte, waechter, mut ende)| async move {
+        |(mut empfaenger, zustand, id, letzte, waechter, mut ende, system)| async move {
             loop {
                 // Jede Änderung (auch ein Rückstand) ist ein Anlass, neu zu rechnen.
                 let ereignis = tokio::select! {
@@ -268,13 +446,20 @@ pub(crate) async fn ereignisse(
                     tracing::info!("Gerät {id} entfernt oder gesperrt – Ereignis-Strom endet");
                     return None;
                 }
-                match soll_fuer(&zustand, &id).await {
+                match soll_fuer_system(&zustand, &id, system.clone()).await {
                     Ok(soll) if soll.revision != letzte => {
                         let ereignis = Event::default()
                             .event(EREIGNIS_SOLL)
                             .data(soll.revision.clone());
-                        let zustand_strom =
-                            (empfaenger, zustand, id, soll.revision, waechter, ende);
+                        let zustand_strom = (
+                            empfaenger,
+                            zustand,
+                            id,
+                            soll.revision,
+                            waechter,
+                            ende,
+                            system,
+                        );
                         return Some((Ok::<_, Infallible>(ereignis), zustand_strom));
                     }
                     Ok(_) => {}

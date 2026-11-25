@@ -18,9 +18,6 @@ workflow explicitly; a tag pushed by hand triggers it directly.
 | `verteilung/linux/paket.sh` | `.tar.gz`, `.deb`, `.rpm`, AppImage |
 | `verteilung/windows/paket.ps1` | `.msi` (per user) and portable `.zip` |
 | `verteilung/version.sh` | the version from `Cargo.toml` |
-| `verteilung/tools/stand.txt` | the commit of the bundled tools (never `main`) |
-| `verteilung/tools/bauen.sh`, `bauen.ps1` | build the tools from quiver-tools, stripped, into `dist/tools` |
-| `verteilung/tools/einbauen.sh`, `macos-signieren.sh`, `wix-werkzeuge.ps1` | put them into the package and (macOS) sign each of them |
 
 ## Making a release
 
@@ -191,16 +188,10 @@ checksums and the provenance still prove where the files came from.
   `%LOCALAPPDATA%\Programs\mcp-quiver`, with a start menu shortcut, an icon in
   *Apps & features* and an uninstall without administrator rights; plus the
   portable `.zip` with `quiver.exe` next to `LICENSE` and `README.md`.
-* **The tools** are part of every package (task 35): the programs from
-  [`quiver-tools`](https://github.com/patimweb-labs/quiver-tools), built on the
-  same runner from the commit pinned in `verteilung/tools/stand.txt` — not from
-  `main`. They sit where the client looks for them:
-  `quiver.app/Contents/Resources/tools`, `<install dir>\tools` and
-  `/usr/lib/mcp-quiver/tools` (inside the AppImage below `usr/lib/…`). On macOS
-  each of them is signed **before** the bundle, because the bundle's signature
-  seals its contents and signing afterwards would break it. Which programs
-  they are, their size and the commit are named in the release notes (from
-  `dist/TOOLS.txt`); the size of every file is in the *Sizes* table.
+* **The packages carry no tools.** The client receives them from the server on
+  sign-in and keeps them up to date (task 37); the server ships the programs
+  per platform, built by the release of
+  [`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) (task 38).
 * Autostart is not part of any package: the client sets it up itself (launch
   agent, `HKCU\…\Run`, XDG autostart) when the user switches it on.
 
@@ -208,10 +199,7 @@ checksums and the provenance still prove where the files came from.
 
 The scripts are the same ones the CI calls:
 
-The tools first, then the package — the same order as in CI:
-
 ```bash
-verteilung/tools/bauen.sh                     # dist/tools + dist/TOOLS.txt (from the network)
 verteilung/macos/paket.sh                     # macOS: dist/quiver.app, dist/*.dmg
 verteilung/linux/paket.sh                     # Linux: tar.gz, deb, rpm, AppImage
 pwsh -File verteilung/windows/paket.ps1       # Windows: msi + zip

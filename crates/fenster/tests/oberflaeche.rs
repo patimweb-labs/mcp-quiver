@@ -266,6 +266,8 @@ fn eintrag(
         am_geraet_aus: false,
         unzulaessig: None,
         nicht_installiert: None,
+        nicht_fuer_system: false,
+        ladeanteil: None,
     }
 }
 
@@ -508,7 +510,7 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         protokoll_fuer_agenten: false,
         tresor_fehler: None,
         profil_hinweis: None,
-        werkzeuge_fehlen: false,
+        fortschritt: quiver_client::Fortschritt::Ruhe,
     }
 }
 
@@ -4289,30 +4291,31 @@ fn zugang_hinzufuegen_fuehrt_zur_liste_und_der_stift_entfaellt() {
     ));
 }
 
-/// Fehlt der Ordner `tools` neben dem Programm (etwa ein halb entpacktes ZIP),
-/// sagt das Fenster das und was zu tun ist (Aufgabe 35, §6).
+/// Der Server hat ein Programm für dieses System nicht (Aufgabe 37): die Karte
+/// sagt das einmal, ohne Fehler und ohne Anmelde-Knopf.
 #[test]
-fn fehlender_werkzeugordner_sagt_entpacken() {
-    let mut m = modell(verbunden(), eintraege());
-    m.werkzeuge_fehlen = true;
-    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
-    h.run();
-    assert!(h
-        .query_by_label("Der Ordner „tools“ neben quiver fehlt. Bitte das ganze ZIP entpacken.")
-        .is_some());
-
-    // Ohne den Befund steht der Hinweis nicht da.
+fn programm_nicht_fuer_dieses_system() {
+    let mut eintrag = fehlendes_programm();
+    eintrag.nicht_installiert = None;
+    eintrag.nicht_fuer_system = true;
     let mut h = fenster(
-        modell(verbunden(), eintraege()),
+        modell(verbunden(), vec![eintrag]),
         Some(Seite::Tools),
         Thema::Dunkel,
         gross(),
     );
     h.run();
+    let satz = "Für dieses System gibt es das Tool nicht.";
     assert_eq!(
-        h.query_all(By::new().label_contains("Bitte das ganze ZIP entpacken"))
+        h.query_all(By::new().role(Role::Label).label(satz)).count(),
+        1,
+        "der Satz steht genau einmal auf der Karte"
+    );
+    assert_eq!(
+        h.query_all(By::new().label_contains("nicht installiert"))
             .count(),
-        0
+        0,
+        "die andere Meldung steht nicht daneben"
     );
 }
 
@@ -4349,4 +4352,292 @@ fn kein_knopf_besteht_nur_aus_einem_zeichen() {
         gesehen += 1;
     }
     assert!(gesehen >= 6, "nur {gesehen} Knöpfe gefunden");
+}
+
+// ------------------------------------ Laden vom Server (Nachtrag zu Aufgabe 37)
+
+/// Die Anzeige am Kopf der Werkzeugseite: „Verbinde mit dem Server …",
+/// „Tools werden geladen (3 von 12)", „Wird gestartet …" und am Ende kurz
+/// „Alles aktuell". Was unter 300 ms dauert, erscheint nicht (kein Flackern).
+#[test]
+fn fortschritt_steht_am_kopf_und_verschwindet() {
+    use quiver_client::Fortschritt;
+    use std::time::{Duration, Instant};
+
+    let faelle = [
+        (Fortschritt::Verbindet, "Verbinde mit dem Server …", true),
+        (
+            Fortschritt::Laedt {
+                fertig: 3,
+                gesamt: 12,
+            },
+            "Tools werden geladen (3 von 12)",
+            true,
+        ),
+        (Fortschritt::Startet, "Wird gestartet …", true),
+        (Fortschritt::Fertig { geaendert: 0 }, "Alles aktuell", true),
+        (
+            Fortschritt::Fertig { geaendert: 2 },
+            "2 Tools aktualisiert",
+            true,
+        ),
+    ];
+    for (fortschritt, text, sichtbar) in faelle {
+        let mut m = modell(verbunden(), eintraege());
+        m.fortschritt = fortschritt.clone();
+        let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+        // Die Uhr der Anzeige steht schon eine Sekunde: so wäre sie im Betrieb
+        // längst sichtbar (unter 300 ms zeigt sie absichtlich nichts).
+        h.state_mut().0.sicht.fortschritt_seit =
+            Some((fortschritt, Instant::now() - Duration::from_secs(1)));
+        h.run();
+        assert_eq!(
+            h.query_all(By::new().label_contains(text)).count() > 0,
+            sichtbar,
+            "{text}"
+        );
+    }
+
+    // Ruhe: keine Zeile über den Karten.
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    for text in [
+        "Verbinde mit dem Server",
+        "Tools werden geladen",
+        "Wird gestartet",
+        "Alles aktuell",
+    ] {
+        assert_eq!(
+            h.query_all(By::new().label_contains(text)).count(),
+            0,
+            "{text} steht ohne Anlass da"
+        );
+    }
+
+    // Unter 300 ms steht nichts da.
+    let mut m = modell(verbunden(), eintraege());
+    m.fortschritt = Fortschritt::Verbindet;
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().label_contains("Verbinde mit dem Server"))
+            .count(),
+        0,
+        "kein Flackern unter 300 ms"
+    );
+
+    // „Alles aktuell“ ist nach vier Sekunden weg.
+    let mut m = modell(verbunden(), eintraege());
+    m.fortschritt = Fortschritt::Fertig { geaendert: 0 };
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.state_mut().0.sicht.fortschritt_seit = Some((
+        Fortschritt::Fertig { geaendert: 0 },
+        Instant::now() - Duration::from_secs(5),
+    ));
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().label_contains("Alles aktuell"))
+            .count(),
+        0
+    );
+}
+
+/// Auf der Karte: Ring und Text beim Laden, mit Anteil, wenn die Größe bekannt
+/// ist; ein Fehler bietet „Erneut versuchen" an, und der Knopf schickt die
+/// Aktion (Nachtrag zu Aufgabe 37).
+#[test]
+fn die_karte_dreht_und_bietet_erneut_versuchen() {
+    let mut laedt = eintrag(
+        "laden",
+        "Laden",
+        "Kommt gerade vom Server.",
+        EintragZustand::WirdGeladen,
+        Vec::new(),
+    );
+    laedt.ladeanteil = Some(42);
+    let mut aktualisiert = eintrag(
+        "neu",
+        "Aktualisieren",
+        "Wird ersetzt.",
+        EintragZustand::Aktualisiert,
+        Vec::new(),
+    );
+    aktualisiert.ladeanteil = Some(7);
+    let kaputt = eintrag(
+        "kaputt",
+        "Kaputt",
+        "Das Programm ließ sich nicht laden.",
+        EintragZustand::Fehler {
+            text: "Die Prüfsumme des geladenen Programms stimmt nicht".into(),
+        },
+        Vec::new(),
+    );
+    let mut h = fenster(
+        modell(verbunden(), vec![laedt, aktualisiert, kaputt]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run_steps(2);
+    assert!(
+        h.query_by_label("Wird geladen … 42 %").is_some(),
+        "der Anteil fehlt: {:?}",
+        h.query_all(By::new().label_contains("Wird geladen"))
+            .map(|k| k.accesskit_node().label())
+            .collect::<Vec<_>>()
+    );
+    assert!(h.query_by_label("Aktualisiert").is_some());
+    h.get_by_role_and_label(Role::Button, "Erneut versuchen")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EintragNeuVersuchen {
+                eintrag: EintragId::neu("kaputt"),
+            }),
+        "der Knopf schickt keine Aktion: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+}
+
+/// „Tools aktualisieren" steht auf der Seite und schickt die Aktion; solange
+/// etwas läuft, ist der Knopf gesperrt (Nachtrag zu Aufgabe 37).
+#[test]
+fn tools_aktualisieren_ist_ein_knopf_der_seite() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    zur_ruhe(&mut h);
+    h.get_by_role_and_label(Role::Button, "Tools aktualisieren")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ToolsAktualisieren),
+        "der Knopf schickt keine Aktion: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+
+    // Läuft schon etwas, ist der Knopf nicht bedienbar.
+    let mut m = modell(verbunden(), eintraege());
+    m.fortschritt = quiver_client::Fortschritt::Laedt {
+        fertig: 1,
+        gesamt: 4,
+    };
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Tools aktualisieren");
+    assert!(
+        knopf.accesskit_node().is_disabled(),
+        "der Knopf ist während des Ladens gesperrt"
+    );
+    // Und ein Klick auf den gesperrten Knopf tut nichts.
+    knopf.click();
+    h.run();
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ToolsAktualisieren),
+        "ein gesperrter Knopf schickt trotzdem eine Aktion"
+    );
+}
+
+/// Ohne Verbindung sagt „Tools aktualisieren“ einen klaren Satz und schickt
+/// keine Anfrage ins Leere (Nachtrag zu Aufgabe 37).
+#[test]
+fn tools_aktualisieren_ohne_verbindung_sagt_warum() {
+    let mut m = modell(
+        Verbindung::Getrennt {
+            server: "http://quiver.example:8080".into(),
+            fehler: "Zeitüberschreitung".into(),
+        },
+        eintraege(),
+    );
+    m.fortschritt = quiver_client::Fortschritt::Ruhe;
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    zur_ruhe(&mut h);
+    h.get_by_role_and_label(Role::Button, "Tools aktualisieren")
+        .click();
+    h.run();
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ToolsAktualisieren),
+        "ohne Verbindung geht keine Anfrage hinaus"
+    );
+    assert!(
+        h.query_all(By::new().label_contains("Keine Verbindung zum Server"))
+            .count()
+            > 0,
+        "der Hinweis fehlt: {:?}",
+        h.query_all(By::new().label_contains("Verbindung"))
+            .map(|k| k.accesskit_node().label())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Das Bild zum Nachtrag: Ladefortschritt am Kopf und auf den Karten, in
+/// beiden Themen (Nachtrag zu Aufgabe 37).
+#[test]
+fn bildschirmfoto_des_ladens() {
+    use quiver_client::Fortschritt;
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    let mut laedt = eintrag(
+        "laden",
+        "DevOps",
+        "Arbeitselemente lesen.",
+        EintragZustand::WirdGeladen,
+        Vec::new(),
+    );
+    laedt.ladeanteil = Some(42);
+    let kaputt = eintrag(
+        "kaputt",
+        "Microsoft 365",
+        "Mail und Kalender.",
+        EintragZustand::Fehler {
+            text: "Das Programm »quiver-m365« lässt sich nicht laden".into(),
+        },
+        Vec::new(),
+    );
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut m = modell(verbunden(), vec![laedt.clone(), kaputt.clone()]);
+            m.fortschritt = Fortschritt::Laedt {
+                fertig: 1,
+                gesamt: 3,
+            };
+            let mut h = fenster(m, Some(Seite::Tools), thema, groesse.masse);
+            h.state_mut().0.sicht.fortschritt_seit = Some((
+                Fortschritt::Laedt {
+                    fertig: 1,
+                    gesamt: 3,
+                },
+                std::time::Instant::now() - std::time::Duration::from_secs(1),
+            ));
+            h.run_steps(3);
+            nichts_ragt_heraus(&h, groesse.masse.0, "laden");
+            foto(&mut h, &ziel, "laden", thema, groesse.px);
+        }
+    }
 }

@@ -7,6 +7,7 @@ ein Container-Abbild mit einem Port (8740) und einem Volume (`/daten`).
 
 **Inhalt** · [Container](#container) · [Ersteinrichtung](#ersteinrichtung) ·
 [Adresse und Host](#adresse-und-host) · [Entra ID](#entra-id) ·
+[Programme für die Geräte](#programme-für-die-geräte) ·
 [Konfiguration](#konfiguration) · [Reverse-Proxy](#reverse-proxy) ·
 [Sicherung](#sicherung) · [Aktualisieren](#aktualisieren) · [Log](#log) ·
 [Fehlersuche](#fehlersuche)
@@ -195,6 +196,48 @@ nächsten Abgleich die Tools. Löscht ein Admin eine Gruppe, die aus Entra kam,
 bleibt sie gelöscht; die Verwaltung kann sie wieder übernehmen. Höchstens 200
 Gruppen entstehen so.
 
+## Programme für die Geräte
+
+Der Server führt keine Werkzeuge aus, er hält ihre Programme bereit
+(Aufgabe 37). Geräte laden sie mit ihrem Geräte-Token über
+`GET /api/v1/geraet/tools/<name>?system=…&arch=…`; ausgeliefert wird nur, was
+im Soll **dieses** Geräts steht — ein Entzug wirkt sofort (403).
+
+Zwei Quellen, in dieser Reihenfolge:
+
+| Ordner | Inhalt |
+| --- | --- |
+| `<Daten>/tools/<system>/` | eigene Programme des Betreibers (gilt für jede Architektur dieses Systems) |
+| `<Daten>/tools/<system>/<arch>/` | dasselbe, nur für eine Architektur |
+| `/opt/quiver/tools/<system>/<arch>/` | was das Abbild mitbringt (Release von quiver-tools) |
+
+`<system>` ist `windows`, `macos` oder `linux`, `<arch>` ist `x64` oder
+`arm64`. Die genauere Angabe geht vor, und was der Betreiber ablegt, geht vor
+dem Abbild. In den Ordner gehören die Programme selbst (ausführbar, unter
+Windows mit `.exe`) und optional eine `LISTE.json` mit der Fassung:
+
+```json
+{"version":"1.2.3","programme":[{"name":"quiver-devops","version":"1.2.3"}]}
+```
+
+Größe und SHA-256 rechnet der Server immer selbst aus der Datei — die Liste
+liefert nur die Fassung. Ein Programm über 128 MiB wird nicht verteilt. Der
+Ordner ist nur für root erreichbar; über die Weboberfläche lässt sich **nichts**
+hochladen oder ändern. Was bereitliegt, zeigt `GET /api/v1/admin/programme`
+(Verwaltung: je Eintrag das Programm, je Gerät die laufende Fassung aus der
+Meldung des Geräts).
+
+Eine geänderte Datei ändert die Revision des Solls; Geräte holen sie beim
+nächsten Abgleich (Ereignis, spätestens nach fünf Minuten). Ein Abbild **ohne**
+Programme ist gültig: dann steht beim Start „keine Programme“ im Log, und die
+Geräte bekommen nichts (ihre Konfiguration bleibt). Bauen mit Programmen:
+
+```bash
+docker build --build-arg QUIVER_TOOLS_VERSION=0.3.0 -t mcp-quiver-server .
+```
+
+Ohne die Angabe sagt der Bau deutlich, dass keine Programme im Abbild sind.
+
 ## Konfiguration
 
 | Variable | Bedeutung |
@@ -212,6 +255,7 @@ Gruppen entstehen so.
 | `QUIVER_ENTRA_GRUPPENNAMEN` | `an` holt Gruppennamen über Graph; Vorgabe `aus`, jeder andere Wert verhindert den Start |
 | `QUIVER_ENTRA_GRAPH` | Basis-URL für Graph, nur Loopback (Tests); im Betrieb fest `https://graph.microsoft.com` |
 | `QUIVER_PROXIES` | CIDR-Liste, denen `X-Forwarded-For` geglaubt wird |
+| `QUIVER_PROGRAMME` | Ordner mit den zu verteilenden Programmen (Vorgabe `<Daten>/tools` und `/opt/quiver/tools`) |
 | `QUIVER_ALTGERAETE` | `gesperrt` (Vorgabe, sobald Entra eingerichtet ist, sonst `erlaubt`) für Geräte ohne Benutzer |
 
 `.env.example` ist die Vorlage.

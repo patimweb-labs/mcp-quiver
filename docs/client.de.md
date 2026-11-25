@@ -157,42 +157,74 @@ Gerät abgeschaltet“ geht mit und steht in der Vorschau — aus bleibt aus.
 
 ## Woher die Programme kommen
 
-Der Client bringt die Werkzeuge aus
-[`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) selbst mit —
-für macOS, Windows und Linux dieselben. Deshalb nennt ein Eintrag in der Regel
-nur den **Programmnamen**, etwa `quiver-devops`. Ein Client aus dem Paket sucht
-ihn zuerst im mitgelieferten Ordner neben seinem eigenen Programm und dann im
-`PATH`:
+Der Client bringt **keine** Werkzeuge mehr mit. Er bekommt sie vom Server
+(Aufgabe 37): bei der Anmeldung, beim Start und bei jedem Abgleich vergleicht
+er den Soll-Zustand mit dem, was im Profil liegt. Fehlt ein Programm oder
+stimmt seine Prüfsumme nicht, lädt er es vom Server, prüft Größe und SHA-256
+und startet es neu. Werkzeuge sind damit immer auf dem Stand des Servers.
 
-| Paket | Programm | Werkzeuge |
-| --- | --- | --- |
-| macOS | `quiver.app/Contents/MacOS/quiver` | `quiver.app/Contents/Resources/tools` |
-| Windows | `<Installation>\quiver.exe` | `<Installation>\tools` |
-| Linux (.deb, .rpm, .tar.gz) | `/usr/bin/quiver` | `/usr/lib/mcp-quiver/tools` |
-| AppImage | `<AppDir>/usr/bin/quiver` | `<AppDir>/usr/lib/mcp-quiver/tools` |
+Ablage im Profil: `tools/<name>/<sha256>/<programm>` — Ordner 0700, Datei 0700
+(unter Windows: nur der Benutzer, über die Rechte des Profils). Geladen wird in
+eine Zwischendatei im Zielordner, Größe und Prüfsumme werden beim Schreiben
+mitgezählt, danach `fsync` und umbenennen; erst dann wird die Datei ausführbar.
+Vor **jedem** Start wird sie erneut geprüft (dieselbe Datei, kein Verweis,
+Größe und SHA-256); stimmt etwas nicht, wird sie neu geladen. Alte Fassungen
+fallen nach dem ersten erfolgreichen Start weg.
 
-Gesucht wird an **einer** Stelle: Start, Anmeldung, Status, Einrichtung und
-Testen nehmen dieselbe Regel. Ein Ausbruch aus dem Ordner ist nicht möglich —
-ein Name mit `/` wird dort nie angehängt, und ein Verweis, der aus dem Ordner
-hinauszeigt, gilt nicht.
+Ein Eintrag nennt dazu nur den **Programmnamen**, etwa `quiver-devops`.
+Verteilt werden nur die eigenen Programme (`quiver-*`); ein Eintrag mit `npx`,
+`uvx`, `docker` oder einem festen Pfad funktioniert unverändert. Für welches
+System der Server was hat:
 
-Ein **fester Pfad** (`/usr/local/bin/quiver-jira`, `C:\…\quiver-m365.exe`)
-funktioniert weiter. Er gilt aber nur auf Geräten, auf denen das Programm genau
-dort liegt; die Verwaltung warnt beim Speichern, hält aber niemanden auf. Zeigt
-ein solcher Pfad auf ein Programm, das es hier nicht gibt, und heißt der
-Dateiname wie ein mitgeliefertes Werkzeug, nimmt der Client das mitgelieferte
-und vermerkt es im Protokoll — ein alter Eintrag der Bibliothek heilt sich so
-von selbst.
+| System | Angabe im Abruf |
+| --- | --- |
+| Windows x64 | `system=windows&arch=x64` |
+| macOS arm64 | `system=macos&arch=arm64` |
+| macOS x64 | `system=macos&arch=x64` |
+| Linux x64 | `system=linux&arch=x64` |
+| Linux arm64 | `system=linux&arch=arm64` |
 
-Meldungen im Fenster nennen nur den Programmnamen und den Grund, nie einen
-fremden Dateipfad; der volle Pfad steht allein im Protokoll.
+Hat der Server ein Programm für das System des Geräts nicht, sagt die Karte
+„Für dieses System gibt es das Tool nicht.“ — kein Fehler, kein roter Zustand.
+Ein Eintrag mit einem **alten festen Pfad** heilt sich selbst: es zählt nur
+noch der Programmname. Meldungen im Fenster nennen nie einen fremden
+Dateipfad, nur den Namen und den Grund; der volle Pfad steht im Protokoll.
 
-Fehlt der Ordner `tools` ganz — etwa weil aus dem ZIP nur `quiver.exe`
-entpackt wurde —, sagt das Fenster über den Karten: „Der Ordner ‚tools‘ neben
-quiver fehlt. Bitte das ganze ZIP entpacken.“ Der Client findet den Ordner
-immer neben seiner eigenen Datei, egal aus welchem Arbeitsverzeichnis er
-startet und ob ein Verweis (Verknüpfung, Autostart) darauf zeigt;
-Leerzeichen und Umlaute im Pfad sind kein Problem.
+Wird ein Eintrag nicht mehr zugewiesen (aus der Gruppe, gesperrt, Zugang
+entzogen), stoppt der Client das Tool und **löscht das Programm**; die
+Konfiguration (Angaben, Zugänge, Geheimnisse, Anmeldung des Tools) bleibt und
+gilt wieder, sobald der Eintrag zurückkommt. Beim Abmelden am Gerät werden
+ebenso nur die Programme gelöscht. Die Karte zeigt während des Ladens „Wird
+vom Server geladen …“ oder „Aktualisiert“. Ist der Server nicht erreichbar,
+laufen die bereits geladenen Programme nach den bisherigen Regeln weiter.
+
+`QUIVER_TOOLS_DIR` bleibt für die Entwicklung: ein Ordner, in dem die
+Programme flach liegen (etwa ein ausgecheckter Stand). Er überschreibt die
+Ablage im Profil, sodass sich ein Programm ohne Server ausprobieren lässt.
+
+### Die Anzeige beim Laden
+
+Solange abgeglichen oder geladen wird, steht am Kopf der Werkzeugseite ein
+Satz mit Drehsymbol: „Verbinde mit dem Server …“, „Tools werden geladen (3 von
+12)“, „Wird gestartet …“. Am Ende steht dort kurz „Alles aktuell“ (oder „2
+Tools aktualisiert“) und verschwindet nach vier Sekunden. Auf der Karte steht
+„Wird geladen … 42 %“ (der Anteil, sobald die Größe bekannt ist) oder
+„Aktualisiert“; das Tray zeigt denselben Stand in kurzer Form.
+
+Die Anzeige steht **nur, wenn es etwas zu tun gibt**: was unter 300 ms dauert,
+erscheint nicht (kein Flackern), und solange nichts läuft, zeichnet das Fenster
+nicht neu. Hat das System „weniger Bewegung“ eingestellt (egui ohne
+Animationen), steht der Text ohne drehenden Ring.
+
+Der Knopf **„Tools aktualisieren“** (auf der Seite und im Tray) fragt sofort
+beim Server nach. Während einer läuft, ist er gesperrt. Danach meldet die
+Anzeige „Alles aktuell“ oder wie viele Programme kamen; besteht keine
+Verbindung (noch nicht eingebunden oder gerade getrennt), sagt der Client das
+im Hinweis über den Karten, statt ins Leere zu fragen.
+
+Geht beim Laden etwas schief, steht der Grund auf der Karte, und daneben gibt
+es **„Erneut versuchen“**. Ein Programm, das nicht lädt, hält die anderen
+nicht auf.
 
 ## Die Anmeldung eines Tools
 
@@ -223,8 +255,9 @@ bevor mitten in der Arbeit Schluss ist.
 Fehlt das Programm auf diesem Gerät, steht auf der Karte **einmal** „Dieses
 Tool ist auf diesem Gerät nicht installiert.“ — kein technischer Fehler, kein
 Anmelde- und kein Einrichtungsknopf (es gäbe nichts zu starten). Den Hinweis
-für den Admin („bitte mit dem Paket mitliefern“) schreibt der Client ins
-Protokoll des Eintrags.
+für den Admin („bitte auf dem Server bereitstellen“) schreibt der Client ins
+Protokoll des Eintrags. Hat der Server das Programm für dieses System nicht,
+steht dort „Für dieses System gibt es das Tool nicht.“ — ebenfalls ohne Knopf.
 
 Unter **Windows** startet der Client die Werkzeuge und die Anmeldebefehle ohne
 eigenes Konsolenfenster (`CREATE_NO_WINDOW`): es blitzt keine schwarze Konsole
@@ -313,7 +346,7 @@ Alles optional:
 | `QUIVER_MCP_ADRESSE` | MCP-Endpunkt (Standard `127.0.0.1:8741`; ein zweiter Port lässt zwei Instanzen nebeneinander laufen) |
 | `QUIVER_AUTOSTART_DIR` | Ordner für die Autostart-Datei (macOS und Linux; Tests und andere Sitzungen) |
 | `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt in der Tresor-Datei (Läufe ohne Spuren, zum Ausprobieren) |
-| `QUIVER_TOOLS_DIR` | Ordner mit den Werkzeugen statt des mitgelieferten (Entwicklung; überschreibt die Suche neben dem Programm) |
+| `QUIVER_TOOLS_DIR` | Ordner mit flach liegenden Programmen statt der Ablage im Profil (Entwicklung) |
 
 `--headless` startet nur den Kern (bis Strg+C); `--hintergrund` bringt das Tray
 ohne Fenster.
@@ -326,8 +359,9 @@ ohne Fenster.
 | „Der Server ist nicht erreichbar“ | Adresse prüfen: `https` überall außer Loopback, kein Pfad am Ende. Die Verwaltung muss unter derselben Adresse erreichbar sein. |
 | Der Client zeigt „Erneut anmelden“ | Der Server verlangt eine neue Anmeldung (Token zu alt, 60 Tage ungenutzt oder Gerät entfernt). Angaben und Geräte-Token bleiben. |
 | Tools bleiben bei „fehlende Angaben“ | Die Karte nennt die Felder. Über den Stift ausfüllen; Geheimes geht in den Tresor. |
-| „Dieses Tool ist auf diesem Gerät nicht installiert.“ | Der Eintrag nennt ein Programm, das weder das Paket noch der `PATH` kennt. Es steckt in den mitgelieferten Programmen (siehe *Woher die Programme kommen*) — oder als fester Pfad eintragen. Der Grund (Name und Suchorte) steht im Protokoll des Eintrags. |
-| „Der Ordner ‚tools‘ neben quiver fehlt“ | Aus dem ZIP wurde nur `quiver` entpackt. Das ganze ZIP in einen Ordner entpacken und `quiver` von dort starten (der Ordner bleibt neben dem Programm, auch über eine Verknüpfung). |
+| „Für dieses System gibt es das Tool nicht.“ | Der Server hat das Programm für dieses Betriebssystem/diese Architektur nicht. Der Admin legt es auf dem Server ab (siehe *Betrieb*); kein Fehler am Gerät. |
+| Karte bleibt auf „Wird vom Server geladen …“ | Der Server ist nicht erreichbar oder die Prüfsumme passt nicht. Das Protokoll des Eintrags nennt den Grund; die bereits geladenen Programme laufen weiter. |
+| „Dieses Tool ist auf diesem Gerät nicht installiert.“ | Der Eintrag nennt ein fremdes Programm (`npx`, `uvx`, …), das der `PATH` nicht kennt. Als festen Pfad eintragen oder dafür sorgen, dass es im `PATH` liegt. Der Grund steht im Protokoll des Eintrags. |
 | Die Karte bleibt auf „Anmeldung läuft …“ oder „Prüfe Anmeldung …“ stehen | Ein Werkzeug antwortet nicht. Nach 10 s (Prüfung) bzw. 5 min (Browser) endet es von selbst mit einem Satz und einem Knopf; hängt es weiter, das Protokoll des Eintrags ansehen und den Client neu starten. |
 | Ein Tool meldet „Prozess wurde beendet“ | Im Protokoll den Reiter *Tool-Logs* öffnen; stderr steht dort (maskiert). |
 | Ein Agent sieht keine Tools | Er muss gekoppelt sein und das Token aus *Agenten* nutzen. Endpunkt `http://127.0.0.1:8741/mcp` prüfen und ob der Eintrag auf diesem Gerät abgeschaltet ist. |

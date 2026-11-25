@@ -50,6 +50,8 @@ pub(crate) struct Zustand {
     graph_log: Mutex<Option<OffsetDateTime>>,
     pub(crate) schluessel: Schluessel,
     pub(crate) drossel: Drossel,
+    /// Die Programme, die der Server an die Geräte verteilt (Aufgabe 37).
+    pub(crate) programme: crate::programme::Ablage,
     /// Argon2-Hash für unbekannte E-Mails, beim Start erzeugt (Aufgabe 26.4).
     pub(crate) dummy: String,
     /// Der Stand der Ersteinrichtung (Aufgabe 25).
@@ -74,6 +76,7 @@ impl Zustand {
         let (ende, _) = broadcast::channel(1);
         let uhr = konfig.uhr.clone();
         let einrichtung = Einrichtung::neu(&konfig.oeffentlich, konfig.einrichtung_mit_code());
+        let programme = crate::programme::Ablage::neu(konfig.programme.clone());
         Self {
             db: Mutex::new(conn),
             geaendert,
@@ -87,6 +90,7 @@ impl Zustand {
             graph_log: Mutex::new(None),
             schluessel,
             drossel: Drossel::neu(),
+            programme,
             dummy,
             einrichtung,
             argon: Semaphore::new(ARGON2_GLEICHZEITIG),

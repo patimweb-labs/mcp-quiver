@@ -18,6 +18,7 @@ use super::{Befehl, TrayZustand};
 use crate::logik::TrayEintrag;
 
 const ZUSTAND: &str = "zustand";
+const AKTUALISIEREN: &str = "aktualisieren";
 const ZEIGEN: &str = "zeigen";
 const AUTOSTART: &str = "autostart";
 const BEENDEN: &str = "beenden";
@@ -26,6 +27,7 @@ pub struct Tray {
     _icon: TrayIcon,
     zustand: MenuItem,
     zeigen: MenuItem,
+    aktualisieren: MenuItem,
     autostart: CheckMenuItem,
     beenden: MenuItem,
     z: TrayZustand,
@@ -58,6 +60,15 @@ impl Tray {
             true,
             None,
         );
+        let aktualisieren = MenuItem::with_id(
+            AKTUALISIEREN,
+            text(|e| match e {
+                TrayEintrag::Aktualisieren(text) => Some(text),
+                _ => None,
+            }),
+            true,
+            None,
+        );
         let an = eintraege
             .iter()
             .any(|e| matches!(e, TrayEintrag::Autostart { an: true, .. }));
@@ -85,6 +96,7 @@ impl Tray {
         for eintrag in [
             &zustand as &dyn tray_icon::menu::IsMenuItem,
             &zeigen,
+            &aktualisieren,
             &autostart,
             &trenner,
             &beenden,
@@ -130,6 +142,8 @@ impl Tray {
         MenuEvent::set_event_handler(Some(move |ereignis: MenuEvent| {
             if ereignis.id == ZEIGEN {
                 s.senden(Befehl::Zeigen);
+            } else if ereignis.id == AKTUALISIEREN {
+                s.senden(Befehl::ToolsAktualisieren);
             } else if ereignis.id == AUTOSTART {
                 s.senden(Befehl::AutostartUmschalten);
             } else if ereignis.id == BEENDEN {
@@ -158,6 +172,7 @@ impl Tray {
             _icon: icon,
             zustand,
             zeigen,
+            aktualisieren,
             autostart,
             beenden,
             z,
@@ -184,6 +199,7 @@ impl Tray {
             match eintrag {
                 TrayEintrag::Zustand(text) => self.zustand.set_text(text),
                 TrayEintrag::Zeigen(text) => self.zeigen.set_text(text),
+                TrayEintrag::Aktualisieren(text) => self.aktualisieren.set_text(text),
                 TrayEintrag::Autostart { text, an } => {
                     self.autostart.set_text(text);
                     if self.autostart.is_checked() != *an {

@@ -627,6 +627,9 @@ mod tests {
             "quiver-laufzeit-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|dauer| dauer.as_nanos())
+                .unwrap_or(0)
         ));
         let protokoll = Arc::new(Protokoll::neu(&ordner));
         let ergebnis = verbinden(&EintragId::neu("test"), &laufzeit, &protokoll).await;

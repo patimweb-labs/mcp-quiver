@@ -21,6 +21,11 @@ import {
   wird_aktualisiert,
 } from "../logik/geraet";
 import { nach_kennung } from "../logik/eintrag";
+import {
+  laufende_programme,
+  programm_zeilen,
+  type ProgrammZeile,
+} from "../logik/programme";
 import { type Zustand, fehler, fertig, laedt } from "../logik/seite";
 import { kennzahlen } from "../logik/ueberblick";
 
@@ -28,6 +33,7 @@ interface Daten {
   ueberblick: Ueberblick;
   geraete: GeraetStand[];
   titel: Map<string, string>;
+  programme: ProgrammZeile[];
 }
 
 const props = defineProps<{ client: Client }>();
@@ -36,15 +42,17 @@ const zustand = shallowRef<Zustand<Daten>>(laedt());
 async function laden(): Promise<void> {
   zustand.value = laedt();
   try {
-    const [ueberblick, geraete, eintraege] = await Promise.all([
+    const [ueberblick, geraete, eintraege, programme] = await Promise.all([
       props.client.ueberblick(),
       props.client.geraete(),
       props.client.eintraege(),
+      props.client.programme(),
     ]);
     zustand.value = fertig({
       ueberblick,
       geraete,
       titel: titel_map(eintraege),
+      programme: programm_zeilen(programme),
     });
   } catch (fehlerWert) {
     zustand.value = fehler(fehlertext(fehlerWert));
@@ -54,6 +62,16 @@ async function laden(): Promise<void> {
 function titel_map(eintraege: Eintrag[]): Map<string, string> {
   const nach = nach_kennung(eintraege);
   return new Map([...nach].map(([id, eintrag]) => [id, eintrag.titel]));
+}
+
+/** Geräte, die Programme melden – mit Namen und Fassungen. */
+function laufende(geraete: GeraetStand[]): { name: string; programme: string[] }[] {
+  return geraete
+    .map((stand) => ({
+      name: geraet_name(stand),
+      programme: laufende_programme(stand),
+    }))
+    .filter((eintrag) => eintrag.programme.length > 0);
 }
 
 function problem_titel(id: string): string {
@@ -135,6 +153,45 @@ onMounted(laden);
                 {{ text }}
               </li>
             </ul>
+          </li>
+        </ul>
+      </Karte>
+
+      <Karte
+        titel="Programme"
+        unter="Was der Server an die Geräte verteilt (Ablage am Server, nur root)."
+      >
+        <p v-if="zustand.daten.programme.length === 0" class="seite__leer">
+          Es liegen keine Programme bereit. Geräte bekommen dann nichts geladen
+          (ihre Konfiguration bleibt).
+        </p>
+        <ul v-else class="programme">
+          <li
+            v-for="zeile in zustand.daten.programme"
+            :key="zeile.name"
+            class="programm"
+          >
+            <span class="programm__name mono">{{ zeile.name }}</span>
+            <span class="programm__teil">{{ zeile.fassungen.join(", ") }}</span>
+            <span class="programm__teil">{{ zeile.systeme.join(", ") }}</span>
+            <span class="programm__teil">{{ zeile.groesse }}</span>
+          </li>
+        </ul>
+      </Karte>
+
+      <Karte
+        v-if="laufende(zustand.daten.geraete).length > 0"
+        titel="Laufende Programme je Gerät"
+        unter="Aus der letzten Meldung des Geräts."
+      >
+        <ul class="programme">
+          <li
+            v-for="geraet in laufende(zustand.daten.geraete)"
+            :key="geraet.name"
+            class="programm programm--geraet"
+          >
+            <span class="programm__name">{{ geraet.name }}</span>
+            <span class="programm__teil">{{ geraet.programme.join(", ") }}</span>
           </li>
         </ul>
       </Karte>
@@ -244,6 +301,38 @@ onMounted(laden);
 }
 
 .fakten__wert {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.programme {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.programm {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: var(--wp-space-2);
+  font-size: var(--wp-font-size-sm);
+}
+
+/* Je Gerät gibt es zwei Spalten: Name und die laufenden Programme. */
+.programm--geraet {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+.programm__name {
+  font-weight: var(--wp-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.programm__teil {
+  color: var(--wp-color-text-muted);
   min-width: 0;
   overflow-wrap: anywhere;
 }

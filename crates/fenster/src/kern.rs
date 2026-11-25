@@ -123,6 +123,10 @@ impl EchterKern {
 }
 
 impl KernZugang for EchterKern {
+    fn tools_aktualisieren(&self) -> anyhow::Result<()> {
+        self.kern.tools_aktualisieren()
+    }
+
     fn ausfuehren(&self, aktion: Aktion) {
         let kern = self.kern.clone();
         let meldungen = self.meldungen.clone();
@@ -234,6 +238,10 @@ impl KernZugang for EchterKern {
                     kern.protokoll_fuer_agenten_setzen(an).await;
                     Ok(())
                 }
+                // Sofort beim Server nachfragen (Nachtrag zu Aufgabe 37).
+                Aktion::ToolsAktualisieren => kern.tools_aktualisieren(),
+                // „Erneut versuchen“ auf einer Karte (Nachtrag zu Aufgabe 37).
+                Aktion::EintragNeuVersuchen { eintrag } => kern.eintrag_neu_starten(&eintrag).await,
                 // Am Gerät abschalten (Aufgabe 19): speichert vor dem Schalten;
                 // scheitert das Speichern, bleibt alles, wie es war.
                 Aktion::EintragSchalten { eintrag, an } => {

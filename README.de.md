@@ -41,8 +41,9 @@ ist Vue, und beide Oberflächen entstehen aus denselben Tokens.
   ohne ihn zu löschen.
 - **Zuweisung über Gruppen.** Ein Admin bündelt Einträge zu einem Satz und
   weist Sätze Gruppen zu — lokal oder in Microsoft Entra ID. Ein Gerät bekommt
-  die Vereinigung der Sätze seines Benutzers, automatisch installiert,
-  aktualisiert und entfernt. Widersprechen sich vorbelegte Werte, gewinnt die
+  die Vereinigung der Sätze seines Benutzers: Der Client lädt die Programme
+  vom Server, hält sie auf dessen Stand, prüft sie und entfernt sie wieder,
+  wenn ein Eintrag nicht mehr zugewiesen ist. Widersprechen sich vorbelegte Werte, gewinnt die
   Priorität des Satzes.
 - **Konfiguration in Schichten.** Der Server kennt Endpunkte, Tenant und
   Vorgaben. Der Client ergänzt, was nur das Gerät weiß: lokale Pfade,
@@ -136,8 +137,8 @@ Playwright macht dasselbe für die Verwaltung (siehe
    einen Einmal-Code. Der Server gibt ein Geräte-Token zurück.
 2. **Der Server rechnet den Soll-Zustand.** Gruppen des Benutzers → Sätze →
    Einträge und vorbelegte Werte.
-3. **Der Client gleicht ab.** Soll gegen Ist: installieren, aktualisieren,
-   entfernen.
+3. **Der Client gleicht ab.** Soll gegen Ist: Programme vom Server laden,
+   aktualisieren, entfernen.
 4. **Der Client vervollständigt.** Er fragt nur Felder ab, die auf diesem Gerät
    fehlen, und legt Geheimnisse in den Tresor.
 5. **Der Client stellt bereit.** Ein MCP-Endpunkt mit allen erlaubten Tools.
