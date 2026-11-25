@@ -8,6 +8,21 @@ Pflegt `release-please` aus den Conventional Commits; von Hand kommt nur der
 Eintrag zur ersten Version hierher. Der Tag ist `v<Version>` und muss zur
 Version in `[workspace.package]` passen.
 
+## [0.3.0](https://github.com/patimweb-labs/mcp-quiver/compare/v0.2.0...v0.3.0) (2026-11-25)
+
+
+### Neu
+
+* Benutzer und Gruppen von Hand zuordnen, Auswahllisten über dem Dialog ([f2d1815](https://github.com/patimweb-labs/mcp-quiver/commit/f2d181509a58848d06b2e942b9857a83a7c9c168))
+* Benutzer und Gruppen von Hand zuordnen, Auswahllisten über dem Dialog ([dde6b9c](https://github.com/patimweb-labs/mcp-quiver/commit/dde6b9c63d67c28a2c327655334417a2f81a9777))
+
+
+### Behoben
+
+* Autostart-Test fasst die Windows-Registry nicht an, Zeilenenden LF ([0218a30](https://github.com/patimweb-labs/mcp-quiver/commit/0218a30cc2493ac2a5f576c052dbe9b47b9446f7))
+* Entzug wirkt sofort ([f052966](https://github.com/patimweb-labs/mcp-quiver/commit/f0529665992e23530839d02f2c672b941a26ad55))
+* Entzug wirkt sofort, auch beim Öffnen des Ereignis-Stroms ([65a5b5d](https://github.com/patimweb-labs/mcp-quiver/commit/65a5b5d47a67ff3ee1326671ee9b28f2efad2ad5))
+
 ## [0.2.0](https://github.com/patimweb-labs/mcp-quiver/compare/v0.1.0...v0.2.0) (2026-11-25)
 
 
