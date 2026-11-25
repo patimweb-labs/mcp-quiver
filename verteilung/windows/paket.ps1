@@ -146,8 +146,7 @@ wix build `
     -d "Wurzel=$wurzel" `
     -d "Symbol=$symbol" `
     -o $msi `
-    (Join-Path $wurzel 'verteilung\windows\quiver.wxs') `
-    $werkzeugliste
+    (Join-Path $wurzel 'verteilung\windows\quiver.wxs')
 if ($LASTEXITCODE -ne 0) { throw 'wix build fehlgeschlagen.' }
 
 Write-Host '==> fertig'

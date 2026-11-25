@@ -35,23 +35,43 @@ struct Welt {
     basis: String,
     http: reqwest::Client,
     cookie: String,
+    /// Derselbe Tresor für beide Kerne: ein Neustart des Clients behält sein
+    /// Geräte-Token (im Betrieb ist das die Tresor-Datei im Profil).
+    tresor: Arc<SpeicherTresor>,
     kern: Kern,
+}
+
+/// Wo das Programm auf dem Server liegt (Aufgabe 37).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ort {
+    /// `<daten>/tools/<system>/<arch>/` – der Normalfall.
+    SystemArch,
+    /// `<daten>/tools/<system>/` – der Betreiber hat es ohne Architektur
+    /// abgelegt; es gilt dann für jede Architektur dieses Systems.
+    NurSystem,
 }
 
 impl Welt {
     /// `programm`: die Bytes, die als `quiver-devops` bereitliegen.
     async fn neu(programm: &[u8]) -> Self {
-        let stempel = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Systemzeit nach 1970")
-            .as_nanos();
+        Self::neu_mit(programm, Ort::SystemArch).await
+    }
+
+    async fn neu_mit(programm: &[u8], ort: Ort) -> Self {
+        // Prozessnummer **und** Zähler: ein Testordner ist eindeutig, auch
+        // wenn zwei Tests im selben Augenblick beginnen. Die Zeit allein
+        // reicht unter macOS nicht (Mikrosekunden).
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let ordner = std::env::temp_dir().join(format!(
-            "quiver-tools-server-{}-{stempel}",
+            "quiver-tools-server-{}-{nummer}",
             std::process::id()
         ));
+        let _ = std::fs::remove_dir_all(&ordner);
         std::fs::create_dir_all(&ordner).expect("Ordner");
         let daten = ordner.join("server");
         let profil = ordner.join("profil");
+        let tresor = Arc::new(SpeicherTresor::neu());
         let mut welt = Self {
             ordner: ordner.clone(),
             profil,
@@ -59,7 +79,8 @@ impl Welt {
             basis: String::new(),
             http: reqwest::Client::new(),
             cookie: String::new(),
-            kern: starte_kern(&ordner).await,
+            kern: starte_kern(&ordner, tresor.clone()).await,
+            tresor,
         };
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
@@ -77,7 +98,10 @@ impl Welt {
         welt.basis = basis;
         welt.cookie = gemeinsam::sitzung(&welt.http, &welt.basis, &welt.daten).await;
         welt.ablage_leeren();
-        welt.ablegen(programm);
+        match ort {
+            Ort::SystemArch => welt.ablegen(programm),
+            Ort::NurSystem => welt.ablegen_ohne_arch(programm),
+        }
         welt.einrichten("devops", "quiver-devops").await;
         let code = welt.code("team").await;
         welt.kern
@@ -88,8 +112,7 @@ impl Welt {
     }
 
     fn ablage_leeren(&self) {
-        let ordner = self.daten.join("tools").join("linux").join("x64");
-        std::fs::remove_dir_all(&ordner).ok();
+        std::fs::remove_dir_all(self.daten.join("tools")).ok();
     }
 
     /// Ein Programm in die Ablage des Servers legen.
@@ -100,6 +123,16 @@ impl Welt {
             .join("tools")
             .join(&system.system)
             .join(&system.arch);
+        std::fs::create_dir_all(&ordner).expect("Ordner");
+        let ziel = ordner.join("quiver-devops");
+        std::fs::write(&ziel, inhalt).expect("Programm");
+        rechte_setzen(&ziel);
+    }
+
+    /// Ein Programm ohne Architektur in die Ablage des Servers legen.
+    fn ablegen_ohne_arch(&self, inhalt: &[u8]) {
+        let system = System::dieses();
+        let ordner = self.daten.join("tools").join(&system.system);
         std::fs::create_dir_all(&ordner).expect("Ordner");
         let ziel = ordner.join("quiver-devops");
         std::fs::write(&ziel, inhalt).expect("Programm");
@@ -121,6 +154,13 @@ impl Welt {
 
     /// Eintrag, Satz und Gruppe anlegen.
     async fn einrichten(&self, id: &str, befehl: &str) {
+        self.eintrag_anlegen(id, befehl).await;
+        self.anstossen_mit_id("basis", &[id]).await;
+        self.anstossen().await;
+    }
+
+    /// Nur den Eintrag anlegen (ohne ihn zuzuweisen).
+    async fn eintrag_anlegen(&self, id: &str, befehl: &str) {
         let eintrag = Eintrag {
             id: EintragId::neu(id),
             version: "1.0.0".into(),
@@ -141,32 +181,14 @@ impl Welt {
             einrichtung: None,
             mehrfach: None,
         };
-        let id = id.to_string();
-        for (methode, pfad, rumpf) in [
-            (
+        let antwort = self
+            .admin(
                 "PUT",
                 format!("/admin/eintraege/{id}"),
                 serde_json::to_value(&eintrag).expect("JSON"),
-            ),
-            (
-                "PUT",
-                "/admin/saetze/basis".to_string(),
-                serde_json::json!({"id": "basis", "titel": "Basis", "prioritaet": 0,
-                    "eintraege": [{"eintrag": id, "werte": {}}]}),
-            ),
-            (
-                "PUT",
-                "/admin/gruppen/team".to_string(),
-                serde_json::json!({"id": "team", "titel": "Team", "saetze": ["basis"]}),
-            ),
-        ] {
-            let antwort = self.admin(methode, pfad.clone(), rumpf).await;
-            assert!(
-                antwort.status().is_success(),
-                "{pfad}: {}",
-                antwort.status()
-            );
-        }
+            )
+            .await;
+        assert!(antwort.status().is_success(), "{}", antwort.status());
     }
 
     async fn admin(
@@ -298,11 +320,11 @@ impl Drop for Welt {
     }
 }
 
-async fn starte_kern(ordner: &Path) -> Kern {
+async fn starte_kern(ordner: &Path, tresor: Arc<SpeicherTresor>) -> Kern {
     Kern::starten(KernKonfig {
         profil: ordner.join("profil"),
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
-        tresor: Arc::new(SpeicherTresor::neu()),
+        tresor,
         browser: Arc::new(quiver_client::SystemBrowser),
     })
     .await
@@ -407,6 +429,48 @@ async fn eine_neue_fassung_wird_geholt() {
     welt.kern.beenden().await;
 }
 
+/// Zwei Einträge starten dasselbe Programm: es wird einmal geladen, und beim
+/// Tausch laufen **beide** danach mit der neuen Fassung – nicht nur einer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_programm_zwei_eintraege_werden_beide_getauscht() {
+    let alt = attrappe("demo");
+    let welt = Welt::neu(&alt).await;
+    let erster = EintragId::neu("devops");
+    let zweiter = EintragId::neu("devops-zwei");
+    welt.warte_auf_laeuft(&erster).await;
+    welt.eintrag_anlegen("devops-zwei", "quiver-devops").await;
+    welt.anstossen_mit_id("basis", &["devops", "devops-zwei"])
+        .await;
+    welt.warte_auf_laeuft(&zweiter).await;
+
+    let neu = attrappe("echo");
+    welt.ablage_leeren();
+    welt.ablegen(&neu);
+    welt.anstossen().await;
+    for id in [&erster, &zweiter] {
+        welt.warte_auf("beide laufen mit der neuen Fassung", |welt| {
+            welt.sicht(id)
+                .is_some_and(|sicht| sicht.tools.iter().any(|tool| tool == "echo"))
+        })
+        .await;
+    }
+    welt.warte_auf("die alte Fassung ist gelöscht", |welt| {
+        !welt.im_profil(&welt.programm(&alt)).exists()
+    })
+    .await;
+
+    // Verliert nur einer seinen Eintrag, bleibt das Programm für den anderen.
+    welt.anstossen_mit_id("basis", &["devops"]).await;
+    welt.warte_auf("der zweite Eintrag ist weg", |welt| {
+        welt.sicht(&zweiter).is_none()
+    })
+    .await;
+    assert!(welt.im_profil(&welt.programm(&neu)).is_file());
+    welt.warte_auf_laeuft(&erster).await;
+
+    welt.kern.beenden().await;
+}
+
 /// Entzug: das Programm wird gelöscht, die Konfiguration bleibt. Zurück in der
 /// Gruppe läuft es ohne neue Angaben wieder.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -475,5 +539,250 @@ async fn ein_programm_ohne_system_und_ein_fremdes_programm() {
     })
     .await;
 
+    welt.kern.beenden().await;
+}
+
+// ------------------------------------------------------- Altbestand: fester Pfad
+
+/// Ein Eintrag mit **festem Pfad** auf ein verteiltes Programm bekommt sein
+/// Programm vom Server (Aufgabe 37): es zählt der Name, nicht der Pfad – auch
+/// bei einem Pfad eines anderen Rechners und auch mit `C:\…\…​.exe`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_altbestand_mit_festem_pfad_bekommt_das_programm_vom_server() {
+    let inhalt = attrappe("demo");
+    let welt = Welt::neu(&inhalt).await;
+    let id = EintragId::neu("devops");
+    welt.warte_auf_laeuft(&id).await;
+
+    // Der Eintrag steht noch mit dem Pfad einer Entwicklermaschine da.
+    welt.einrichten("devops", "/pfad/auf/anderem/rechner/quiver-devops")
+        .await;
+    welt.anstossen().await;
+    let laeuft = welt.warte_auf_laeuft(&id).await;
+    assert!(
+        laeuft.tools.iter().any(|tool| tool == "lesen"),
+        "das Programm kommt vom Server: {:?}",
+        laeuft.tools
+    );
+    assert!(!laeuft.nicht_fuer_system);
+
+    // Dasselbe mit einem Windows-Pfad und einem zweiten Eintrag: beide starten
+    // dasselbe Programm (ein Programm, mehrere Einträge).
+    welt.einrichten("win", r"C:\Programme\quiver-tools\quiver-devops.exe")
+        .await;
+    welt.anstossen_mit_id("basis", &["devops", "win"]).await;
+    let win = EintragId::neu("win");
+    let laeuft = welt.warte_auf_laeuft(&win).await;
+    assert!(
+        laeuft.tools.iter().any(|tool| tool == "lesen"),
+        "{:?}",
+        laeuft.tools
+    );
+    assert!(
+        !laeuft.nicht_fuer_system,
+        "der Windows-Pfad ist kein »gibt es hier nicht«"
+    );
+    // Beide Einträge laufen mit demselben Programm aus der Ablage im Profil.
+    let programm = welt.programm(&inhalt);
+    assert!(welt.im_profil(&programm).is_file());
+    welt.kern.beenden().await;
+}
+
+/// Führt der Server das Programm **nicht**, läuft ein vorhandener fester Pfad
+/// wie bisher: das eigene Programm des Betreibers (Aufgabe 37).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_eigenes_programm_laeuft_am_festen_pfad() {
+    let inhalt = attrappe("demo");
+    let welt = Welt::neu(&inhalt).await;
+    // Ein eigenes Programm, das der Server nicht verteilt.
+    let eigen = welt.ordner.join("eigen").join("quiver-eigen");
+    std::fs::create_dir_all(eigen.parent().expect("Ordner")).expect("Ordner");
+    std::fs::write(&eigen, &inhalt).expect("Programm");
+    rechte_setzen(&eigen);
+
+    welt.einrichten("eigen", &eigen.to_string_lossy()).await;
+    welt.anstossen().await;
+    let laeuft = welt.warte_auf_laeuft(&EintragId::neu("eigen")).await;
+    assert!(
+        laeuft.tools.iter().any(|tool| tool == "lesen"),
+        "{:?}",
+        laeuft.tools
+    );
+    // Es liegt nichts im Profil: das Programm bleibt, wo es ist.
+    assert!(!welt.profil.join("tools").join("quiver-eigen").exists());
+    welt.kern.beenden().await;
+}
+
+// ------------------------------------------------- Ordner ohne Architektur
+
+/// Liegt das Programm in `<daten>/tools/<system>/` (ohne Architektur), gilt es
+/// für jede Architektur dieses Systems: der Client fragt mit `arch=x64` und
+/// bekommt es, statt in ein 400 zu laufen (Aufgabe 37).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ein_programm_ohne_architektur_gilt_fuer_diese() {
+    let inhalt = attrappe("demo");
+    let welt = Welt::neu_mit(&inhalt, Ort::NurSystem).await;
+    let id = EintragId::neu("devops");
+    let laeuft = welt.warte_auf_laeuft(&id).await;
+    assert!(
+        laeuft.tools.iter().any(|tool| tool == "lesen"),
+        "{:?}",
+        laeuft.tools
+    );
+    assert!(!laeuft.nicht_fuer_system);
+    let programm = welt.programm(&inhalt);
+    assert!(welt.im_profil(&programm).is_file());
+    welt.kern.beenden().await;
+}
+
+// ------------------------------------------------------ zwei Abgleiche zugleich
+
+/// Zwei Abgleiche zugleich (etwa zwei Klicks auf „Tools aktualisieren“) laden
+/// dasselbe Programm **einmal**, lassen keine Zwischendatei liegen und starten
+/// den Eintrag mit der neuen Fassung (Aufgabe 37).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn zwei_abgleiche_zugleich_laden_das_programm_einmal() {
+    let alt = attrappe("demo");
+    let welt = Welt::neu(&alt).await;
+    let id = EintragId::neu("devops");
+    welt.warte_auf_laeuft(&id).await;
+
+    let neu = attrappe("echo");
+    welt.ablage_leeren();
+    welt.ablegen(&neu);
+    welt.anstossen().await;
+    // Drei Anfragen, ohne auf die vorige zu warten.
+    for _ in 0..3 {
+        welt.kern
+            .tools_aktualisieren()
+            .expect("die Anfrage wird angenommen");
+    }
+
+    welt.warte_auf("die neue Fassung läuft", |welt| {
+        welt.sicht(&id)
+            .is_some_and(|sicht| sicht.tools.iter().any(|tool| tool == "echo"))
+    })
+    .await;
+
+    // Genau eine Fassung im Profil (die alte fällt nach dem Start weg), und
+    // keine Zwischendatei daneben.
+    let ordner = welt.profil.join("tools").join("quiver-devops");
+    let namen = |ordner: &Path| -> Vec<String> {
+        std::fs::read_dir(ordner)
+            .expect("Ordner")
+            .flatten()
+            .map(|eintrag| eintrag.file_name().to_string_lossy().to_string())
+            .collect()
+    };
+    let neue = welt.programm(&neu);
+    welt.warte_auf("nur die neue Fassung liegt im Profil", |_| {
+        namen(&ordner) == [neue.sha256.clone()]
+    })
+    .await;
+    assert_eq!(
+        namen(&ordner.join(&neue.sha256)),
+        [format!("quiver-devops{}", std::env::consts::EXE_SUFFIX)],
+        "eine Zwischendatei liegt noch da"
+    );
+    welt.kern.beenden().await;
+}
+
+// --------------------------------------------------- Entzug während des Ladens
+
+/// Der Zugang wird entzogen, **während** das Programm geladen wird: danach
+/// liegt nichts im Profil, und der Eintrag ist aus dem Soll (Aufgabe 37).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entzug_waehrend_des_ladens_laesst_nichts_zurueck() {
+    // Ein großes Programm: das Laden dauert lange genug, um dazwischen zu
+    // entziehen. Es muss nicht laufen – geprüft wird, was liegen bleibt.
+    let inhalt = vec![0u8; 32 * 1024 * 1024];
+    let welt = Welt::neu(&inhalt).await;
+    let id = EintragId::neu("devops");
+
+    // Warten, bis der Client lädt (die Karte steht noch nicht im Modell, die
+    // Anzeige am Kopf schon).
+    let frist = Instant::now() + FRIST;
+    loop {
+        let laedt = matches!(
+            welt.kern.modell().borrow().fortschritt,
+            quiver_client::Fortschritt::Laedt { .. }
+        );
+        if laedt {
+            break;
+        }
+        assert!(Instant::now() < frist, "der Client lädt gar nicht");
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    welt.entziehen().await;
+
+    // Der Eintrag verschwindet, das Programm bleibt nicht im Profil.
+    welt.warte_auf("der Eintrag ist aus dem Soll", |welt| {
+        welt.sicht(&id).is_none()
+    })
+    .await;
+    let programm = welt.programm(&inhalt);
+    let ordner = welt.profil.join("tools").join("quiver-devops");
+    welt.warte_auf("das Programm ist gelöscht", |_| !ordner.exists())
+        .await;
+    assert!(!welt.im_profil(&programm).exists());
+    let reste: Vec<String> = std::fs::read_dir(welt.profil.join("tools"))
+        .map(|leser| {
+            leser
+                .flatten()
+                .map(|eintrag| eintrag.file_name().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        !reste.iter().any(|name| name.starts_with(".laden-")),
+        "{reste:?}"
+    );
+    welt.kern.beenden().await;
+}
+
+// ------------------------------------------------------ Rechte nach Neustart
+
+/// Nach einem Neustart des Clients sind die Ordner der Ablage 0700 und die
+/// Programme ausführbar: das Werkzeug läuft wieder, ohne neu zu laden
+/// (Aufgabe 37).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nach_einem_neustart_laeuft_das_programm_weiter() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let inhalt = attrappe("demo");
+    let mut welt = Welt::neu(&inhalt).await;
+    let id = EintragId::neu("devops");
+    welt.warte_auf_laeuft(&id).await;
+    let programm = welt.programm(&inhalt);
+    let pfad = welt.im_profil(&programm);
+    assert!(pfad.is_file());
+
+    welt.kern.beenden().await;
+
+    // Was eine alte Fassung hinterlassen hätte: offene Ordner, ein Programm
+    // ohne Ausführungsrecht.
+    let ordner = pfad.parent().expect("Ordner").to_path_buf();
+    for offen in [
+        welt.profil.join("tools"),
+        welt.profil.join("tools").join("quiver-devops"),
+        ordner.clone(),
+    ] {
+        std::fs::set_permissions(&offen, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+    }
+    std::fs::set_permissions(&pfad, std::fs::Permissions::from_mode(0o644)).expect("Rechte");
+
+    // Neustart auf demselben Profil.
+    let tresor = welt.tresor.clone();
+    welt.kern = starte_kern(&welt.ordner, tresor).await;
+    let laeuft = welt.warte_auf_laeuft(&id).await;
+    assert!(
+        laeuft.tools.iter().any(|tool| tool == "lesen"),
+        "{:?}",
+        laeuft.tools
+    );
+    let modus = |pfad: &Path| std::fs::metadata(pfad).expect("Datei").permissions().mode() & 0o777;
+    assert_eq!(modus(&pfad), 0o700, "das Programm ist wieder ausführbar");
+    assert_eq!(modus(&ordner), 0o700, "der Ordner ist wieder dicht");
     welt.kern.beenden().await;
 }

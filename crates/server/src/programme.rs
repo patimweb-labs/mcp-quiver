@@ -34,7 +34,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use quiver_domain::{ist_verteilt, Programm, System};
@@ -42,6 +42,10 @@ use sha2::{Digest, Sha256};
 
 /// So groß darf ein Programm höchstens sein (Grenze beim Ausliefern).
 pub const PROGRAMM_BYTES_MAX: u64 = 128 * 1024 * 1024;
+
+/// So oft sieht der Server nach, ob sich ein Programm im Ordner geändert hat
+/// (Aufgabe 37).
+pub const PROGRAMME_ABSTAND: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Die Fassung, die ein Programm ohne `LISTE.json` bekommt.
 pub const OHNE_FASSUNG: &str = "unbekannt";
@@ -135,6 +139,62 @@ impl Ablage {
         self.finden_alle(system, Some(name)).into_iter().next()
     }
 
+    /// Ein Fingerabdruck über die **Dateien** der Ablage – Name, Größe und
+    /// Änderungszeit, ohne Prüfsummen (Aufgabe 37).
+    ///
+    /// Er ist billig genug für eine Prüfung alle [`PROGRAMME_ABSTAND`]: gerechnet
+    /// wird nur, was sich geändert hat (siehe [`Ablage::pruefsumme`]). Ändert er
+    /// sich, wird die Revision neu gerechnet und die Geräte werden angestoßen.
+    pub fn fingerabdruck(&self) -> String {
+        let mut h = Sha256::new();
+        for wurzel in &self.wurzeln {
+            for system in System::SYSTEME {
+                for arch in [
+                    None,
+                    Some(System::ARCHITEKTUREN[0]),
+                    Some(System::ARCHITEKTUREN[1]),
+                ] {
+                    let ordner = match arch {
+                        Some(arch) => wurzel.join(system).join(arch),
+                        None => wurzel.join(system),
+                    };
+                    let Ok(eintraege) = std::fs::read_dir(&ordner) else {
+                        continue;
+                    };
+                    let mut zeilen: Vec<String> = Vec::new();
+                    for eintrag in eintraege.flatten() {
+                        let Ok(art) = eintrag.file_type() else {
+                            continue;
+                        };
+                        if !art.is_file() {
+                            continue;
+                        }
+                        let Ok(meta) = eintrag.metadata() else {
+                            continue;
+                        };
+                        let geaendert = meta
+                            .modified()
+                            .ok()
+                            .and_then(|zeit| zeit.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|dauer| dauer.as_nanos())
+                            .unwrap_or(0);
+                        zeilen.push(format!(
+                            "{}:{}:{geaendert}",
+                            eintrag.path().display(),
+                            meta.len()
+                        ));
+                    }
+                    zeilen.sort();
+                    for zeile in zeilen {
+                        h.update(zeile.as_bytes());
+                        h.update(b"\n");
+                    }
+                }
+            }
+        }
+        hex::encode(h.finalize())
+    }
+
     /// Wie viele Programme je System liegen hier? (für den Start ins Log)
     pub fn stand(&self) -> String {
         let mut teile = Vec::new();
@@ -169,12 +229,17 @@ impl Ablage {
         let mut treffer: BTreeMap<String, (usize, usize, Fund)> = BTreeMap::new();
         for (rang, wurzel) in self.wurzeln.iter().enumerate() {
             // Erst die genauere Angabe (mit Architektur), dann die allgemeine.
+            // Ein Ordner ohne Architektur (`<daten>/tools/<system>/`) gilt für
+            // **jede** Architektur: das Programm trägt dann die angefragte,
+            // nicht eine leere. Sonst fragte der Client mit `arch=x64` und
+            // bekäme ein Programm mit `arch=""` – und damit 400 (Aufgabe 37).
             for (genau, arch) in [(1usize, Some(system.arch.as_str())), (0, None)] {
                 let ordner = match arch {
                     Some(arch) => wurzel.join(&system.system).join(arch),
                     None => wurzel.join(&system.system),
                 };
-                for programm in self.ordner_lesen(&ordner, &system.system, arch.unwrap_or("")) {
+                let geltende_arch = arch.unwrap_or(system.arch.as_str());
+                for programm in self.ordner_lesen(&ordner, &system.system, geltende_arch) {
                     if name.is_some_and(|name| programm.programm.name != name) {
                         continue;
                     }
@@ -196,8 +261,8 @@ impl Ablage {
 
     /// Die Programme eines Ordners lesen.
     ///
-    /// `arch` ist leer, wenn der Ordner nur nach System geht; dann gilt das
-    /// Programm für jede Architektur dieses Systems.
+    /// `arch` ist die Architektur, die den Fund trägt: bei `<system>/<arch>/`
+    /// die des Ordners, bei `<system>/` die des anfragenden Geräts.
     fn ordner_lesen(&self, ordner: &Path, system: &str, arch: &str) -> Vec<Fund> {
         let Ok(eintraege) = std::fs::read_dir(ordner) else {
             return Vec::new();
@@ -298,6 +363,51 @@ impl Ablage {
     }
 }
 
+/// Ein Fingerabdruck der Ablage – auf einer blockierenden Aufgabe, damit das
+/// Rechnen keinen async-Faden belegt (Aufgabe 37).
+async fn fingerabdruck(ablage: Arc<Ablage>) -> Option<String> {
+    tokio::task::spawn_blocking(move || ablage.fingerabdruck())
+        .await
+        .ok()
+}
+
+/// Beobachten, ob sich ein Programm im Ordner geändert hat (Aufgabe 37).
+///
+/// Alle `abstand` wird der Fingerabdruck der Ablage verglichen (Name, Größe und
+/// Änderungszeit – **nicht** die Prüfsummen, das wäre bei jedem Takt teuer).
+/// Hat sich etwas geändert, wird `melden` gerufen; der Server stößt damit die
+/// Geräte an, und der nächste Abruf rechnet eine neue Revision samt neuer
+/// Prüfsumme.
+///
+/// Gerechnet wird auf einer blockierenden Aufgabe
+/// ([`tokio::task::spawn_blocking`]): ein paar hundert Megabyte Prüfsummen
+/// dürfen den async-Faden nicht anhalten.
+pub async fn beobachten<F>(ablage: Arc<Ablage>, abstand: std::time::Duration, melden: F)
+where
+    F: Fn(),
+{
+    let Some(mut letzter) = fingerabdruck(ablage.clone()).await else {
+        tracing::warn!("Programme nicht beobachtbar");
+        return;
+    };
+    let mut takt = tokio::time::interval(abstand);
+    takt.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Der erste Takt kommt sofort; der Fingerabdruck ist eben schon gerechnet.
+    takt.tick().await;
+    loop {
+        takt.tick().await;
+        let Some(neu) = fingerabdruck(ablage.clone()).await else {
+            continue;
+        };
+        if neu == letzter {
+            continue;
+        }
+        letzter = neu;
+        tracing::info!("Ein Programm im Ordner hat sich geändert – Geräte werden angestoßen");
+        melden();
+    }
+}
+
 /// Die `LISTE.json` eines Ordners, falls es sie gibt.
 fn liste_lesen(ordner: &Path) -> Liste {
     let Ok(bytes) = std::fs::read(ordner.join("LISTE.json")) else {
@@ -330,13 +440,13 @@ mod tests {
     use super::*;
 
     fn baum(name: &str) -> PathBuf {
+        // Prozessnummer **und** Zähler: eindeutig je Test, und ohne Zeichen,
+        // die unter Windows in einem Pfad nicht vorkommen dürfen.
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let ordner = std::env::temp_dir().join(format!(
-            "quiver-programme-{}-{name}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|dauer| dauer.as_nanos())
-                .unwrap_or(0)
+            "quiver-programme-{}-{nummer}-{name}",
+            std::process::id()
         ));
         std::fs::remove_dir_all(&ordner).ok();
         std::fs::create_dir_all(&ordner).expect("Testordner");
@@ -479,6 +589,87 @@ mod tests {
             .expect("gefunden");
         assert_eq!(fund.programm.name, "quiver-devops");
         assert!(fund.datei.ends_with("quiver-devops.exe"));
+    }
+
+    /// Ein Ordner ohne Architektur (`<system>/`) gilt für jede Architektur
+    /// dieses Systems: der Client fragt mit `arch=x64` und muss ein Programm
+    /// mit `arch=x64` bekommen, nicht mit einem leeren Feld (Aufgabe 37) –
+    /// sonst läuft die Anfrage in ein 400.
+    #[test]
+    fn ein_programm_ohne_architektur_traegt_die_angefragte() {
+        let baum = baum("ohne-arch");
+        programm(&baum.join("linux/quiver-devops"), b"allgemein");
+        let ablage = Ablage::neu(vec![baum]);
+
+        for arch in System::ARCHITEKTUREN {
+            let gefragt = system("linux", arch);
+            let fund = ablage.finden(&gefragt, "quiver-devops").expect("gefunden");
+            assert_eq!(fund.programm.arch, arch, "die angefragte Architektur");
+            assert_eq!(fund.programm.system, "linux");
+            assert_eq!(
+                fund.programm.sha256,
+                hex::encode(Sha256::digest(b"allgemein"))
+            );
+        }
+        // Ein anderes System hat es nicht.
+        assert!(ablage
+            .finden(&system("macos", "arm64"), "quiver-devops")
+            .is_none());
+    }
+
+    /// Der Fingerabdruck der Ablage ändert sich mit Größe oder Zeit einer
+    /// Datei – ohne dass Prüfsummen gerechnet werden (Aufgabe 37: Prüfung alle
+    /// 30 Sekunden, dann Geräte anstoßen).
+    #[test]
+    fn der_fingerabdruck_bemerkt_eine_geaenderte_datei() {
+        let baum = baum("fingerabdruck");
+        let pfad = baum.join("linux/x64/quiver-devops");
+        programm(&pfad, b"alt");
+        let ablage = Ablage::neu(vec![baum.clone()]);
+        let vorher = ablage.fingerabdruck();
+        assert_eq!(vorher, ablage.fingerabdruck(), "gleich bleibt gleich");
+
+        // Andere Größe: der Fingerabdruck ändert sich.
+        programm(&pfad, b"viel laenger");
+        assert_ne!(vorher, ablage.fingerabdruck());
+    }
+
+    /// Beobachten: eine geänderte Datei stößt die Geräte an, eine unveränderte
+    /// nicht (Aufgabe 37).
+    #[tokio::test]
+    async fn eine_geaenderte_datei_stoesst_die_geraete_an() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let baum = baum("beobachten");
+        let pfad = baum.join("linux/x64/quiver-devops");
+        programm(&pfad, b"alt");
+        let ablage = Arc::new(Ablage::neu(vec![baum.clone()]));
+        let anzahl = Arc::new(AtomicUsize::new(0));
+        let zaehler = anzahl.clone();
+        let aufgabe = tokio::spawn(beobachten(
+            ablage.clone(),
+            std::time::Duration::from_millis(20),
+            move || {
+                zaehler.fetch_add(1, Ordering::SeqCst);
+            },
+        ));
+
+        // Ohne Änderung: nichts.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        assert_eq!(anzahl.load(Ordering::SeqCst), 0, "nichts geändert");
+
+        // Geändert: mindestens ein Anstoß.
+        programm(&pfad, b"neu und anders");
+        let frist = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while anzahl.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < frist,
+                "die Änderung wurde nicht gemeldet"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        aufgabe.abort();
     }
 
     #[test]

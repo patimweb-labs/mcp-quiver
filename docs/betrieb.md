@@ -218,16 +218,17 @@ root only; **nothing** can be uploaded or changed through the web UI. What is
 available is shown by `GET /api/v1/admin/programme` (admin: the program per
 entry, the running version per device from the device's report).
 
-A changed file changes the revision of the desired state; devices fetch it on
-the next sync (event, at most five minutes later). An image **without** programs
+A changed file changes the revision of the desired state; the server notices it
+within 30 seconds and notifies the devices. An image **without** programs
 is valid: the log then says “keine Programme” at start-up and devices receive
-nothing (their configuration stays). Building with programs:
+nothing (their configuration stays). The version is set in the `Dockerfile`; to
+build with another one:
 
 ```bash
-docker build --build-arg QUIVER_TOOLS_VERSION=0.3.0 -t mcp-quiver-server .
+docker build --build-arg QUIVER_TOOLS_VERSION=0.1.0 -t mcp-quiver-server .
 ```
 
-Without that argument the build says clearly that no programs are in the image.
+With an empty value (`QUIVER_TOOLS_VERSION=`) it builds without programs and says so.
 
 ## Configuration
 

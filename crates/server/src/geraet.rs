@@ -230,26 +230,33 @@ pub(crate) async fn tools(
         ));
     };
 
-    // Drossel: ein Gerät lädt nicht beliebig oft. Sie zählt Zugriffe, nicht
-    // Fehler – die Grenze ist hoch genug für einen Abgleich.
-    let jetzt = zustand.uhr.jetzt();
-    if let Some(sekunden) = zustand.drossel.treffer(&format!("programme:{id}"), jetzt) {
-        return Err(FehlerAntwort::neu(
-            StatusCode::TOO_MANY_REQUESTS,
-            format!("zu viele Abrufe; bitte {sekunden} Sekunden warten"),
-        ));
-    }
-
     // Nur, was in diesem Soll steht: Entzug wirkt sofort, ein fremdes Gerät
     // bekommt nichts, und ein nicht zugewiesenes Programm ist ein 403.
+    // Verglichen wird der **Name** aus dem Befehl, nicht der Befehl selbst:
+    // ein Altbestand mit festem Pfad bekommt sein Programm genauso.
     let soll = soll_fuer_system(&zustand, &id, Some(system.clone())).await?;
     let zugewiesen = soll.eintraege.iter().any(|eintrag| {
-        matches!(&eintrag.eintrag.laufzeit, Laufzeit::Stdio { befehl, .. } if befehl.trim() == name)
+        matches!(&eintrag.eintrag.laufzeit, Laufzeit::Stdio { befehl, .. }
+            if quiver_domain::verteiltes_programm(befehl).as_deref() == Some(name.as_str()))
     });
     if !zugewiesen {
         tracing::info!(geraet = %id, programm = %name, "nicht zugewiesen – nicht ausgeliefert");
         return Err(FehlerAntwort::verboten(
             "dieses Programm gehört nicht zum Soll dieses Geräts",
+        ));
+    }
+    // Drossel je Gerät, Programm und Stunde: mehrmals ab- und anmelden muss
+    // gehen, endlos laden nicht. Erst nach der Zuweisung gezählt – so füllen
+    // erfundene Namen die Karte nicht.
+    let jetzt = zustand.uhr.jetzt();
+    let stunde = jetzt.unix_timestamp() / 3600;
+    if let Some(sekunden) = zustand
+        .drossel
+        .treffer(&format!("programme:{id}:{name}:{stunde}"), jetzt)
+    {
+        return Err(FehlerAntwort::neu(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("zu viele Abrufe; bitte {sekunden} Sekunden warten"),
         ));
     }
     let Some(programm) = soll.programm(&name) else {

@@ -1995,6 +1995,28 @@ async fn ein_fremdes_geraet_bekommt_kein_programm() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Die Drossel zählt je Programm: erfundene Namen verbrauchen nichts, und
+/// wiederholtes Laden ist möglich, aber nicht endlos.
+#[tokio::test]
+async fn die_drossel_zaehlt_je_zugewiesenem_programm() {
+    let p = Pruefung::neu().await;
+    p.programm_ablegen("quiver-devops", "linux", "x64", b"inhalt");
+    let geraet = p.aufbau_verteilt("quiver-devops").await;
+    let abruf = |name: &str| {
+        let pfad = format!("/geraet/tools/{name}?system=linux&arch=x64");
+        let token = geraet.token.clone();
+        let p = &p;
+        async move { p.roh_bytes(&pfad, Some(&token), None).await.0 }
+    };
+    for _ in 0..35 {
+        assert_eq!(abruf("quiver-nix").await, StatusCode::FORBIDDEN);
+    }
+    for _ in 0..30 {
+        assert_eq!(abruf("quiver-devops").await, StatusCode::OK);
+    }
+    assert_eq!(abruf("quiver-devops").await, StatusCode::TOO_MANY_REQUESTS);
+}
+
 /// Die Verwaltung sieht, welche Programme der Server bereithält (Aufgabe 37).
 #[tokio::test]
 async fn die_verwaltung_sieht_die_programme() {

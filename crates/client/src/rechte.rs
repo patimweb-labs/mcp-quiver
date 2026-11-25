@@ -29,6 +29,9 @@ use std::path::{Path, PathBuf};
 pub const ORDNER: u32 = 0o700;
 /// Rechte der Dateien darin.
 pub const DATEI: u32 = 0o600;
+/// Rechte der Programme in der Ablage (`tools/`): nur der Eigentümer, und
+/// **ausführbar** – sonst startet nach einem Neustart kein Werkzeug mehr.
+pub const PROGRAMM: u32 = 0o700;
 /// So alte Zwischendateien (`*.neu`) dürfen beim Start noch liegen bleiben.
 pub const REST_ALTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
@@ -170,6 +173,14 @@ pub fn profil_pruefen(ordner: &Path) -> std::io::Result<()> {
         if meta.is_dir() {
             setze_rechte(&pfad, ORDNER);
             reste_entfernen(&pfad, jetzt);
+            // Die Ablage der Programme (Aufgabe 37) ist die Ausnahme: ihre
+            // Dateien sind **ausführbar** und liegen tiefer als eine Ebene
+            // (`tools/<name>/<sha256>/<programm>`). Sie werden eigens
+            // nachgezogen, damit ein Werkzeug nach einem Neustart läuft.
+            if pfad.file_name().is_some_and(|name| name == "tools") {
+                programme_pruefen(&pfad, 0);
+                continue;
+            }
             let Ok(innen) = std::fs::read_dir(&pfad) else {
                 continue;
             };
@@ -181,6 +192,37 @@ pub fn profil_pruefen(ordner: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Die Ablage der Programme nachziehen: Ordner 0700, Programme 0700
+/// (ausführbar). Verweise werden nicht verfolgt, und tief genug für
+/// `tools/<name>/<sha256>/<programm>` – aber nicht beliebig tief.
+fn programme_pruefen(ordner: &Path, tiefe: usize) {
+    if tiefe > 8 {
+        return;
+    }
+    let Ok(eintraege) = std::fs::read_dir(ordner) else {
+        return;
+    };
+    for eintrag in eintraege.flatten() {
+        let pfad = eintrag.path();
+        let Ok(meta) = std::fs::symlink_metadata(&pfad) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            tracing::warn!(
+                "{} ist ein Symlink; in der Ablage der Programme gilt er nicht",
+                pfad.display()
+            );
+            continue;
+        }
+        if meta.is_dir() {
+            setze_rechte(&pfad, ORDNER);
+            programme_pruefen(&pfad, tiefe + 1);
+        } else if meta.is_file() {
+            setze_rechte(&pfad, PROGRAMM);
+        }
+    }
 }
 
 /// Liegen gebliebene Zwischendateien (`*.neu`) entfernen, wenn sie älter als
@@ -382,6 +424,58 @@ mod tests {
         let b = zwischenpfad(&profil.join("zustand.json"));
         assert_ne!(a, b, "der Zufall macht den Namen eindeutig");
         assert!(a.to_string_lossy().ends_with(".neu"));
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    /// Nach einem Neustart sind die Ordner der Ablage 0700 und die Programme
+    /// **ausführbar** – sonst startet kein Werkzeug mehr (Aufgabe 37).
+    #[cfg(unix)]
+    #[test]
+    fn die_ablage_der_programme_bleibt_nach_dem_start_benutzbar() {
+        use std::os::unix::fs::PermissionsExt;
+        let ordner = ordner();
+        let profil = ordner.join("profil");
+        let programm = profil
+            .join("tools")
+            .join("quiver-devops")
+            .join("a".repeat(64))
+            .join("quiver-devops");
+        std::fs::create_dir_all(programm.parent().expect("Ordner")).expect("Ordner");
+        std::fs::write(&programm, b"#!/bin/sh\n").expect("Programm");
+        // Was eine alte Fassung (oder ein anderer Weg) hinterlassen hat:
+        // Ordner offen, Programm ohne Ausführungsrecht.
+        for pfad in [
+            profil.join("tools"),
+            profil.join("tools/quiver-devops"),
+            programm.parent().expect("Ordner").to_path_buf(),
+        ] {
+            std::fs::set_permissions(&pfad, std::fs::Permissions::from_mode(0o755))
+                .expect("Rechte");
+        }
+        std::fs::set_permissions(&programm, std::fs::Permissions::from_mode(0o644))
+            .expect("Rechte");
+
+        profil_pruefen(&profil).expect("Rechte");
+
+        let modus =
+            |pfad: &Path| std::fs::metadata(pfad).expect("Datei").permissions().mode() & 0o777;
+        assert_eq!(
+            modus(&profil.join("tools")),
+            ORDNER,
+            "die Wurzel der Ablage"
+        );
+        assert_eq!(
+            modus(&profil.join("tools/quiver-devops")),
+            ORDNER,
+            "der Ordner eines Programms"
+        );
+        assert_eq!(modus(&programm), PROGRAMM, "das Programm bleibt ausführbar");
+        // Und die allgemeine Regel gilt weiter: der Zustand ist 0600.
+        let zustand = profil.join("zustand.json");
+        std::fs::write(&zustand, b"{}").expect("Datei");
+        std::fs::set_permissions(&zustand, std::fs::Permissions::from_mode(0o644)).expect("Rechte");
+        profil_pruefen(&profil).expect("Rechte");
+        assert_eq!(modus(&zustand), DATEI);
         let _ = std::fs::remove_dir_all(&ordner);
     }
 

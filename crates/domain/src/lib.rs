@@ -420,8 +420,9 @@ impl Programm {
 ///
 /// Verteilt werden nur die eigenen Programme (`quiver-*`), und nur als
 /// reiner Name: `npx`, `uvx`, `docker` und Pfade zu eigenen Programmen
-/// laufen unverändert auf dem Gerät.
-///
+/// laufen unverändert auf dem Gerät. Leerzeichen am Rand sind **kein**
+/// Programmname: der Name wird Teil eines Ordners, deshalb gilt er nur, wie er
+/// dasteht.
 pub fn ist_verteilt(name: &str) -> bool {
     name.len() > "quiver-".len()
         && !name.contains('/')
@@ -431,6 +432,33 @@ pub fn ist_verteilt(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// Der Name eines verteilten Programms aus einem Befehl (Aufgabe 37).
+///
+/// `Some(name)` heißt: der Eintrag erwartet ein Programm, das der Server
+/// verteilt. Das ist ein bloßer Name (`quiver-devops`) oder der Dateiname
+/// eines Pfades (`/pfad/auf/anderem/rechner/quiver-devops`,
+/// `C:\…\quiver-devops.exe`) – ein Altbestand mit festem Pfad heilt sich damit.
+/// `None` heißt: ein fremdes Programm (`npx`, `uvx`, `docker`, ein Pfad zu
+/// einem eigenen Programm), das auf dem Gerät läuft, wie es dasteht.
+///
+/// Server und Client benutzen **diese** Funktion: was hier `Some` ist, wird
+/// verteilt und nach dem Namen nachgeschlagen – nie nach dem Pfad.
+pub fn verteiltes_programm(befehl: &str) -> Option<String> {
+    let befehl = befehl.trim();
+    if befehl.is_empty() {
+        return None;
+    }
+    let dateiname = befehl.rsplit(['/', '\\']).next().unwrap_or(befehl).trim();
+    // `.exe` fällt weg (Windows) – der Vergleich ist unabhängig von der
+    // Schreibweise, die Länge bleibt dabei gleich.
+    let ohne_exe = if dateiname.to_ascii_lowercase().ends_with(".exe") {
+        &dateiname[..dateiname.len() - 4]
+    } else {
+        dateiname
+    };
+    ist_verteilt(ohne_exe).then(|| ohne_exe.to_string())
 }
 
 /// Was auf einem Gerät laufen soll: Eintrag + vom Server gefüllte Werte.
