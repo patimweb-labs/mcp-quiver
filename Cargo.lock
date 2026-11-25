@@ -4787,7 +4787,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-bibliothek"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "quiver-domain",
  "serde",
@@ -4797,7 +4797,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4829,7 +4829,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "serde",
@@ -4840,7 +4840,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-fenster"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -4863,7 +4863,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-oberflaeche"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "egui",
  "egui_extras",
@@ -4874,7 +4874,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "quiver-domain",
  "serde",
@@ -4883,7 +4883,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
