@@ -386,11 +386,13 @@ impl Ablage {
 
     /// Alte Fassungen eines Programms löschen – nach dem ersten erfolgreichen
     /// Start (Aufgabe 37).
-    pub fn alte_fassungen(&self, name: &str, behalten: &str) {
+    /// `false` heißt: eine alte Fassung ließ sich (noch) nicht löschen.
+    pub fn alte_fassungen(&self, name: &str, behalten: &str) -> bool {
         let ordner = self.ordner(name);
         let Ok(eintraege) = std::fs::read_dir(&ordner) else {
-            return;
+            return true;
         };
+        let mut alles = true;
         for eintrag in eintraege.flatten() {
             let pfad = eintrag.path();
             if !eintrag.file_type().map(|art| art.is_dir()).unwrap_or(false) {
@@ -401,8 +403,11 @@ impl Ablage {
             }
             if std::fs::remove_dir_all(&pfad).is_ok() {
                 tracing::info!("alte Fassung von {name} gelöscht");
+            } else {
+                alles = false;
             }
         }
+        alles
     }
 
     /// Alle Programme löschen, die nicht mehr im Soll stehen (Aufgabe 37).

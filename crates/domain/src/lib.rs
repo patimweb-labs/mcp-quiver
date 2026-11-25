@@ -521,6 +521,24 @@ impl Soll {
         self
     }
 
+    /// Fingerabdruck eines Eintrags **samt seinem Programm** (Aufgabe 37): der
+    /// Eintrag startet auch dann neu, wenn sich nur das Programm ändert, neu
+    /// hinzukommt oder wegfällt. Ohne verteiltes Programm ist es der
+    /// Fingerabdruck des Eintrags.
+    pub fn fingerabdruck(&self, eintrag: &SollEintrag) -> String {
+        let eigener = eintrag.fingerabdruck();
+        let programm = match &eintrag.eintrag.laufzeit {
+            Laufzeit::Stdio { befehl, .. } => {
+                verteiltes_programm(befehl).and_then(|name| self.programm(&name))
+            }
+            _ => None,
+        };
+        match programm {
+            Some(programm) => format!("{eigener}:{}", programm.sha256),
+            None => eigener,
+        }
+    }
+
     /// Das Programm zu einem Programmnamen, falls der Server es hat.
     pub fn programm(&self, name: &str) -> Option<&Programm> {
         self.programme.iter().find(|programm| programm.name == name)
@@ -751,7 +769,7 @@ pub fn abgleichen(soll: &Soll, ist: &BTreeMap<EintragId, String>) -> Vec<Aktion>
     for e in &soll.eintraege {
         match ist.get(&e.eintrag.id) {
             None => starten.push(Aktion::Starten(e.eintrag.id.clone())),
-            Some(fa) if *fa != e.fingerabdruck() => {
+            Some(fa) if *fa != soll.fingerabdruck(e) => {
                 neu.push(Aktion::Neustarten(e.eintrag.id.clone()))
             }
             Some(_) => {}
