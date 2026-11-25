@@ -115,11 +115,23 @@ function New-Symbol {
 $symbol = Join-Path $dist 'quiver.ico'
 New-Symbol -Ziel $symbol
 
+# ---------------------------------------------------------------- Werkzeuge
+# Die Programme aus quiver-tools: `<Installation>\tools` liegt neben
+# `quiver.exe` — dort sucht der Client sie (Aufgabe 35).
+$werkzeuge = Join-Path $dist 'tools'
+if (-not (Test-Path $werkzeuge)) {
+    throw "$werkzeuge fehlt — erst verteilung\tools\bauen.ps1 laufen lassen."
+}
+if (@(Get-ChildItem $werkzeuge -File).Count -eq 0) {
+    throw "$werkzeuge ist leer — erst verteilung\tools\bauen.ps1 laufen lassen."
+}
+
 # ---------------------------------------------------------------- Portables ZIP
 $ordner = Join-Path $dist $name
 if (Test-Path $ordner) { Remove-Item -Recurse -Force $ordner }
 New-Item -ItemType Directory -Force $ordner | Out-Null
 Copy-Item $programm, (Join-Path $wurzel 'LICENSE'), (Join-Path $wurzel 'README.md') $ordner
+Copy-Item -Recurse $werkzeuge (Join-Path $ordner 'tools')
 $zip = Join-Path $dist "${name}.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Compress-Archive -Path (Join-Path $ordner '*') -DestinationPath $zip
@@ -139,6 +151,10 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 
 $msi = Join-Path $dist "${name}.msi"
 if (Test-Path $msi) { Remove-Item -Force $msi }
+# Welche Werkzeuge im Paket liegen, weiß `quiver.wxs` nicht — die Liste
+# entsteht beim Bauen in einem eigenen Fragment (Aufgabe 35).
+$werkzeugliste = Join-Path $dist 'werkzeuge.wxs'
+& (Join-Path $wurzel 'verteilung\tools\wix-werkzeuge.ps1') -Werkzeuge $werkzeuge -Ziel $werkzeugliste
 wix build `
     -arch x64 `
     -d "Version=$version" `
@@ -146,7 +162,8 @@ wix build `
     -d "Wurzel=$wurzel" `
     -d "Symbol=$symbol" `
     -o $msi `
-    (Join-Path $wurzel 'verteilung\windows\quiver.wxs')
+    (Join-Path $wurzel 'verteilung\windows\quiver.wxs') `
+    $werkzeugliste
 if ($LASTEXITCODE -ne 0) { throw 'wix build fehlgeschlagen.' }
 
 Write-Host '==> fertig'

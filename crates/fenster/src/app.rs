@@ -89,6 +89,10 @@ pub enum Aktion {
     AgentEntfernen { id: String },
     /// Die Anmeldung eines Eintrags im Browser starten (nie ein Agent).
     EintragAnmelden { eintrag: EintragId },
+    /// Die Anmeldung eines Eintrags **erneut prüfen** („Erneut prüfen“,
+    /// Aufgabe 35, §5): derselbe Status-Befehl wie beim Nachsehen im
+    /// Hintergrund, ohne Browser und ohne Ablauf.
+    AnmeldungPruefen { eintrag: EintragId },
     /// Die Anmeldung eines Eintrags beenden (nach der Rückfrage im Dialog).
     EintragAbmelden { eintrag: EintragId },
     /// Die Einrichtung eines Eintrags im Browser starten (Aufgabe 11): das

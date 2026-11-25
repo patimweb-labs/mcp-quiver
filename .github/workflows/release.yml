@@ -26,6 +26,12 @@
 #   verteilung/linux/paket.sh      .tar.gz, .deb, .rpm, AppImage
 #   verteilung/windows/paket.ps1   .msi (je Benutzer) + portables .zip
 #
+# In jedem Paket stecken die Werkzeuge aus `patimweb-labs/quiver-tools`
+# (Aufgabe 35) — gebaut auf demselben Läufer aus dem Commit, der in
+# `verteilung/tools/stand.txt` festgelegt ist. Ein Eintrag der Bibliothek nennt
+# dann nur noch den Programmnamen, und der Client findet ihn neben seinem
+# eigenen Programm.
+#
 # **Unsigniert ist der Normalfall** (kein Apple-Konto, kein
 # Windows-Zertifikat): macOS wird ad hoc signiert, Gatekeeper und SmartScreen
 # fragen beim ersten Start. Sind die macOS-Geheimnisse gesetzt, wird signiert
@@ -199,6 +205,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends file libfuse2
 
+      # Die Werkzeuge aus quiver-tools (Aufgabe 35): fester Commit aus
+      # `verteilung/tools/stand.txt`, gestrippt, auf demselben Läufer gebaut
+      # wie der Client. `herkunft.sh` nennt danach Version und Commit im
+      # Release-Text.
+      - name: Werkzeuge bauen (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: verteilung/tools/bauen.sh
+
+      - name: Werkzeuge bauen (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./verteilung/tools/bauen.ps1
+
       # Zwei Schritte statt einem: so wird auf Pull Requests **kein** Secret
       # ausgewertet, auch nicht als leerer Wert.
       - name: Paket bauen (macOS, mit Geheimnissen)
@@ -242,6 +261,8 @@ jobs:
             dist/*.rpm
             dist/*.AppImage
             dist/*.tar.gz
+            # Was in den Paketen steckt: Version, Commit, Größe der Werkzeuge.
+            dist/TOOLS.txt
 
   # Der einzige Job mit Schreibrechten: Prüfsummen, Herkunftsnachweis, Release.
   veroeffentlichen:
@@ -282,6 +303,17 @@ jobs:
           set -euo pipefail
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+          # Die Größe jeder Datei für den Release-Text (Aufgabe 35: „Paket-
+          # größe nennen“). Bewusst **außerhalb** von `release/`: sonst läge
+          # die Tabelle als weiteres Release-Anhängsel ohne Prüfsumme daneben.
+          {
+            echo "| Datei | Größe |"
+            echo "| --- | --- |"
+            for datei in *; do
+              printf "| %s | %s |\n" "$datei" "$(du -h --apparent-size "$datei" | cut -f1)"
+            done
+          } > ../groessen.md
+          cat ../groessen.md
 
       # Herkunft: bescheinigt, dass diese Dateien in diesem Lauf aus diesem
       # Commit entstanden sind. Prüfen mit
@@ -307,6 +339,24 @@ jobs:
           # oder unsigniert.
           macos=$(cat aus/paket-macos-arm64/SIGNIERT.txt 2>/dev/null || echo unbekannt)
 
+          # Die Werkzeuge im Paket (Aufgabe 35). Derselbe Stand auf allen
+          # Plattformen, deshalb genügt ein Bericht; `verteilung/tools/bauen.sh`
+          # schreibt ihn.
+          bericht=$(find aus -name TOOLS.txt -print -quit)
+          if [ -n "$bericht" ]; then
+            tools_version=$(sed -n 's/^version=//p' "$bericht" | head -1)
+            tools_commit=$(sed -n 's/^commit=//p' "$bericht" | head -1)
+            tools_anzahl=$(sed -n 's/^anzahl=//p' "$bericht" | head -1)
+            tools_kib=$(sed -n 's/^groesse_kib=//p' "$bericht" | head -1)
+            tools_gestrippt=$(sed -n 's/^gestrippt=//p' "$bericht" | head -1)
+          fi
+          if [ "${tools_gestrippt:-nein}" = ja ]; then
+            tools_strip=", gestrippt"
+          else
+            tools_strip=""
+          fi
+          tools_mib=$(( ${tools_kib:-0} / 1024 ))
+
           # Der Text steht ohne Ausdrücke in der Datei, damit nichts doppelt
           # ausgewertet wird; die Platzhalter ersetzt `sed` danach.
           cat > release-text.md <<'TEXT'
@@ -323,22 +373,39 @@ jobs:
           | Linux x86_64 | `.deb`, `.rpm`, AppImage, `.tar.gz` |
           | Linux aarch64 | `.deb`, `.rpm`, AppImage, `.tar.gz` |
 
+          ### Werkzeuge im Paket
+
+          Mitgeliefert sind die Programme aus
+          [`patimweb-labs/quiver-tools`](https://github.com/patimweb-labs/quiver-tools)
+          **@TOOLS_VERSION@** (Commit `@TOOLS_COMMIT@`)@TOOLS_STRIP@,
+          @TOOLS_ANZAHL@ Stück, zusammen etwa @TOOLS_MIB@ MiB je Paket.
+          Ein Eintrag der Bibliothek nennt damit nur noch den Programmnamen
+          (`quiver-devops`); der Client sucht ihn neben seinem eigenen Programm.
+
           ### Signiert
 
           macOS: **@MACOS@**. Windows: **unsigniert**.
           TEXT
 
-          if [ "$macos" = unsigniert ] || [ "$macos" = unbekannt ]; then
-            cat >> release-text.md <<'TEXT'
+          # Ab hier ein einziger Anhang: viele kleine `cat >>` auf dieselbe
+          # Datei wären unübersichtlich.
+          {
+            if [ "$macos" = unsigniert ] || [ "$macos" = unbekannt ]; then
+              cat <<'TEXT'
 
           Unsigniert heißt: Gatekeeper und SmartScreen fragen beim ersten Start
           nach einer Bestätigung. macOS: Rechtsklick → *Öffnen* oder
           *Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“*.
           Windows: *Weitere Informationen → Trotzdem ausführen*.
           TEXT
-          fi
+            fi
 
-          cat >> release-text.md <<'TEXT'
+            echo
+            echo "### Größen"
+            echo
+            cat groessen.md
+
+            cat <<'TEXT'
 
           ### Prüfen
 
@@ -347,11 +414,17 @@ jobs:
           gh attestation verify <datei> --repo @REPOSITORY@
           ```
           TEXT
+          } >> release-text.md
 
           sed -i \
             -e "s|@VERSION@|$VERSION|g" \
             -e "s|@MACOS@|$macos|g" \
             -e "s|@REPOSITORY@|$REPOSITORY|g" \
+            -e "s|@TOOLS_VERSION@|${tools_version:-unbekannt}|g" \
+            -e "s|@TOOLS_COMMIT@|${tools_commit:-unbekannt}|g" \
+            -e "s|@TOOLS_ANZAHL@|${tools_anzahl:-0}|g" \
+            -e "s|@TOOLS_MIB@|$tools_mib|g" \
+            -e "s|@TOOLS_STRIP@|$tools_strip|g" \
             release-text.md
           cat release-text.md
 

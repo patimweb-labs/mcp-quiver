@@ -211,6 +211,14 @@ call and can build locally: `docker compose up -d --build`.
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, run it |
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | unpack, run `bin/quiver` |
 
+Every package carries the tools from
+[quiver-tools](https://github.com/patimweb-labs/quiver-tools) — the same ones on
+all three systems. An entry in the library therefore normally names just the
+program (`quiver-devops`), and the client finds it next to its own program; a
+fixed path still works but only on machines with exactly that path. Which tools
+are included, and from which commit, is named in the release notes and in
+[docs/client.md](docs/client.md#where-the-programs-come-from).
+
 The packages are **unsigned** unless the maintainer signs them: Gatekeeper and
 SmartScreen ask once on the first start. What that means and how to get past it:
 [docs/release.md](docs/release.md#what-unsigned-means). Every release also

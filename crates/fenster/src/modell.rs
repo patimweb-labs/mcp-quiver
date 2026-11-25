@@ -469,6 +469,12 @@ impl Sicht {
         }
     }
 
+    /// Die Zugangsliste eines Eintrags aufklappen, ohne sie zuzuklappen –
+    /// „… hinzufügen“ führt zur Liste (Aufgabe 35, §5).
+    pub fn zugaenge_oeffnen(&mut self, id: &EintragId) {
+        self.zugaenge_offen.insert(id.clone());
+    }
+
     /// Den Zugangs-Dialog öffnen: `name: None` legt einen neuen an, `Some`
     /// bearbeitet einen vorhandenen (der Name bleibt dann fest).
     pub fn zugang_dialog(&mut self, eintrag: &EintragSicht, name: Option<&str>) {
@@ -599,6 +605,7 @@ mod tests {
             protokoll_fuer_agenten: false,
             tresor_fehler: None,
             profil_hinweis: None,
+            werkzeuge_fehlen: false,
         }
     }
 

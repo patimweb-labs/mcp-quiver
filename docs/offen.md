@@ -164,3 +164,43 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       Metainfo-Daten werden dabei nicht geprüft.
 - [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
 - [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.
+
+## Werkzeuge im Paket (Aufgabe 35)
+- [ ] Die Werkzeuge werden bei jedem Lauf aus dem Netz geholt und neu übersetzt
+      (12 Kisten je Plattform). `rust-cache` hilft nur, solange der Zielordner
+      derselbe bleibt; ein eigener Zwischenspeicher für den Stand aus
+      `verteilung/tools/stand.txt` fehlt. Ein Release dauert dadurch spürbar
+      länger, und ein GitHub-Ausfall beim Klonen hält den Bau an.
+- [ ] Das Anheben des Standes ist Handarbeit (eine Zeile in
+      `verteilung/tools/stand.txt`); es gibt weder eine Prüfung „gibt es diesen
+      Commit?“, die vor dem Release läuft, noch einen Hinweis, wenn eine
+      neuere quiver-tools-Version heraußen ist.
+- [ ] Fehlt `strip` auf dem Läufer, stehen die Werkzeuge ungestrippt im Paket;
+      das steht dann im Bericht (`dist/TOOLS.txt`), aber niemand bricht ab.
+      Unter Windows ist `strip` nicht garantiert vorhanden.
+- [ ] Die Windows-Seite (`.zip` mit `tools\`, MSI-Fragment `werkzeuge.wxs`) ist
+      hier nicht baubar (macOS) — nur nach Vorlage geschrieben. Das erzeugte
+      Fragment hat keinen Prüflauf gegen `wix build` gesehen.
+- [ ] Die Werkzeuge werden für jede Architektur auf dem jeweiligen Läufer
+      gebaut; ein aarch64-Werkzeugsatz lässt sich lokal nicht gegenprüfen.
+- [ ] Ein Eintrag mit festem Pfad wird nicht auf „liegt das Programm hier?“
+      geprüft, sondern beim Start; die Verwaltung warnt nur. Ob das Fenster den
+      Zustand nach dem Speichern sofort zeigt, hängt am nächsten Abgleich.
+
+## Anmeldung eines Tools (Aufgabe 35, §5)
+- [ ] Der Weg auf einem echten Windows-Gerät (Konsolenfenster, Standardbrowser,
+      Loopback hinter der Firewall, Tresor unter `%APPDATA%`) ist hier nicht
+      nachstellbar (macOS). Geprüft ist, was prüfbar ist: `CREATE_NO_WINDOW` für
+      jeden Kindprozess, Binden nur an `127.0.0.1`, und die Suche nach
+      `tools\*.exe`. Ein Lauf auf Windows steht aus.
+- [ ] **Exit 3 („läuft bald ab“) kennt noch kein Werkzeug.** Der Client wertet
+      ihn aus und die Karte zeigt den Zustand; `quiver-m365` und `quiver-zep`
+      melden ihn bisher nicht. Bis dahin bleibt es bei „angemeldet“ und einem
+      Fehlschlag mitten in der Arbeit.
+- [ ] Die 10-Sekunden-Frist der Prüfung gilt auch auf einem sehr langsamen Gerät
+      (Netz im Status-Befehl). Wird sie zu knapp, ist sie eine Zahl in
+      `crates/client/src/anmeldung.rs` (`STATUS_FRIST`), kein Schalter.
+- [ ] Der Tresor wartet fair, aber weiter **innerhalb** eines Aufrufs: gibt ein
+      fremder Prozess die Sperre 10 s lang nicht frei, meldet der Client
+      „gerade gesperrt“. Ein Wiederholen von selbst gibt es nicht — der Benutzer
+      stößt es an.

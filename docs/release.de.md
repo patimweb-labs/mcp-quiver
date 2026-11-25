@@ -19,6 +19,9 @@ löst ihn direkt aus.
 | `verteilung/linux/paket.sh` | `.tar.gz`, `.deb`, `.rpm`, AppImage |
 | `verteilung/windows/paket.ps1` | `.msi` (je Benutzer) und portables `.zip` |
 | `verteilung/version.sh` | die Version aus `Cargo.toml` |
+| `verteilung/tools/stand.txt` | der Commit der mitgelieferten Werkzeuge (nicht `main`) |
+| `verteilung/tools/bauen.sh`, `bauen.ps1` | die Werkzeuge aus quiver-tools bauen, gestrippt, nach `dist/tools` |
+| `verteilung/tools/einbauen.sh`, `macos-signieren.sh`, `wix-werkzeuge.ps1` | sie ins Paket legen und (macOS) einzeln signieren |
 
 ## Ein Release machen
 
@@ -195,6 +198,16 @@ Dateien kommen.
   `%LOCALAPPDATA%\Programs\mcp-quiver`, mit Startmenü-Verknüpfung, Symbol unter
   *Apps und Features* und Deinstallation ohne Administratorrechte; dazu das
   portable `.zip` mit `quiver.exe` neben `LICENSE` und `README.md`.
+* **Die Werkzeuge** stecken in jedem Paket (Aufgabe 35): die Programme aus
+  [`quiver-tools`](https://github.com/patimweb-labs/quiver-tools), gebaut auf
+  demselben Läufer aus dem Commit, der in `verteilung/tools/stand.txt` steht —
+  nicht aus `main`. Sie liegen dort, wo der Client sie sucht:
+  `quiver.app/Contents/Resources/tools`, `<Installation>\tools` und
+  `/usr/lib/mcp-quiver/tools` (im AppImage unter `usr/lib/…`). Unter macOS
+  werden sie **einzeln** signiert, bevor das Bündel drankommt: die Signatur des
+  Bündels versiegelt seinen Inhalt, späteres Signieren macht sie ungültig.
+  Welche Programme es sind, ihre Größe und der Commit stehen im Release-Text
+  (aus `dist/TOOLS.txt`); die Größe jeder Datei steht in der Tabelle *Größen*.
 * Autostart steckt in keinem Paket: den richtet der Client selbst ein
   (LaunchAgent, `HKCU\…\Run`, XDG-Autostart), wenn der Benutzer ihn einschaltet.
 
@@ -202,7 +215,10 @@ Dateien kommen.
 
 Die Skripte sind dieselben, die die CI aufruft:
 
+Zuerst die Werkzeuge, dann das Paket — dieselbe Reihenfolge wie in der CI:
+
 ```bash
+verteilung/tools/bauen.sh                     # dist/tools + dist/TOOLS.txt (aus dem Netz)
 verteilung/macos/paket.sh                     # macOS: dist/quiver.app, dist/*.dmg
 verteilung/linux/paket.sh                     # Linux: tar.gz, deb, rpm, AppImage
 pwsh -File verteilung/windows/paket.ps1       # Windows: msi + zip

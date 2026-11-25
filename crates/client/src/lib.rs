@@ -42,6 +42,7 @@ pub mod protokoll;
 pub mod rechte;
 mod server_anmeldung;
 mod sse;
+mod tools;
 mod tresor;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,8 +53,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use quiver_domain::{
-    EintragId, FehlendesFeld, Feld, Geraet, Mehrfach, Quelle, Soll, SollEintrag, Werte, Zugang,
-    MEHRFACH_UMGEBUNG,
+    EintragId, FehlendesFeld, Feld, Geraet, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag, Werte,
+    Zugang, MEHRFACH_UMGEBUNG,
 };
 use quiver_protocol::{AnmeldeGrund, Anmeldearten, EintragZustand, PRAEFIX};
 use rmcp::model::Tool;
@@ -67,6 +68,7 @@ pub use einstellungen::{Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung}
 use hilfen::Abbruch;
 pub use protokoll::{Aufruf, LogFilter, Zeile};
 pub use server_anmeldung::{Browser, SystemBrowser};
+pub use tools::{Fund, Herkunft, NichtGefunden, Suche, ORDNER_SCHALTER};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
@@ -197,6 +199,13 @@ pub struct EintragSicht {
     /// Dann steht hier der Grund im Klartext – das Fenster zeigt ihn.
     #[serde(default)]
     pub unzulaessig: Option<String>,
+    /// Das Programm dieses Eintrags gibt es auf diesem Gerät nicht
+    /// (Aufgabe 35, §5): der Name aus der Bibliothek liegt weder im Paket
+    /// noch im `PATH`. Dann steht hier der Programmname, die Karte sagt
+    /// „Dieses Tool ist auf diesem Gerät nicht installiert.“ und bietet weder
+    /// Anmeldung noch Einrichtung an – es gäbe nichts zu starten.
+    #[serde(default)]
+    pub nicht_installiert: Option<String>,
 }
 
 /// Ein Zugang eines Eintrags mit `mehrfach`, wie ihn das Fenster zeigt:
@@ -285,6 +294,11 @@ pub struct Modell {
     /// `.kaputt-<zeit>` daneben (Paket 3). Der Client läuft weiter.
     #[serde(default)]
     pub profil_hinweis: Option<String>,
+    /// Fehlt der Ordner mit den mitgelieferten Werkzeugen neben dem Programm
+    /// (Aufgabe 35, §6)? Bei einem entpackten ZIP heißt das: der Ordner
+    /// `tools` wurde nicht mit entpackt.
+    #[serde(default)]
+    pub werkzeuge_fehlen: bool,
 }
 
 /// Der Stand eines Eintrags, ohne Verbindung (der Teil, der ins Modell geht).
@@ -489,6 +503,7 @@ impl Stand {
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
             tresor_fehler: self.tresor_fehler.clone(),
             profil_hinweis: self.profil_hinweis.clone(),
+            werkzeuge_fehlen: werkzeuge_fehlen(&self.soll),
         }
     }
 
@@ -579,6 +594,12 @@ fn eintraege_sicht(
             // Eine Kennung, die nicht als Präfix taugt, startet nichts – und
             // das Fenster sagt, warum (Paket 3).
             let unzulaessig = quiver_domain::kennung_fehler(id.als_str()).map(str::to_string);
+            // Fehlt das Programm, sagt die Karte das einmal und bietet keine
+            // Anmeldung an (Aufgabe 35, §5). Ein abgeschalteter Eintrag
+            // braucht die Frage nicht: er startet ohnehin nichts.
+            let nicht_installiert = (!aus)
+                .then(|| tools::fehlt(&eintrag.eintrag.laufzeit))
+                .flatten();
             EintragSicht {
                 id: id.clone(),
                 titel: eintrag.eintrag.titel.clone(),
@@ -635,9 +656,29 @@ fn eintraege_sicht(
                 }),
                 am_geraet_aus: aus,
                 unzulaessig,
+                nicht_installiert,
             }
         })
         .collect()
+}
+
+/// Fehlt der Ordner mit den mitgelieferten Werkzeugen, obwohl ein Eintrag
+/// eines seiner Programme über den bloßen Namen erwartet (Aufgabe 35, §6)?
+fn werkzeuge_fehlen(soll: &Soll) -> bool {
+    !tools::ordner_da() && braucht_paket(soll)
+}
+
+/// Rechnet ein Eintrag mit dem Paket? Dann nennt er sein Programm über den
+/// bloßen Namen; ein Eintrag mit festem Pfad oder ein entfernter Eintrag kommt
+/// ohne den Ordner `tools` aus.
+fn braucht_paket(soll: &Soll) -> bool {
+    soll.eintraege.iter().any(|eintrag| {
+        let Laufzeit::Stdio { befehl, .. } = &eintrag.eintrag.laufzeit else {
+            return false;
+        };
+        let befehl = befehl.trim();
+        !befehl.is_empty() && !befehl.contains('/') && !befehl.contains('\\')
+    })
 }
 
 /// Die Zugangsliste eines Eintrags: Titel, Bezeichnung, Felder und die
@@ -1516,18 +1557,28 @@ pub(crate) fn zugang_geheim_schluessel(id: &EintragId, name: &str, feld: &str) -
 
 /// Den Anmeldezustand eines Eintrags prüfen und ablegen.
 ///
-/// `None`, wenn der Eintrag keine Anmeldung braucht (dann passiert nichts).
+/// `None`, wenn der Eintrag keine Anmeldung braucht (dann passiert nichts)
+/// oder wenn sein Programm auf diesem Gerät fehlt (Aufgabe 35, §5): dann gibt
+/// es nichts zu prüfen, und die Karte sagt das ohne Knopf.
+///
 /// Sonst das Ergebnis des `status`-Befehls: Exit 0 = angemeldet (erste Zeile
-/// von stdout ist das Konto), Exit 1 = abgemeldet, alles andere ein Fehler.
+/// von stdout ist das Konto), Exit 1 = abgemeldet, Exit 3 = läuft bald ab,
+/// alles andere ein Fehler. Während der Befehl läuft, steht der Zustand auf
+/// [`AnmeldeZustand::Pruefe`]; das Fenster zeigt dann ein Drehsymbol ohne
+/// Knopf.
 async fn status_pruefen(innen: &Arc<Innen>, id: &EintragId) -> Option<AnmeldeZustand> {
     let soll = innen.soll_eintrag(id)?;
     soll.eintrag.anmeldung.as_ref()?;
+    if tools::fehlt(&soll.eintrag.laufzeit).is_some() {
+        return None;
+    }
+    innen.anmeldung_setzen(id, AnmeldeZustand::Pruefe);
     let (lokal, geheim) = innen.werte(id);
     let zustand =
         match anmeldung::befehl_bauen(&soll, anmeldung::Anmeldebefehl::Status, &lokal, &geheim) {
             Ok(befehl) => {
                 let frist = anmeldung::Anmeldebefehl::Status.frist();
-                match anmeldung::laufen(id, &befehl, frist).await {
+                match anmeldung::laufen(id, &befehl, frist, &innen.protokoll).await {
                     Ok(ausgang) => anmeldung::zustand_aus(&ausgang),
                     Err(fehler) => AnmeldeZustand::Fehler {
                         text: format!("{fehler:#}"),
@@ -1576,6 +1627,8 @@ async fn anmeldung_lauf(innen: Arc<Innen>) {
                 .filter(|eintrag| {
                     eintrag.eintrag.anmeldung.is_some()
                         && !stand.am_geraet_aus.contains(&eintrag.eintrag.id)
+                        // Ohne Programm gibt es nichts zu prüfen (Aufgabe 35, §5).
+                        && tools::fehlt(&eintrag.eintrag.laufzeit).is_none()
                 })
                 .map(|eintrag| eintrag.eintrag.id.clone())
                 .collect()
@@ -1775,7 +1828,7 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
             _ = abbruch.warten() => return,
             ergebnis = tokio::time::timeout(
                 laufzeit::AUFBAU_TIMEOUT,
-                laufzeit::verbinden(id.als_str(), &laufzeit, &innen.protokoll),
+                laufzeit::verbinden(&id, &laufzeit, &innen.protokoll),
             ) => ergebnis,
         };
         let mut verbindung = match verbunden {
@@ -2554,6 +2607,26 @@ impl Kern {
         Ok(())
     }
 
+    /// Die Anmeldung eines Eintrags erneut prüfen („Erneut prüfen“ auf der
+    /// Karte, Aufgabe 35, §5).
+    ///
+    /// Das ist **nicht** das Anmelden: es wird nur der Status-Befehl erneut
+    /// ausgeführt, ohne Browser und ohne Ablauf. Der Knopf steht nach einer
+    /// fehlgeschlagenen Prüfung; steht danach „nicht angemeldet“, ist
+    /// „Anmelden“ der nächste Schritt, sonst läuft der Eintrag wieder.
+    pub async fn anmeldung_pruefen(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        let zustand = status_pruefen(&self.innen, eintrag).await;
+        if zustand.is_some_and(|zustand| {
+            matches!(
+                zustand,
+                AnmeldeZustand::Angemeldet { .. } | AnmeldeZustand::LaeuftAb { .. }
+            )
+        }) {
+            self.innen.neu_starten(eintrag).await;
+        }
+        Ok(())
+    }
+
     /// Die Einrichtung eines Eintrags im Fenster auslösen (Aufgabe 11).
     ///
     /// Der Befehl öffnet selbst die Seite im Browser und endet, wenn der User
@@ -2628,7 +2701,7 @@ impl Kern {
     ) -> anyhow::Result<anmeldung::Ausgang> {
         let (lokal, geheim) = self.innen.werte(eintrag);
         let befehl = einrichtung::befehl_bauen(soll, &lokal, &geheim)?;
-        einrichtung::laufen(eintrag, &befehl, Some(abbruch)).await
+        einrichtung::laufen(eintrag, &befehl, Some(abbruch), &self.innen.protokoll).await
     }
 
     /// Eine laufende Einrichtung abbrechen (Knopf „Abbrechen“). Der Prozess
@@ -2677,18 +2750,19 @@ impl Kern {
         })?;
         let (lokal, geheim) = self.innen.werte(eintrag);
         let befehl = anmeldung::befehl_bauen(&soll, art, &lokal, &geheim)?;
-        let ausgang = match anmeldung::laufen(eintrag, &befehl, art.frist()).await {
-            Ok(ausgang) => ausgang,
-            Err(fehler) => {
-                self.innen.anmeldung_setzen(
-                    eintrag,
-                    AnmeldeZustand::Fehler {
-                        text: format!("{fehler:#}"),
-                    },
-                );
-                return Err(fehler);
-            }
-        };
+        let ausgang =
+            match anmeldung::laufen(eintrag, &befehl, art.frist(), &self.innen.protokoll).await {
+                Ok(ausgang) => ausgang,
+                Err(fehler) => {
+                    self.innen.anmeldung_setzen(
+                        eintrag,
+                        AnmeldeZustand::Fehler {
+                            text: format!("{fehler:#}"),
+                        },
+                    );
+                    return Err(fehler);
+                }
+            };
         let text = match ausgang.code {
             Some(0) => return Ok(()),
             Some(code) => format!("Der Befehl „{}“ endet mit Code {code}", art.name()),

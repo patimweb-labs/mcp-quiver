@@ -461,3 +461,94 @@ async fn ohne_anmeldung_im_eintrag_gibt_es_keine_anmeldung() {
 
     p.kern.beenden().await;
 }
+
+/// „Erneut prüfen“ prüft nur: derselbe Status-Befehl, kein Browser, kein
+/// zweiter Start, solange niemand angemeldet ist (Aufgabe 35, §5).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn erneut_pruefen_fragt_nur_den_status() {
+    let p = Pruefung::neu().await;
+    p.put("/admin/eintraege/postfach", &eintrag(&p)).await;
+    p.put(
+        "/admin/saetze/basis",
+        &Satz {
+            id: SatzId::neu("basis"),
+            titel: "Basis".into(),
+            prioritaet: 0,
+            eintraege: vec![SatzEintrag {
+                eintrag: EintragId::neu("postfach"),
+                werte: Werte::from([
+                    ("ABLAGE".to_string(), p.ablage.to_string_lossy().to_string()),
+                    ("KONTO".to_string(), "test@beispiel.de".to_string()),
+                ]),
+            }],
+        },
+    )
+    .await;
+    p.put(
+        "/admin/gruppen/team",
+        &Gruppe {
+            id: GruppeId::neu("team"),
+            titel: "Team".into(),
+            saetze: vec![SatzId::neu("basis")],
+            entra: Vec::new(),
+        },
+    )
+    .await;
+    let code = p
+        .admin(
+            "POST",
+            "/admin/codes",
+            Some(json!({ "gruppen": ["team"], "minuten": 60 })),
+        )
+        .await;
+    let code = code["code"].as_str().expect("Code").to_string();
+    p.kern
+        .einbinden(&p.basis, &code, "Testrechner")
+        .await
+        .expect("Einbinden klappt");
+
+    let id = EintragId::neu("postfach");
+    assert_eq!(
+        p.warte_auf_anmeldung(&id, abgemeldet).await,
+        AnmeldeZustand::Abgemeldet
+    );
+    p.warte_auf_laeuft(&id).await;
+    let vorher = p.starts();
+
+    // Geprüft wird ohne Anmeldung: das Ergebnis bleibt „abgemeldet“, und der
+    // Eintrag wird nicht neu gestartet (es hat sich nichts geändert).
+    p.kern
+        .anmeldung_pruefen(&id)
+        .await
+        .expect("die Prüfung läuft durch");
+    assert_eq!(
+        p.kern
+            .modell()
+            .borrow()
+            .eintraege
+            .iter()
+            .find(|eintrag| eintrag.id == id)
+            .and_then(|eintrag| eintrag.anmeldung.clone()),
+        Some(AnmeldeZustand::Abgemeldet),
+        "die Prüfung endet mit einem Zustand, nicht mit einem Drehsymbol"
+    );
+    assert_eq!(
+        p.starts(),
+        vorher,
+        "die Prüfung startet den Eintrag nicht neu"
+    );
+
+    // Und angemeldet läuft der Eintrag danach wieder.
+    p.kern.anmelden(&id).await.expect("Anmeldung läuft durch");
+    assert_eq!(
+        p.warte_auf_anmeldung(&id, angemeldet).await,
+        AnmeldeZustand::Angemeldet {
+            konto: Some("test@beispiel.de".to_string())
+        }
+    );
+    p.kern
+        .anmeldung_pruefen(&id)
+        .await
+        .expect("die Prüfung läuft durch");
+    p.kern.beenden().await;
+}

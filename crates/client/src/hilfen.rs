@@ -1,13 +1,41 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Kleinkram: Abbruch, Token, Hashes.
+//! Kleinkram: Abbruch, Token, Hashes, Kindprozesse.
 
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
+
+/// Ein Kindprozess ohne eigenes Konsolenfenster (Windows).
+///
+/// Der Client ist ein Fensterprogramm. Startet es ein Konsolenprogramm wie
+/// `quiver-m365` oder ein anderes Werkzeug, legt Windows dafür ein schwarzes
+/// Fenster an — es blitzt beim Anmelden auf, und beim Start eines Werkzeugs
+/// bleibt es offen, bis das Werkzeug endet. `CREATE_NO_WINDOW` verhindert das:
+/// angemeldet wird im Browser, und ein Werkzeug ist ein Hintergrundprozess, kein
+/// zweites Programm mit eigener Konsole.
+///
+/// Auf allen anderen Systemen gibt es nichts zu tun. Das ist keine
+/// Sonderbehandlung einer Ansicht (AGENTS.md §2.10), sondern die eine Stelle,
+/// an der ein Prozess entsteht.
+pub fn ohne_fenster(kommando: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Kein Konsolenfenster für den Kindprozess (`CREATE_NO_WINDOW`).
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        kommando.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        // Nichts zu tun: es gibt kein Fenster, das stören könnte.
+        let _ = kommando;
+    }
+}
 
 /// Ein Abbruchsignal, das sich teilen und abwarten lässt.
 ///

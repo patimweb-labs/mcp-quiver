@@ -3,7 +3,7 @@
 // Speichern geht er zum Server. Die Laufzeit ist ein Summentyp – Stdio und
 // Remote schließen einander aus, auch in der Oberfläche.
 import { computed, ref, useId, watch } from "vue";
-import { Plus } from "lucide-vue-next";
+import { Plus, TriangleAlert } from "lucide-vue-next";
 import {
   WpButton,
   WpDialog,
@@ -36,6 +36,7 @@ import {
   neuer_eintrag,
   neues_feld,
   neues_zugang_feld,
+  pfad_warnung,
   quelle_text,
   umgebung_als_text,
   umgebung_aus_text,
@@ -140,6 +141,9 @@ const befehl = computed(() => {
   const laufzeit = entwurf.value.laufzeit;
   return laufzeit.art === "stdio" ? laufzeit.befehl : "";
 });
+
+/** Die Warnung zum Befehl, wenn er ein fester Pfad ist (Aufgabe 35). */
+const warnung = computed(() => pfad_warnung(befehl.value));
 
 const url = computed(() => {
   const laufzeit = entwurf.value.laufzeit;
@@ -412,17 +416,29 @@ function neu_laden(): void {
       </Feld>
 
       <template v-if="entwurf.laufzeit.art === 'stdio'">
-        <Feld beschriftung="Befehl" :fehler="fehler.befehl">
+        <Feld
+          beschriftung="Befehl"
+          :fehler="fehler.befehl"
+          hinweis="Ein Name wie quiver-devops findet das mitgelieferte Programm."
+        >
           <template #default="{ id }">
             <WpInput
               :id="id"
               :model-value="befehl"
               :state="fehler.befehl ? 'invalid' : 'default'"
-              placeholder="npx"
+              placeholder="quiver-devops"
               @update:model-value="befehlSetzen"
             />
           </template>
         </Feld>
+
+        <!-- Aufgabe 35: ein fester Pfad bleibt erlaubt, gilt aber nur auf
+             Geräten mit genau diesem Pfad. Die Warnung erscheint beim Tippen
+             und beim Speichern und hält niemanden auf. -->
+        <p v-if="warnung" class="warnung" role="status">
+          <TriangleAlert class="warnung__zeichen" aria-hidden="true" />
+          <span class="warnung__text">{{ warnung }}</span>
+        </p>
 
         <Feld beschriftung="Argumente" hinweis="Ein Argument je Zeile.">
           <template #default="{ id }">
@@ -482,7 +498,9 @@ function neu_laden(): void {
         <p class="blass">
           Braucht das Tool eine Anmeldung des Users, löst er sie im
           Client-Fenster aus – nie ein Agent. Alle drei Befehle sind
-          Argumente für dasselbe Programm wie die Laufzeit.
+          Argumente für dasselbe Programm wie die Laufzeit. Das Fenster zeigt
+          danach genau einen Satz und einen benannten Knopf („Anmelden“,
+          „Abmelden“, „Erneut prüfen“).
         </p>
 
         <div v-if="anmeldungOffen" :id="anmeldungId" class="anmeldung__felder">
@@ -508,7 +526,7 @@ function neu_laden(): void {
           <Feld
             beschriftung="Status"
             :fehler="fehler['anmeldung.status']"
-            hinweis="Exit 0 = angemeldet (erste Zeile von stdout ist das Konto), Exit 1 = abgemeldet."
+            hinweis="Exit 0 = angemeldet (erste Zeile von stdout ist das Konto), Exit 1 = nicht angemeldet, Exit 3 = angemeldet, läuft aber bald ab. Alles andere zeigt der Client als Fehler. Der Befehl hat 10 s Zeit."
           >
             <template #default="{ id }">
               <WpInput
@@ -798,6 +816,30 @@ function neu_laden(): void {
 .mehrfach__titel {
   font-size: var(--wp-font-size-lg);
   font-weight: var(--wp-font-weight-semibold);
+}
+
+/* Ein fester Pfad im Befehl: sichtbar, aber kein Fehler (Aufgabe 35). Wie der
+   Hinweisstreifen in `App.vue`, nur innerhalb des Dialogs. */
+.warnung {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wp-space-2);
+  padding: var(--wp-space-2) var(--wp-space-3);
+  border: var(--wp-size-border) solid var(--wp-color-status-warn);
+  background: var(--wp-color-bg-raised);
+}
+
+.warnung__zeichen {
+  flex: none;
+  width: var(--wp-font-size-md);
+  height: var(--wp-font-size-md);
+  margin-top: var(--wp-space-1);
+  color: var(--wp-color-status-warn);
+}
+
+.warnung__text {
+  color: var(--wp-color-text-default);
+  font-size: var(--wp-font-size-sm);
 }
 
 </style>
