@@ -8,6 +8,7 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use axum::Json;
 use futures_util::StreamExt;
 use quiver_domain::{Geraet, GeraetId, Soll};
@@ -196,28 +197,29 @@ pub(crate) async fn meldung(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Erst abonnieren, dann rechnen.
-///
-/// Diese Reihenfolge ist der Kern von Punkt 8: wird die Revision vor dem
-/// Abonnement berechnet, geht eine Änderung zwischen beiden Schritten
-/// verloren – das Gerät bliebe bis zur nächsten Nachfrage auf dem alten Stand.
-fn abonnieren_dann_rechnen<T>(
-    kanal: &tokio::sync::broadcast::Sender<()>,
-    rechnen: impl FnOnce() -> T,
-) -> (tokio::sync::broadcast::Receiver<()>, T) {
-    let empfaenger = kanal.subscribe();
-    let wert = rechnen();
-    (empfaenger, wert)
-}
-
 /// Ereignis-Strom: sofort die aktuelle Revision, danach nur bei Änderung.
+///
+/// **Reihenfolge: abonnieren → Zugang prüfen → Revision rechnen.** Sie ist der
+/// Kern von Punkt 8 und der Grund, warum ein Entzug nicht an einem einzelnen
+/// Ereignis hängt. Wer den Zugang vor dem Abonnement prüft, verliert eine
+/// Änderung, die genau dazwischen passiert: das Ereignis ging an ein
+/// Abonnement, das es noch nicht gab, und die danach gerechnete Revision ist
+/// dieselbe wie die des Geräts. Ein entzogener Zugang fiele dann überhaupt
+/// nicht auf – der Strom bliebe offen, der Client sähe keinen Anlass
+/// nachzufragen und liefe mit laufenden Werkzeugen weiter, bis seine nächste
+/// Nachfrage fällig ist (bis zu fünf Minuten später).
+///
+/// Mit dieser Reihenfolge ist die Lücke zu: was **nach** dem Abonnement
+/// passiert, ist ein Ereignis und kommt an – notfalls als Rückstand. Was
+/// **davor** passiert, sieht die Prüfung direkt und antwortet mit 403 samt
+/// Grund; der Client stoppt darauf sofort alle Werkzeuge.
 ///
 /// Die Zahl der offenen Ströme ist begrenzt (je Gerät und insgesamt): ein
 /// Client, der immer neu verbindet, ohne zu schließen, bekommt 429.
 pub(crate) async fn ereignisse(
     State(zustand): State<Arc<Zustand>>,
     Extension(id): Extension<GeraetId>,
-) -> Ergebnis<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>> {
+) -> Ergebnis<axum::response::Response> {
     let Some(waechter) = Stromwaechter::neu(zustand.clone(), id.clone()) else {
         return Err(FehlerAntwort::neu(
             StatusCode::TOO_MANY_REQUESTS,
@@ -228,10 +230,12 @@ pub(crate) async fn ereignisse(
             ),
         ));
     };
-    // Erst abonnieren, dann die Revision rechnen (siehe
-    // [`abonnieren_dann_rechnen`]); sonst fällt eine Änderung dazwischen aus.
-    let (empfaenger, start) = abonnieren_dann_rechnen(&zustand.geaendert, || zustand.clone());
-    let start = soll_fuer(&start, &id).await?.revision;
+    // 1. Abonnieren, bevor irgendetwas geprüft oder gerechnet wird.
+    let empfaenger = zustand.geaendert.subscribe();
+    // 2. Zugang prüfen – aber mit Grund (403), damit der Client weiß, warum.
+    crate::auth::geraet_zugang(&zustand, &id).await?;
+    // 3. Erst jetzt rechnen.
+    let start = soll_fuer(&zustand, &id).await?.revision;
     let ende = zustand.ende_abo();
 
     let weitere = futures_util::stream::unfold(
@@ -274,8 +278,18 @@ pub(crate) async fn ereignisse(
                         return Some((Ok::<_, Infallible>(ereignis), zustand_strom));
                     }
                     Ok(_) => {}
+                    // Der Grund fällt erst beim Rechnen auf (Gerät weg,
+                    // Bibliothek widersprüchlich): Der Strom endet trotzdem.
+                    // Der Client fragt am Ende des Stroms nach und bekommt
+                    // dabei den Grund – statt hier nur eine Zeile zu schreiben
+                    // und einen offenen Strom ohne Aussicht auf ein Ereignis
+                    // stehen zu lassen.
                     Err(fehler) => {
-                        tracing::warn!("Soll für Gerät {id} nicht berechenbar: {}", fehler.text);
+                        tracing::warn!(
+                            "Soll für Gerät {id} nicht berechenbar, Ereignis-Strom endet: {}",
+                            fehler.text
+                        );
+                        return None;
                     }
                 }
             }
@@ -285,32 +299,58 @@ pub(crate) async fn ereignisse(
     let erste = futures_util::stream::once(async move {
         Ok::<_, Infallible>(Event::default().event(EREIGNIS_SOLL).data(start))
     });
-    Ok(Sse::new(erste.chain(weitere))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    let antwort = Sse::new(erste.chain(weitere))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response();
+    Ok(strom_kopfzeilen(antwort))
+}
+
+/// Kopfzeilen, die verhindern, dass ein Vermittler den Strom zurückhält.
+///
+/// Ein Ereignis-Strom lebt davon, dass jedes Ereignis sofort beim Client
+/// ankommt. Ein Proxy, der den Rumpf puffert (nginx und Verwandte tun das ohne
+/// `X-Accel-Buffering: no` bis zu einer Seitengröße), oder eine Verdichtung,
+/// die auf ein volles Fenster wartet, macht aus dem Entzug eine Nachricht, die
+/// zu spät kommt. `no-transform` sagt zusätzlich: diesen Rumpf nicht umformen.
+///
+/// HAProxy hält den Strom mit `timeout server/client` (30 s) nur dann für tot,
+/// wenn er **schweigt**; der Server schickt alle 15 s ein Keep-Alive, also
+/// bleibt er offen. Ein `Connection: keep-alive` braucht es dafür nicht.
+fn strom_kopfzeilen(mut antwort: axum::response::Response) -> axum::response::Response {
+    let kopf = antwort.headers_mut();
+    kopf.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store, no-transform"),
+    );
+    kopf.insert(
+        "x-accel-buffering",
+        axum::http::HeaderValue::from_static("no"),
+    );
+    antwort
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Der Haken zwischen den Schritten: eine Änderung, die genau zwischen
-    /// „abonnieren“ und „rechnen“ eintrifft, darf nicht verloren gehen.
+    /// Die Reihenfolge „abonnieren → prüfen → rechnen“ ist dicht: eine Änderung,
+    /// die nach dem Abonnement passiert, ist im Abonnement – auch wenn die
+    /// Prüfung danach noch läuft.
     #[test]
-    fn ereignis_zwischen_abonnieren_und_rechnen_geht_nicht_verloren() {
+    fn ereignis_nach_dem_abonnieren_kommt_an() {
         let (sender, _) = tokio::sync::broadcast::channel(8);
-        let (mut empfaenger, gesehen) = abonnieren_dann_rechnen(&sender, || {
-            // Genau hier passiert die Änderung – nach dem Abonnieren.
-            sender.send(()).expect("Empfänger ist da");
-            42
-        });
-        assert_eq!(gesehen, 42);
+        let mut empfaenger = sender.subscribe();
+        // Genau hier entzieht der Admin den Zugang: nach dem Abonnement,
+        // vor der Prüfung.
+        sender.send(()).expect("Empfänger ist da");
         assert!(
             empfaenger.try_recv().is_ok(),
             "das Ereignis ist im Abonnement angekommen"
         );
     }
 
-    /// Zum Vergleich: rechnen **vor** dem Abonnieren verliert das Ereignis.
+    /// Zum Vergleich: prüfen **vor** dem Abonnieren verliert das Ereignis.
+    /// Genau das war die Lücke – der Strom blieb offen und die Revision gleich.
     #[test]
     fn die_alte_reihenfolge_wuerde_das_ereignis_verlieren() {
         let (sender, _) = tokio::sync::broadcast::channel(8);
@@ -320,5 +360,25 @@ mod tests {
         assert!(sender.send(()).is_ok());
         let mut empfaenger = sender.subscribe();
         assert!(empfaenger.try_recv().is_err(), "nichts mehr da");
+    }
+
+    /// Der Strom sagt Vermittlern, dass sie ihn nicht puffern und nicht
+    /// umformen dürfen: ein zurückgehaltenes Ereignis ist ein zu später
+    /// Entzug.
+    #[test]
+    fn der_strom_laesst_sich_nicht_puffern() {
+        let antwort = axum::response::Response::new(axum::body::Body::empty());
+        let antwort = strom_kopfzeilen(antwort);
+        let kopf = antwort.headers();
+        assert_eq!(
+            kopf.get(axum::http::header::CACHE_CONTROL)
+                .and_then(|wert| wert.to_str().ok()),
+            Some("no-store, no-transform")
+        );
+        assert_eq!(
+            kopf.get("x-accel-buffering")
+                .and_then(|wert| wert.to_str().ok()),
+            Some("no")
+        );
     }
 }

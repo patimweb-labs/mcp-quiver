@@ -17,7 +17,9 @@ Ziel: das Grundkonstrukt mit schöner Oberfläche und Funktion. **Ohne Azure.**
   in diesem Lauf angenommen hat (erster erfolgreicher Abgleich); der gespeicherte Stand
   läuft beim Start nicht an. Lehnt der Server das Gerät ab (401/403 – entfernt oder
   gesperrt), stoppt der Client alle Tools, verwirft das Geräte-Token und bittet ums
-  Neu-Einbinden. Der Ereignis-Strom eines entfernten Geräts endet sofort.
+  Neu-Einbinden. Der Ereignis-Strom eines entfernten Geräts endet sofort, und der
+  Client hängt dabei an keinem einzelnen Ereignis: er fragt den Soll direkt nach dem
+  Öffnen und am Ende des Stroms nach.
 - Die Verwaltung meldet sich mit einer Sitzung an (Root per E-Mail/Passwort oder
   Entra mit Rolle `admin`); einen Admin-Token gibt es seit Aufgabe 20 nicht mehr.
 - Laufzeiten im MVP: `stdio` (eigene Binaries, `npx`, `uvx`, `docker`) und `remote`. WASM folgt.
@@ -335,7 +337,7 @@ bekommt im Client feste Grenzen; sie stehen an einer Stelle und sind getestet:
 | Sitzungen am Endpunkt | höchstens 64, ohne Nutzung nach 10 Minuten abgelaufen („verbunden“ folgt daraus) |
 | Herkunft am Endpunkt | mit `Origin` nur von Loopback, `Host` nur der eigene Port, ohne `Origin` erlaubt (CLI-Agent) |
 | Umgebung eines Werkzeugs | Whitelist (PATH, HOME, USER, LANG, LC_*, TZ, TMPDIR, Proxy, Plattform-nötiges) plus die Werte des Eintrags |
-| Soll-Abgleich | zusätzlich alle 5 Minuten ± Streuung, unabhängig vom Ereignis-Strom |
+| Soll-Abgleich | direkt nach dem Öffnen und am Ende des Ereignis-Stroms, zusätzlich alle 5 Minuten ± Streuung — unabhängig davon, ob ein Ereignis ankommt |
 | Tresor | ein Lesezugriff je Abgleich, in `spawn_blocking`, Sperre mit Frist; fehlt der Schlüssel, wird **kein** neuer erzeugt; ein kaputter Tresor verhindert den Start nicht (`Neu beginnen` mit Rückfrage, alte Dateien bleiben als `.kaputt-<zeit>`) |
 | gespeicherter Stand | Zwischendatei mit PID und Zufall, `fsync` für Datei und Ordner; unlesbar → `.kaputt-<zeit>` und Hinweis im Fenster; eine Sperrdatei verhindert den zweiten Kern auf demselben Profil |
 | zweite Instanz | Sperrdatei im Profil (der Port darin ist nur zum Zeigen, frei gewählt); je Verbindung 500 ms, höchstens 8 |
