@@ -56,6 +56,16 @@ pub const AENDERNDE_ROUTEN: &[(&str, &str, &str)] = &[
     ),
     (
         "PUT",
+        "/api/v1/admin/benutzer/{oid}/gruppen/{gruppe}",
+        "Gruppenzuordnung geändert",
+    ),
+    (
+        "PUT",
+        "/api/v1/admin/gruppen/{id}/mitglieder/{oid}",
+        "Mitgliedschaft geändert",
+    ),
+    (
+        "PUT",
         "/api/v1/admin/entra-gruppen/{id}",
         "Entra-Gruppe aufgenommen",
     ),

@@ -1205,6 +1205,80 @@ fn eine_auswahl_hat_hand_cursor_und_setzt_den_wert() {
     }
 }
 
+/// Aufgabe 33: Eine Auswahlliste im Dialog liegt über dem Dialog, macht ihn
+/// nicht größer und schiebt nichts weg. egui legt Menüs in eine eigene Ebene;
+/// der Test hält das fest, damit es so bleibt – im Client sieht es aus wie in
+/// der Verwaltung.
+#[test]
+fn eine_auswahl_im_dialog_liegt_darueber_und_verschiebt_ihn_nicht() {
+    let mut auswahl = feld_mit("farbe", Quelle::Client, FeldArt::Text, "Farbe");
+    auswahl.art = FeldArt::Auswahl {
+        optionen: vec![
+            FeldOption {
+                wert: "rot".into(),
+                anzeige: "Rot".into(),
+            },
+            FeldOption {
+                wert: "blau".into(),
+                anzeige: "Blau".into(),
+            },
+        ],
+    };
+    auswahl.pflicht = false;
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![eintrag(
+                "farben",
+                "Farben",
+                "Wählt eine Farbe.",
+                EintragZustand::Laeuft { tools: 1 },
+                vec![auswahl],
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
+        .click();
+    h.run();
+
+    // Der Speichern-Knopf ist der Bezugspunkt: er darf sich nicht bewegen.
+    let vorher = h.get_by_role_and_label(Role::Button, "Speichern").rect();
+    let feld = h.get_by_role_and_label(Role::ComboBox, "Farbe").rect();
+    h.get_by_role_and_label(Role::ComboBox, "Farbe").click();
+    h.run();
+
+    let option = h.get_by_role_and_label(Role::Button, "Rot").rect();
+    let nachher = h.get_by_role_and_label(Role::Button, "Speichern").rect();
+    assert!(
+        (vorher.top() - nachher.top()).abs() < 1.0
+            && (vorher.bottom() - nachher.bottom()).abs() < 1.0,
+        "der Dialog wandert beim Aufklappen: {vorher:?} → {nachher:?}"
+    );
+    // Die Liste hängt am Feld, nicht im Dialog: sie steht unter (oder über)
+    // dem Feld, nicht darin, und bleibt im Fenster.
+    let (_, hoehe) = gross();
+    assert!(
+        option.top() >= feld.bottom() - 1.0 || option.bottom() <= feld.top() + 1.0,
+        "die Liste liegt nicht am Feld: Liste {option:?}, Feld {feld:?}"
+    );
+    assert!(
+        option.top() >= 0.0 && option.bottom() <= hoehe,
+        "die Liste läuft aus dem Fenster: {option:?}"
+    );
+
+    // Und sie lässt sich bedienen: der Eintrag setzt den Wert.
+    h.get_by_role_and_label(Role::Button, "Blau").click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Werte { eingaben, .. } => assert_eq!(eingaben[0].wert, "blau"),
+        anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+    }
+}
+
 /// Der ABAP-Fall: zwei Pflichtfelder ohne Wert, „Speichern“ bleibt zu und
 /// nennt die Titel der fehlenden Felder.
 fn pflicht_eintrag() -> EintragSicht {

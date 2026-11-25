@@ -3,17 +3,14 @@
 // Entra ID (Aufgabe 23), ist ihre Kennung die Objekt-Id und nicht änderbar;
 // Titel und Sätze gehören dem Admin.
 import { computed, ref, watch } from "vue";
-import {
-  WpButton,
-  WpDialog,
-  WpInput,
-  WpMultiselect,
-} from "@weppelmann/components";
+import { WpButton, WpDialog, WpInput } from "@weppelmann/components";
 import { tief_kopie } from "../logik/kopie";
 
 import { ApiFehler, fehlertext, type Client } from "../api/client";
 import type { Gruppe, Satz } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import Mehrfachauswahl from "../bausteine/Mehrfachauswahl.vue";
+import Mitglieder from "./Mitglieder.vue";
 import { ist_entra_gruppe, ohne_satz } from "../logik/ausweis";
 import {
   gruppe_pruefen,
@@ -136,7 +133,7 @@ function neu_laden(): void {
       </p>
 
       <div class="auswahl">
-        <WpMultiselect
+        <Mehrfachauswahl
           :model-value="entwurf.saetze"
           :options="satzOptionen"
           label="Sätze"
@@ -151,6 +148,9 @@ function neu_laden(): void {
 
       <p v-if="speicherfehler" class="fehler" role="alert">{{ speicherfehler }}</p>
     </div>
+
+    <!-- Mitglieder: gehört dem Benutzer, wird sofort gespeichert (Aufgabe 33). -->
+    <Mitglieder v-if="!neu && gruppe" :gruppe="entwurf" :client="client" />
 
     <template #actions>
       <WpButton v-if="konflikt" label="Neu laden" @press="neu_laden" />

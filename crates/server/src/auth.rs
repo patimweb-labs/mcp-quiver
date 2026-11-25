@@ -126,7 +126,7 @@ pub(crate) async fn geraet_pruefen(zustand: &Arc<Zustand>, zeile: &GeraetZeile) 
         if benutzer.token_stand != "gueltig" {
             return Ok(Stand::NeuAnmelden);
         }
-        let wirksam = speicher::wirksame_gruppen(conn, &manuell, &benutzer.entra)?;
+        let wirksam = speicher::wirksame_gruppen(conn, Some(&oid), &manuell, &benutzer.entra)?;
         if wirksam.is_empty() {
             return Ok(Stand::KeinZugriff);
         }

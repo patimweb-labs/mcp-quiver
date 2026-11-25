@@ -103,6 +103,14 @@ Groups decide who gets which set — local groups or Microsoft Entra ID:
 
 ![Groups: one mapped from Microsoft Entra ID, one local, each with its sets](docs/bilder/admin-dark-gruppen.png)
 
+A group can also be given to a user by hand, from either side — the user's
+*Groups* or the group's *Members*. Where each membership comes from is visible;
+what comes from Entra can only be changed in Entra:
+
+| Groups of a user | Members of a group |
+| --- | --- |
+| ![Groups of a user: one from Entra, one by hand, the add list floating above the dialog](docs/bilder/admin-dark-benutzer-gruppen.png) | ![Members of a group with the add list floating above the dialog](docs/bilder/admin-dark-gruppen-mitglieder.png) |
+
 More screenshots of both surfaces are in [`docs/bilder/`](docs/bilder/). They
 are **generated**, not taken by hand: the UI tests draw every page and dialog
 at three sizes with a stand-in core, and Playwright does the same for the

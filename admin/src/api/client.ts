@@ -18,6 +18,7 @@ import type {
   Anmeldearten,
   AuthStand,
   BenutzerAendern,
+  BenutzerGruppe,
   BenutzerSicht,
   Code,
   CodeAnlegen,
@@ -30,11 +31,13 @@ import type {
   GeraetStand,
   Gruppe,
   GruppeId,
+  Gruppenmitglied,
   Ich,
   PruefspurEintrag,
   Satz,
   SatzId,
   Ueberblick,
+  ZuordnungAendern,
 } from "./typen";
 
 export const API_BASIS = "/api/v1";
@@ -455,6 +458,56 @@ export class Client {
     return anfrage<BenutzerSicht>(
       `${API_BASIS}/admin/benutzer/${pfad(oid)}/pruefen`,
       { methode: "POST" },
+    );
+  }
+
+  // ------------------------------------------- Gruppen von Hand (Aufgabe 33)
+
+  /** `GET /admin/benutzer/{oid}/gruppen` – mit Herkunft. */
+  benutzerGruppen(oid: string): Promise<BenutzerGruppe[]> {
+    return anfrage<BenutzerGruppe[]>(
+      `${API_BASIS}/admin/benutzer/${pfad(oid)}/gruppen`,
+    );
+  }
+
+  /**
+   * Eine Zugehörigkeit von Hand setzen oder entfernen; antwortet mit dem neuen
+   * Stand. `selbstBestaetigt` ist nötig, wenn sich ein Admin selbst die letzte
+   * Gruppe nimmt.
+   */
+  benutzerGruppeSetzen(
+    oid: string,
+    gruppe: GruppeId,
+    vorhanden: boolean,
+    selbstBestaetigt = false,
+  ): Promise<BenutzerGruppe[]> {
+    const rumpf: ZuordnungAendern = { vorhanden };
+    if (selbstBestaetigt) rumpf.selbst_bestaetigt = true;
+    return anfrage<BenutzerGruppe[]>(
+      `${API_BASIS}/admin/benutzer/${pfad(oid)}/gruppen/${pfad(gruppe)}`,
+      { methode: "PUT", rumpf },
+    );
+  }
+
+  /** `GET /admin/gruppen/{id}/mitglieder` – mit Herkunft. */
+  gruppeMitglieder(gruppe: GruppeId): Promise<Gruppenmitglied[]> {
+    return anfrage<Gruppenmitglied[]>(
+      `${API_BASIS}/admin/gruppen/${pfad(gruppe)}/mitglieder`,
+    );
+  }
+
+  /** Ein Mitglied von Hand hinzufügen oder entfernen (dieselbe Zeile). */
+  gruppeMitgliedSetzen(
+    gruppe: GruppeId,
+    oid: string,
+    vorhanden: boolean,
+    selbstBestaetigt = false,
+  ): Promise<Gruppenmitglied[]> {
+    const rumpf: ZuordnungAendern = { vorhanden };
+    if (selbstBestaetigt) rumpf.selbst_bestaetigt = true;
+    return anfrage<Gruppenmitglied[]>(
+      `${API_BASIS}/admin/gruppen/${pfad(gruppe)}/mitglieder/${pfad(oid)}`,
+      { methode: "PUT", rumpf },
     );
   }
 

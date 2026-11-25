@@ -53,6 +53,9 @@ src/
   bausteine/          eigene Bausteine, gleiche Namen und Maße wie in
                       crates/oberflaeche/src/bausteine.rs: Kopf,
                       Seitenleiste, Segmentauswahl, Karte, Status, Feld, …
+                      Auswahl und Mehrfachauswahl (Aufgabe 33) teilen sich
+                      `auswahl-ebene.ts`: die Liste liegt am `body`, über dem
+                      Dialog, und wird nie höher als der freie Platz
   ansichten/Muster.vue Musterseite für den Vergleich (nur im Dev-Bau)
   ansichten/          Anmeldebereich (Anmelden, Ersteinrichtung, geschlossen),
                       Überblick, Bibliothek, Sätze, Gruppen, Benutzer, Geräte,
@@ -191,8 +194,9 @@ freier Port gesucht).
 cargo build -p quiver-server
 npm run build
 npm run pruefung            # Einrichten → Abmelden → Anmelden → falsches
-                            # Passwort → Übersicht → einen Satz ändern;
-                            # am Ende: 0 CSP-Verstöße, 0 Konsolenfehler
+                            # Passwort → Übersicht → einen Satz ändern →
+                            # Auswahlliste im Dialog → Zuordnung von beiden
+                            # Seiten; am Ende: 0 CSP-Verstöße, 0 Konsolenfehler
 npm run pruefung:anmeldung  # Geräteanmeldung → Bestätigen → Rücksprung auf
                             # http://127.0.0.1:<Port>/quiver mit Code, gegen
                             # einen Entra-Nachbau auf Loopback

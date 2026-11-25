@@ -1406,6 +1406,38 @@ async fn jede_aendernde_verwaltungsroute_schreibt_in_die_pruefspur() {
                 .await
                 .0
             }
+            // Aufgabe 33: dieselbe Zugehörigkeit von beiden Seiten. Die Gruppe
+            // wird vorher angelegt, damit es etwas zuzuordnen gibt.
+            ("PUT", "/api/v1/admin/benutzer/{oid}/gruppen/{gruppe}") => {
+                // Der Benutzer wurde oben schon gelöscht; die Route braucht
+                // einen, den es gibt.
+                benutzer_anlegen(&p, BENUTZER).await;
+                admin_voll(
+                    &p,
+                    "PUT",
+                    "/api/v1/admin/gruppen/zuordnung",
+                    Some(json!(gruppe("zuordnung", &[]))),
+                )
+                .await;
+                admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/benutzer/{BENUTZER}/gruppen/zuordnung"),
+                    Some(json!({ "vorhanden": true })),
+                )
+                .await
+                .0
+            }
+            ("PUT", "/api/v1/admin/gruppen/{id}/mitglieder/{oid}") => {
+                admin_voll(
+                    &p,
+                    methode,
+                    &format!("/api/v1/admin/gruppen/zuordnung/mitglieder/{BENUTZER}"),
+                    Some(json!({ "vorhanden": true })),
+                )
+                .await
+                .0
+            }
             // Ohne Entra gibt es nichts nachzuprüfen und keine gesehene
             // Entra-Gruppe; beide Routen antworten 404 und schreiben nichts.
             // Der erfolgreiche Weg steht in `tests/entra.rs`
@@ -1478,6 +1510,54 @@ async fn jede_aendernde_verwaltungsroute_schreibt_in_die_pruefspur() {
     for verboten in ["Titel weg", "Test Person", "ein-sehr-langes", "Bearer"] {
         assert!(!texte.contains(verboten), "{verboten} steht in der Spur");
     }
+}
+
+/// Aufgabe 33: Eine gelöschte Gruppe nimmt ihre Zuordnungen mit – nichts
+/// bleibt zurück, was beim nächsten Anlegen derselben Kennung falsch wirkte.
+#[tokio::test]
+async fn geloeschte_gruppe_nimmt_ihre_zuordnungen_mit() {
+    let p = Pruefung::neu().await;
+    const BENUTZER: &str = "99999999-8888-7777-6666-555555555555";
+    benutzer_anlegen(&p, BENUTZER).await;
+    assert_eq!(p.put_gruppe(&gruppe("hand", &[])).await.0, StatusCode::OK);
+
+    // Von Hand zuordnen und wiederfinden.
+    let (status, rumpf) = admin_voll(
+        &p,
+        "PUT",
+        &format!("/api/v1/admin/benutzer/{BENUTZER}/gruppen/hand"),
+        Some(json!({ "vorhanden": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let (status, rumpf) = p
+        .admin("GET", &format!("/admin/benutzer/{BENUTZER}/gruppen"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let gruppen: Vec<quiver_protocol::BenutzerGruppe> = als(&rumpf);
+    assert_eq!(gruppen.len(), 1);
+    assert!(gruppen[0].von_hand);
+
+    // Gruppe löschen: die Zuordnung verschwindet.
+    let (status, _) = p.admin("DELETE", "/admin/gruppen/hand", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, rumpf) = p
+        .admin("GET", &format!("/admin/benutzer/{BENUTZER}/gruppen"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let gruppen: Vec<quiver_protocol::BenutzerGruppe> = als(&rumpf);
+    assert!(
+        gruppen.is_empty(),
+        "die Zuordnung wirkt nicht mehr: {gruppen:?}"
+    );
+
+    // Die Kennung neu anlegen: die alte Zuordnung kommt nicht zurück.
+    assert_eq!(p.put_gruppe(&gruppe("hand", &[])).await.0, StatusCode::OK);
+    let (_, rumpf) = p
+        .admin("GET", &format!("/admin/benutzer/{BENUTZER}/gruppen"), None)
+        .await;
+    let gruppen: Vec<quiver_protocol::BenutzerGruppe> = als(&rumpf);
+    assert!(gruppen.is_empty(), "nichts wirkt wieder von selbst");
 }
 
 // ------------------------------------ Härtung: gleichzeitiges Bearbeiten (12)

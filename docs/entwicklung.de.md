@@ -91,7 +91,9 @@ temporärem Datenordner — kein echter Mandant, kein echter Tresor):
 ```bash
 cargo build -p quiver-server
 npm run pruefung            # Ersteinrichtung → abmelden → anmelden → falsches
-                            # Passwort → Überblick → einen Satz ändern:
+                            # Passwort → Überblick → einen Satz ändern →
+                            # Auswahlliste im Dialog (über dem Dialog, Höhe
+                            # unverändert) → Zuordnungen von beiden Seiten:
                             # 0 CSP-Verstöße, 0 Konsolenfehler
 npm run pruefung:anmeldung  # Geräteanmeldung → Bestätigung → Weiterleitung auf
                             # 127.0.0.1:<Port>/quiver mit Code, gegen einen

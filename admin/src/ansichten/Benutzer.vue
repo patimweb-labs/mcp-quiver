@@ -13,7 +13,6 @@ import {
   WpDialog,
   WpInput,
   WpMenu,
-  WpSelect,
 } from "@weppelmann/components";
 import type { ListOption, MenuItem } from "@weppelmann/components";
 
@@ -24,7 +23,8 @@ import {
   ich as wer_bin_ich,
   type Client,
 } from "../api/client";
-import type { BenutzerSicht, EntraGruppe, Rolle } from "../api/typen";
+import type { BenutzerSicht, Gruppe, Rolle } from "../api/typen";
+import Auswahl from "../bausteine/Auswahl.vue";
 import Karte from "../bausteine/Karte.vue";
 import Leer from "../bausteine/Leer.vue";
 import Seitenkopf from "../bausteine/Seitenkopf.vue";
@@ -35,9 +35,9 @@ import {
   type Rollenfilter,
   aktionen,
   benutzer_name,
-  entra_gruppen,
   filtern,
   geraete_text,
+  gruppen_zeilen,
   loesch_frage,
   pruef_frage,
   pruefstand,
@@ -51,12 +51,14 @@ import {
 import { zeitpunkt } from "../logik/format";
 import { ROLLEN, rolle_eintrag, rollen_text } from "../logik/rollen";
 import { type Zustand, fehler, fertig, laedt } from "../logik/seite";
+import GruppenVonBenutzer from "./GruppenVonBenutzer.vue";
 
 const props = defineProps<{ client: Client }>();
 
 interface Daten {
   liste: BenutzerSicht[];
-  gesehen: EntraGruppe[];
+  /** Alle Gruppen: für „Gruppen hinzufügen“ (Aufgabe 33). */
+  gruppen: Gruppe[];
   entra: boolean;
   /** Die Objekt-Id der eigenen Sitzung; für „das bist du“. */
   selbst: string | null;
@@ -124,15 +126,15 @@ function setzeLage(wert: string | null): void {
 async function laden(): Promise<void> {
   zustand.value = laedt();
   try {
-    const [liste, gesehen, arten, eigen] = await Promise.all([
+    const [liste, gruppen, arten, eigen] = await Promise.all([
       props.client.benutzer(),
-      props.client.entraGruppen(),
+      props.client.gruppen(),
       anmeldearten(),
       wer_bin_ich(),
     ]);
     zustand.value = fertig({
       liste,
-      gesehen,
+      gruppen,
       entra: arten.entra,
       selbst: eigen?.benutzer.oid ?? null,
     });
@@ -146,7 +148,7 @@ function istSelbst(benutzer: BenutzerSicht): boolean {
 }
 
 function gruppen(benutzer: BenutzerSicht) {
-  return entra_gruppen(benutzer, daten.value?.gesehen ?? []);
+  return gruppen_zeilen(benutzer);
 }
 
 /** Das Menü einer Zeile; leer beim Root, dann gibt es keinen Knopf. */
@@ -155,6 +157,7 @@ function menue(benutzer: BenutzerSicht): MenuItem[] {
   const punkte: MenuItem[] = [];
   if (erlaubt.rolle) punkte.push({ id: "rolle", label: rollenknopf(benutzer) });
   if (erlaubt.pruefen) punkte.push({ id: "pruefen", label: "Jetzt prüfen" });
+  if (erlaubt.gruppen) punkte.push({ id: "gruppen", label: "Gruppen" });
   if (erlaubt.sperre) {
     punkte.push({
       id: "sperre",
@@ -172,7 +175,16 @@ function menue(benutzer: BenutzerSicht): MenuItem[] {
   return punkte;
 }
 
+const gruppenDialog = ref(false);
+const gruppenBenutzer = shallowRef<BenutzerSicht | null>(null);
+
+/** „Gruppen“ ist kein Bestätigungsdialog, sondern eine eigene Ansicht. */
 function waehle(id: string, benutzer: BenutzerSicht): void {
+  if (id === "gruppen") {
+    gruppenBenutzer.value = benutzer;
+    gruppenDialog.value = true;
+    return;
+  }
   oeffne(id as Handlung, benutzer);
 }
 
@@ -329,13 +341,13 @@ onMounted(laden);
         />
       </div>
       <div class="werkzeuge__filter">
-        <WpSelect
+        <Auswahl
           :model-value="rollenfilter"
           :options="rollenOptionen"
           label="Rolle"
           @update:model-value="setzeRolle"
         />
-        <WpSelect
+        <Auswahl
           :model-value="lagefilter"
           :options="lageOptionen"
           label="Stand"
@@ -447,9 +459,9 @@ onMounted(laden);
                   v-for="gruppe in gruppen(benutzer)"
                   :key="gruppe.id"
                   class="marke-chip kurz"
-                  :title="`${gruppe.name} · ${gruppe.id}`"
+                  :title="gruppe.hinweis"
                 >
-                  {{ gruppe.name }}
+                  {{ gruppe.titel }}
                 </li>
               </ul>
               <span v-else class="blass">—</span>
@@ -487,6 +499,15 @@ onMounted(laden);
         </tbody>
       </table>
     </Karte>
+
+    <GruppenVonBenutzer
+      v-model:offen="gruppenDialog"
+      :benutzer="gruppenBenutzer"
+      :alle-gruppen="daten?.gruppen ?? []"
+      :client="client"
+      :selbst="daten?.selbst ?? null"
+      @geaendert="laden"
+    />
 
     <WpDialog
       :open="auftrag !== null"

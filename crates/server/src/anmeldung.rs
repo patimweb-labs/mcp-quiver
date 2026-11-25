@@ -738,7 +738,7 @@ async fn bestaetigen(
             if benutzer.token_stand != "gueltig" {
                 return Ok(Stand::NeuAnmelden);
             }
-            let wirksam = speicher::wirksame_gruppen(conn, &[], &benutzer.entra)?;
+            let wirksam = speicher::wirksame_gruppen(conn, Some(&oid), &[], &benutzer.entra)?;
             if wirksam.is_empty() {
                 return Ok(Stand::KeinZugriff);
             }
@@ -930,7 +930,8 @@ pub(crate) async fn geraet_tausch(
                     // Das alte Token gehört einem anderen Benutzer: neues Gerät.
                     return neu_anlegen(conn, &oid, &tid, &name, &token_hash, &benutzer, jetzt);
                 }
-                let wirksam = speicher::wirksame_gruppen(conn, &alt.manuell, &benutzer.entra)?;
+                let wirksam =
+                    speicher::wirksame_gruppen(conn, Some(&oid), &alt.manuell, &benutzer.entra)?;
                 if wirksam.is_empty() {
                     return Ok(Err(AnmeldeGrund::KeinZugriff));
                 }
@@ -996,7 +997,7 @@ fn neu_anlegen(
     benutzer: &speicher::Benutzer,
     jetzt: OffsetDateTime,
 ) -> anyhow::Result<Result<Geraet, AnmeldeGrund>> {
-    let wirksam = speicher::wirksame_gruppen(conn, &[], &benutzer.entra)?;
+    let wirksam = speicher::wirksame_gruppen(conn, Some(oid), &[], &benutzer.entra)?;
     if wirksam.is_empty() {
         return Ok(Err(AnmeldeGrund::KeinZugriff));
     }

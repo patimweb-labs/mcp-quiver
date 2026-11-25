@@ -9,12 +9,12 @@ import {
   WpDialog,
   WpIconButton,
   WpInput,
-  WpSelect,
 } from "@weppelmann/components";
 import { tief_kopie } from "../logik/kopie";
 
 import { ApiFehler, fehlertext, type Client } from "../api/client";
 import type { Eintrag, Satz, SatzEintrag } from "../api/typen";
+import Auswahl from "../bausteine/Auswahl.vue";
 import Feld from "../bausteine/Feld.vue";
 import Feldwert from "../bausteine/Feldwert.vue";
 import {
@@ -254,9 +254,10 @@ function neu_laden(): void {
               :beschriftung="feld_titel(feld)"
               :hinweis="feld.beschreibung || undefined"
             >
-              <template #default="{ id }">
+              <template #default="{ id, beschrieben }">
                 <Feldwert
                   :id="id"
+                  :beschrieben="beschrieben"
                   :feld="feld"
                   :model-value="feld_wert(feld, z.zeile.werte)"
                   :placeholder="feld.standard ?? ''"
@@ -269,7 +270,7 @@ function neu_laden(): void {
           </template>
         </fieldset>
 
-        <WpSelect
+        <Auswahl
           :model-value="auswahl"
           :options="hinzufuegbar"
           placeholder="Eintrag hinzufügen …"

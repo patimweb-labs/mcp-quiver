@@ -110,6 +110,27 @@ Zuweisungsquelle ──► Satz ──► Einträge (Version/Kanal) + vorbelegte
 - Ein User bekommt die Vereinigung aller Sätze seiner Gruppen. Widersprechen
   sich vorbelegte Werte, gewinnt der Satz mit der höheren Priorität (Feld am
   Satz). Gleichstand ist ein Fehler in der Admin-Oberfläche, kein Zufall.
+- **Festlegung: Gruppen auch von Hand** (Aufgabe 33). Neben Entra kann der
+  Admin eine Gruppe direkt einem Benutzer geben (`benutzer_gruppen`, oid, tid,
+  gruppe, von, seit) – beim Benutzer unter *Gruppen* und bei der Gruppe unter
+  *Mitglieder*, beides dieselbe Zeile. **Wirksame Gruppen = Entra ∪ von Hand ∪
+  am Gerät gesetzt (Altweg).** Die Vereinigung rechnet genau eine Stelle
+  (`speicher::wirksame_gruppen`); Soll, Verwaltung und Nachprüfung lesen sie.
+  Die Herkunft ist sichtbar; *aus Entra* und *am Gerät* sind hier nicht
+  entfernbar, nur *von Hand*. Eine Zuordnung von Hand gehört dem **Benutzer**
+  und überlebt Auffrischung, Neuanmeldung und neue Geräte. Eine gelöschte
+  Gruppe nimmt ihre Zuordnungen mit; ein gesperrter Benutzer hat keine
+  wirksamen Gruppen. Der Root bekommt keine; wer sich selbst die letzte Gruppe
+  nimmt, muss bestätigen. Änderungen wirken sofort (Rundruf), Verlust der
+  letzten Gruppe heißt „kein Zugriff“ wie bisher. Der Schlüssel ist immer die
+  Kennung, der Name nur Anzeige – zwei Entra-Gruppen mit gleichem Namen bleiben
+  zwei Gruppen.
+
+  *Preis:* Eine zweite Quelle neben Entra, die jemand pflegen muss; sie kann
+  stillschweigend veralten, wenn ein Benutzer das Unternehmen verlässt, ohne
+  dass jemand die Zuordnung entfernt. Am Gerät gesetzte Gruppen bleiben eine
+  dritte Herkunft und erscheinen nicht in der Mitgliederliste einer Gruppe
+  (sie stehen in der Geräteliste).
 
 ## 6. Konfiguration in Schichten
 
@@ -335,6 +356,18 @@ signierte Pakete und die Freigabe durch den Admin (Abschnitt 4).
   Themes aus **denselben** Token-Dateien (`tokens/*.tokens.json`). Bausteine
   gibt es in beiden Welten mit gleichem Namen und gleichem Maß.
   Bildschirmfotos beider Seiten werden in der CI nebeneinander erzeugt.
+- **Festlegung: eine Auswahlliste, die über dem Dialog liegt** (Aufgabe 33).
+  In der Verwaltung gibt es dafür genau einen Baustein (`Auswahl.vue`,
+  `Mehrfachauswahl.vue`, beide über `bausteine/auswahl-ebene.ts`): die Liste
+  wird an den `body` geheamt, liegt in einer eigenen Ebene über dem Dialog, ist
+  so breit wie das Feld und höchstens so hoch wie der freie Platz (280 px,
+  `logik/liste.ts`). Der Dialog wächst dadurch nicht und scrollt nicht; beim
+  Scrollen oder Größenänderung folgt die Liste dem Feld oder schließt sich.
+  Tastatur wie WAI-ARIA „combobox with listbox popup“; Escape schließt nur die
+  Liste. Im Client legt egui Menüs ohnehin in eine eigene Ebene; dort ist die
+  Höhe genauso begrenzt (dieselben 280 px aus den Tokens). *Preis:* ein zweiter
+  Satz Bedienlogik in Vue statt der Bausteine aus `weppelmann-ui`, dafür einer
+  für alle Listen.
 - **Festlegung: Hand-Cursor auf allem Klickbaren.** In egui ist das nicht
   Standard. Darum setzen die Bausteine `CursorIcon::PointingHand` zentral,
   und ein Oberflächentest prüft es. In Vue gilt `cursor: pointer` im Baustein.

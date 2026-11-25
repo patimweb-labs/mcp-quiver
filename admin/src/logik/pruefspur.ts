@@ -23,6 +23,8 @@ export const ARTEN: readonly ArtEintrag[] = [
   { wert: "fehlschlag", titel: "Fehlschlag", ton: "warnung" },
   { wert: "rolle", titel: "Rolle", ton: "akzent" },
   { wert: "aenderung", titel: "Änderung", ton: "normal" },
+  // Aufgabe 33: wer, wen, welche Gruppe – hinzugefügt/entfernt (von Hand).
+  { wert: "zuordnung", titel: "Zuordnung", ton: "akzent" },
   { wert: "geraet", titel: "Gerät", ton: "leise" },
   { wert: "nachpruefen", titel: "Nachprüfen", ton: "leise" },
   { wert: "einrichtung", titel: "Einrichtung", ton: "akzent" },

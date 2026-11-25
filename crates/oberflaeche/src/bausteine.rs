@@ -912,6 +912,10 @@ pub fn haken(ui: &mut egui::Ui, an: &mut bool, beschriftung: &str) -> egui::Resp
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Höchsthöhe der aufgeklappten Liste: dieselben 280 px wie in der Verwaltung
+/// (`logik/liste.ts`, Aufgabe 33).
+pub const LISTE_HOEHE_MAX: f32 = thema::SPACE_8 * 4.0 + thema::SPACE_5;
+
 /// Eine Auswahlliste im Maß eines Eingabefelds (Aufgabe 16). Der Auslöser
 /// trägt den Hand-Cursor, die Einträge ebenso.
 pub fn auswahl(
@@ -974,15 +978,23 @@ pub fn auswahl_mit(
     let mut gewaehlt = None;
     egui::Popup::menu(&antwort).show(|ui| {
         ui.set_min_width(breite);
-        for (option, anzeige) in optionen {
-            let klick = ui
-                .selectable_label(option == wert, anzeige)
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked();
-            if klick {
-                gewaehlt = Some(option.clone());
-            }
-        }
+        // Höchstens so hoch wie in der Verwaltung (280 px, aus den Tokens):
+        // die Liste scrollt, statt über den Rand zu laufen (Aufgabe 33).
+        egui::ScrollArea::vertical()
+            .id_salt("auswahl-liste")
+            .max_height(LISTE_HOEHE_MAX)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (option, anzeige) in optionen {
+                    let klick = ui
+                        .selectable_label(option == wert, anzeige)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked();
+                    if klick {
+                        gewaehlt = Some(option.clone());
+                    }
+                }
+            });
     });
     if let Some(option) = gewaehlt {
         *wert = option;

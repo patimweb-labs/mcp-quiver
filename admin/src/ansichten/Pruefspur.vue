@@ -9,12 +9,12 @@ import { RefreshCw, ScrollText } from "lucide-vue-next";
 import {
   WpButton,
   WpInput,
-  WpSelect,
 } from "@weppelmann/components";
 import type { ListOption } from "@weppelmann/components";
 
 import { fehlertext, type Client } from "../api/client";
 import type { PruefspurEintrag } from "../api/typen";
+import Auswahl from "../bausteine/Auswahl.vue";
 import Karte from "../bausteine/Karte.vue";
 import Leer from "../bausteine/Leer.vue";
 import Seitenkopf from "../bausteine/Seitenkopf.vue";
@@ -138,7 +138,7 @@ onMounted(laden);
         />
       </div>
       <div class="werkzeuge__filter">
-        <WpSelect
+        <Auswahl
           :model-value="artfilter"
           :options="artOptionen"
           label="Art"

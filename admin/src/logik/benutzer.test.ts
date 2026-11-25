@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { BenutzerSicht, EntraGruppe } from "../api/typen";
+import type { BenutzerSicht } from "../api/typen";
 import {
   OHNE_FILTER,
   aktionen,
   benutzer_name,
-  entra_gruppen,
   filtern,
   geraete_text,
+  gruppen_zeilen,
   lage_passt,
   loesch_frage,
   pruef_frage,
@@ -32,6 +32,7 @@ function benutzer(teil: Partial<BenutzerSicht> = {}): BenutzerSicht {
     zuletzt: null,
     token_stand: "gueltig",
     geraete: 0,
+    gruppen: [],
     ...teil,
   };
 }
@@ -127,52 +128,71 @@ describe("Reihenfolge", () => {
   });
 });
 
-describe("Entra-Gruppen mit Anzeigename", () => {
-  const gesehen: EntraGruppe[] = [
-    {
-      id: GRUPPE_A,
-      anzeigename: "Entwicklung",
-      zuletzt: "2026-11-24T10:00:00Z",
-      gruppe: null,
-      geloescht: false,
-      name_entra: "Entwicklung (Entra)",
-      name_entra_am: "2026-11-24T10:00:00Z",
-    },
-    {
-      id: GRUPPE_B,
-      anzeigename: "  ",
-      zuletzt: "2026-11-24T10:00:00Z",
-      gruppe: null,
-      geloescht: false,
-      name_entra: "Betrieb",
-      name_entra_am: "2026-11-24T10:00:00Z",
-    },
-  ];
-
-  it("nimmt den Titel der quiver-Gruppe, sonst den Namen aus Entra", () => {
-    const zeilen = entra_gruppen(
-      benutzer({ entra: [GRUPPE_A, GRUPPE_B] }),
-      gesehen,
+describe("Gruppen mit Herkunft", () => {
+  it("zeigt Titel, Herkunft und einen Hinweis mit der Kennung", () => {
+    const zeilen = gruppen_zeilen(
+      benutzer({
+        gruppen: [
+          {
+            gruppe: "team",
+            titel: "Team",
+            aus_entra: true,
+            von_hand: false,
+            aus_geraet: false,
+            von: null,
+            seit: null,
+            entra_ids: [GRUPPE_A],
+          },
+          {
+            gruppe: "hand",
+            titel: "Von Hand",
+            aus_entra: false,
+            von_hand: true,
+            aus_geraet: true,
+            von: "root@example.test",
+            seit: "2026-11-24T10:00:00Z",
+            entra_ids: [],
+          },
+        ],
+      }),
     );
-    expect(zeilen).toEqual([
-      { id: GRUPPE_B, name: "Betrieb" },
-      { id: GRUPPE_A, name: "Entwicklung" },
-    ]);
+    expect(zeilen.map((zeile) => zeile.titel)).toEqual(["Team", "Von Hand"]);
+    expect(zeilen[0].herkunft).toEqual(["aus Entra"]);
+    expect(zeilen[1].herkunft).toEqual(["von Hand", "am Gerät"]);
+    // Die Kennung steht im Hinweis, nie als eigener Text.
+    expect(zeilen[0].hinweis).toContain("team");
+    expect(zeilen[1].hinweis).toContain("von Hand seit 2026-11-24T10:00:00Z");
+    expect(gruppen_zeilen(benutzer())).toEqual([]);
   });
 
-  it("zeigt die Objekt-Id nur im Hinweis, nie als Text", () => {
-    const unbekannt = "cccccccc-3333-3333-3333-333333333333";
-    expect(entra_gruppen(benutzer({ entra: [unbekannt] }), [])).toEqual([
-      { id: unbekannt, name: "unbenannt" },
-    ]);
-    const ohneTitel = gesehen.map((eintrag) => ({
-      ...eintrag,
-      anzeigename: null,
-    }));
-    expect(
-      entra_gruppen(benutzer({ entra: [GRUPPE_B] }), ohneTitel),
-    ).toEqual([{ id: GRUPPE_B, name: "Betrieb" }]);
-    expect(entra_gruppen(benutzer({ entra: [] }), gesehen)).toEqual([]);
+  it("hält zwei Entra-Gruppen mit gleichem Namen auseinander", () => {
+    const zeilen = gruppen_zeilen(
+      benutzer({
+        gruppen: [
+          {
+            gruppe: GRUPPE_A,
+            titel: "Betrieb",
+            aus_entra: true,
+            von_hand: false,
+            aus_geraet: false,
+            von: null,
+            seit: null,
+            entra_ids: [GRUPPE_A],
+          },
+          {
+            gruppe: GRUPPE_B,
+            titel: "Betrieb",
+            aus_entra: true,
+            von_hand: false,
+            aus_geraet: false,
+            von: null,
+            seit: null,
+            entra_ids: [GRUPPE_B],
+          },
+        ],
+      }),
+    );
+    expect(zeilen.map((zeile) => zeile.id)).toEqual([GRUPPE_A, GRUPPE_B]);
   });
 });
 
@@ -199,6 +219,7 @@ describe("Aktionen", () => {
       sperre: false,
       pruefen: false,
       loeschen: false,
+      gruppen: false,
     });
   });
 
