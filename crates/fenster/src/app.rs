@@ -56,6 +56,11 @@ pub trait KernZugang {
     fn protokoll_stand(&self) -> u64 {
         0
     }
+    /// „Tools aktualisieren“ aus dem Tray (Nachtrag zu Aufgabe 37). Standard:
+    /// nichts — der Weg über die Seite geht als [`Aktion::ToolsAktualisieren`].
+    fn tools_aktualisieren(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Eine Anweisung des Fensters an den Kern.
@@ -132,6 +137,14 @@ pub enum Aktion {
         pfad: PathBuf,
         passwort: Option<String>,
     },
+    /// Sofort beim Server nachfragen, ob es neue Programme gibt (Nachtrag zu
+    /// Aufgabe 37). Die Anzeige am Kopf der Werkzeugseite zeigt den Fortschritt
+    /// und danach „Alles aktuell“ oder wie viele Programme kamen.
+    ToolsAktualisieren,
+    /// „Erneut versuchen“ auf einer Karte (Nachtrag zu Aufgabe 37): den
+    /// Eintrag neu starten; ein Programm, das nicht geladen werden konnte,
+    /// wird dabei erneut geholt.
+    EintragNeuVersuchen { eintrag: EintragId },
     /// Einen Eintrag auf **diesem** Gerät abschalten oder wieder einschalten
     /// (Aufgabe 19). Aus beendet den Prozess, an startet ihn sofort.
     EintragSchalten { eintrag: EintragId, an: bool },
@@ -337,6 +350,22 @@ impl<K: KernZugang> Fenster<K> {
                 Befehl::Zeigen => tray::zeigen(ctx),
                 Befehl::AutostartUmschalten => {
                     self.sicht.autostart = !self.sicht.autostart;
+                }
+                // Nachtrag zu Aufgabe 37: „Tools aktualisieren“ im Tray.
+                Befehl::ToolsAktualisieren => {
+                    if matches!(
+                        self.sicht.modell.verbindung,
+                        quiver_client::Verbindung::Verbunden { .. }
+                    ) {
+                        if let Err(fehler) = self.kern.tools_aktualisieren() {
+                            self.sicht.hinweis = Some(format!("{fehler:#}"));
+                        }
+                    } else {
+                        // Ohne Verbindung ein klarer Satz statt einer Anfrage,
+                        // die ins Leere ginge.
+                        self.sicht.hinweis =
+                            Some(crate::texte::t(self.sicht.sprache, "tools.ohne_verbindung"));
+                    }
                 }
                 Befehl::Beenden => {
                     EndeGrund::Tray.protokollieren();

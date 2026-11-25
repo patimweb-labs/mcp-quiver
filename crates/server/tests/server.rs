@@ -360,6 +360,27 @@ async fn auspacken(antwort: Response) -> (StatusCode, Value) {
 
 // ------------------------------------------------------------ Testdaten
 
+/// Ein Eintrag, der ein Programm startet – ohne Felder, damit nichts fehlt.
+fn eintrag_mit(id: &str, befehl: &str) -> Eintrag {
+    Eintrag {
+        id: EintragId::neu(id),
+        version: "1.0.0".into(),
+        titel: format!("Titel {id}"),
+        beschreibung: "Ein Testeintrag".into(),
+        aktiv: true,
+        anmeldung: None,
+        einrichtung: None,
+        mehrfach: None,
+        herkunft: Herkunft::Eigen,
+        laufzeit: Laufzeit::Stdio {
+            befehl: befehl.into(),
+            argumente: Vec::new(),
+            umgebung: Werte::new(),
+        },
+        felder: Vec::new(),
+    }
+}
+
 fn eintrag(id: &str) -> Eintrag {
     Eintrag {
         id: EintragId::neu(id),
@@ -468,6 +489,7 @@ async fn ablauf_vom_eintrag_bis_zum_soll() {
             EintragId::neu("wetter"),
             EintragZustand::Laeuft { tools: 3 },
         )],
+        programme: Vec::new(),
     };
     let (status, _) = p
         .anfrage(
@@ -1758,4 +1780,235 @@ async fn gruppe_mit_unbekanntem_satz_ist_422_mit_namen() {
             .contains("gibtsnicht"),
         "die Namen stehen in der Antwort: {rumpf}"
     );
+}
+
+// --------------------------------------------- Programme (Aufgabe 37)
+
+impl Pruefung {
+    /// Ein Programm in die Ablage legen: `<daten>/tools/<system>/<arch>/`.
+    fn programm_ablegen(&self, name: &str, system: &str, arch: &str, inhalt: &[u8]) -> String {
+        let ordner = self.ordner.join("tools").join(system).join(arch);
+        std::fs::create_dir_all(&ordner).expect("Ordner");
+        std::fs::write(ordner.join(name), inhalt).expect("Programm");
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(inhalt))
+    }
+
+    /// Ein Gerät, dessen Eintrag ein verteiltes Programm startet.
+    async fn aufbau_verteilt(&self, befehl: &str) -> AnmeldenAntwort {
+        let eintrag = eintrag_mit("devops", befehl);
+        assert_eq!(self.put_eintrag(&eintrag).await.0, StatusCode::OK);
+        assert_eq!(
+            self.put_satz(&satz("basis", "devops", json!({}))).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            self.put_gruppe(&gruppe("team", &["basis"])).await.0,
+            StatusCode::OK
+        );
+        let code = self.code_anlegen(&["team"], Some(60)).await;
+        self.anmelden(&code.code, "Testrechner").await
+    }
+
+    /// Ein Abruf, der den Rumpf als Bytes zurückgibt (Programme).
+    async fn roh_bytes(
+        &self,
+        pfad: &str,
+        token: Option<&str>,
+        extra: Option<(&str, &str)>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut bauer = Request::builder()
+            .method("GET")
+            .uri(format!("/api/v1{pfad}"))
+            .header("host", HOST);
+        if let Some(token) = token {
+            bauer = bauer.header("authorization", format!("Bearer {token}"));
+        }
+        if let Some((name, wert)) = extra {
+            bauer = bauer.header(name, wert);
+        }
+        let antwort = self
+            .router
+            .clone()
+            .oneshot(bauer.body(Body::empty()).expect("Anfrage"))
+            .await
+            .expect("Antwort");
+        let status = antwort.status();
+        let headers = antwort.headers().clone();
+        let bytes = antwort
+            .into_body()
+            .collect()
+            .await
+            .expect("Rumpf")
+            .to_bytes()
+            .to_vec();
+        (status, headers, bytes)
+    }
+
+    async fn soll_mit_system(&self, token: &str, system: &str, arch: &str) -> (StatusCode, Value) {
+        self.anfrage(
+            "GET",
+            &format!("/geraet/soll?system={system}&arch={arch}"),
+            Some(token),
+            None,
+        )
+        .await
+    }
+}
+
+/// Das Soll nennt Programm, Größe und Prüfsumme – aber nur für das System, das
+/// das Gerät meldet; ohne Angabe bleibt die Liste leer (ältere Clients).
+#[tokio::test]
+async fn das_soll_nennt_das_programm_fuer_das_system() {
+    let p = Pruefung::neu().await;
+    let inhalt = b"programm-v1";
+    let sha = p.programm_ablegen("quiver-devops", "linux", "x64", inhalt);
+    let geraet = p.aufbau_verteilt("quiver-devops").await;
+
+    let (status, rumpf) = p.soll_mit_system(&geraet.token, "linux", "x64").await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let soll: Soll = als(&rumpf);
+    let programm = soll.programm("quiver-devops").expect("Programm im Soll");
+    assert_eq!(programm.sha256, sha);
+    assert_eq!(programm.groesse, inhalt.len() as u64);
+    assert_eq!(programm.system, "linux");
+    assert_eq!(programm.arch, "x64");
+
+    // Ohne System: keine Programme (ein älterer Client sucht selbst).
+    let (status, rumpf) = p
+        .anfrage("GET", "/geraet/soll", Some(&geraet.token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let ohne: Soll = als(&rumpf);
+    assert!(ohne.programme.is_empty());
+
+    // Ein unbekanntes System ist ein Fehler, kein Rateversuch.
+    let (status, _) = p.soll_mit_system(&geraet.token, "plan9", "x64").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Die Revision ändert sich mit dem Programm.
+    let vorher = soll.revision;
+    std::thread::sleep(Duration::from_millis(20));
+    p.programm_ablegen("quiver-devops", "linux", "x64", b"programm-v2");
+    let (_, rumpf) = p.soll_mit_system(&geraet.token, "linux", "x64").await;
+    let nachher: Soll = als(&rumpf);
+    assert_ne!(vorher, nachher.revision, "neue Fassung, neue Revision");
+}
+
+/// Das Programm kommt gestreamt, mit `ETag`, und nur für ein zugewiesenes
+/// Gerät. Ein Entzug wirkt sofort.
+#[tokio::test]
+async fn das_programm_kommt_nur_fuer_dieses_geraet() {
+    let p = Pruefung::neu().await;
+    let inhalt = b"#!programm\n";
+    let sha = p.programm_ablegen("quiver-devops", "linux", "x64", inhalt);
+    let geraet = p.aufbau_verteilt("quiver-devops").await;
+    let pfad = "/geraet/tools/quiver-devops?system=linux&arch=x64";
+
+    // Ohne Token: nichts.
+    let (status, _, _) = p.roh_bytes(pfad, None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Mit Token: die Bytes, die Prüfsumme und ein ETag.
+    let (status, kopf, bytes) = p.roh_bytes(pfad, Some(&geraet.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, inhalt);
+    let etag = kopf
+        .get(header::ETAG)
+        .and_then(|wert| wert.to_str().ok())
+        .expect("ETag")
+        .to_string();
+    assert!(etag.contains(&sha), "{etag}");
+    assert_eq!(
+        kopf.get(header::CONTENT_LENGTH)
+            .and_then(|wert| wert.to_str().ok()),
+        Some(inhalt.len().to_string().as_str())
+    );
+
+    // Dasselbe noch einmal: 304, kein Rumpf.
+    let (status, _, bytes) = p
+        .roh_bytes(pfad, Some(&geraet.token), Some(("if-none-match", &etag)))
+        .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(bytes.is_empty());
+
+    // Ein Name, den der Server nicht verteilt.
+    let (status, _, _) = p
+        .roh_bytes(
+            "/geraet/tools/npx?system=linux&arch=x64",
+            Some(&geraet.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Ein verteilter Name, der nicht im Soll steht: 403.
+    let (status, _, _) = p
+        .roh_bytes(
+            "/geraet/tools/quiver-nix?system=linux&arch=x64",
+            Some(&geraet.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Für ein anderes System gibt es das Programm nicht: 404, kein Fehler.
+    let (status, _, _) = p
+        .roh_bytes(
+            "/geraet/tools/quiver-devops?system=macos&arch=arm64",
+            Some(&geraet.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Fehlt die Angabe, wird nichts geraten.
+    let (status, _, _) = p
+        .roh_bytes("/geraet/tools/quiver-devops", Some(&geraet.token), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Entzug: der Satz fällt weg, das Gerät bekommt sofort nichts mehr.
+    assert_eq!(
+        p.put_satz(&satz("basis", "devops", json!({}))).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(p.put_gruppe(&gruppe("team", &[])).await.0, StatusCode::OK);
+    let (status, _, _) = p.roh_bytes(pfad, Some(&geraet.token), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "Entzug wirkt sofort");
+}
+
+/// Ein fremdes Gerät bekommt kein Programm: es steht in keinem Soll.
+#[tokio::test]
+async fn ein_fremdes_geraet_bekommt_kein_programm() {
+    let p = Pruefung::neu().await;
+    p.programm_ablegen("quiver-devops", "linux", "x64", b"geheim");
+    let eigenes = p.aufbau_verteilt("quiver-devops").await;
+    // Ein zweites Gerät in einer Gruppe ohne den Satz.
+    assert_eq!(p.put_gruppe(&gruppe("leer", &[])).await.0, StatusCode::OK);
+    let code = p.code_anlegen(&["leer"], Some(60)).await;
+    let fremd = p.anmelden(&code.code, "Anderer Rechner").await;
+
+    let pfad = "/geraet/tools/quiver-devops?system=linux&arch=x64";
+    let (status, _, _) = p.roh_bytes(pfad, Some(&eigenes.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = p.roh_bytes(pfad, Some(&fremd.token), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Die Verwaltung sieht, welche Programme der Server bereithält (Aufgabe 37).
+#[tokio::test]
+async fn die_verwaltung_sieht_die_programme() {
+    let p = Pruefung::neu().await;
+    let sha = p.programm_ablegen("quiver-devops", "linux", "x64", b"hallo");
+    let (status, rumpf) = p.admin("GET", "/admin/programme", None).await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let liste: Vec<Value> = als(&rumpf);
+    assert_eq!(liste.len(), 1, "{liste:?}");
+    assert_eq!(liste[0]["name"], "quiver-devops");
+    assert_eq!(liste[0]["sha256"], sha.as_str());
+    assert_eq!(liste[0]["system"], "linux");
+    assert_eq!(liste[0]["arch"], "x64");
+    // Ändern lässt sich hier nichts: kein PUT, kein DELETE.
+    let (status, _) = p.admin("PUT", "/admin/programme", Some(json!([]))).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 }

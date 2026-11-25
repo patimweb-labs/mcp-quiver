@@ -123,39 +123,14 @@ for kante in 32 64 256; do
         "$baum/share/icons/hicolor/${kante}x${kante}/apps/de.weppelmann.mcp-quiver.png"
 done
 install -m644 LICENSE README.md "$baum/"
-# Die Programme aus quiver-tools: `lib/mcp-quiver/tools` liegt neben
-# `/usr/bin/quiver` und im AppImage unter `usr/lib/...` — dort sucht der
-# Client sie (Aufgabe 35).
-"$wurzel/verteilung/tools/einbauen.sh" "$dist/tools" \
-    "$baum/lib/mcp-quiver/tools"
-
 tar -C "$dist" -czf "$dist/$name.tar.gz" "$name"
 
 # ---------------------------------------------------------------- .deb, .rpm
 nfpm_holen
-# Je Werkzeug zwei Zeilen in der Inhaltsliste von nfpm — welche es gibt,
-# weiß erst der Bau (Aufgabe 35). Die Vorlage hat dafür die Zeile `__TOOLS__`.
-{
-    while IFS= read -r zeile; do
-        case "$zeile" in
-            __TOOLS__)
-                for werkzeug in "$baum"/lib/mcp-quiver/tools/*; do
-                    [ -f "$werkzeug" ] || continue
-                    printf '  - src: %s\n    dst: /usr/lib/mcp-quiver/tools/%s\n' \
-                        "$werkzeug" "$(basename "$werkzeug")"
-                done
-                ;;
-            *)
-                printf '%s\n' "$zeile"
-                ;;
-        esac
-    done < <(
-        sed -e "s|__VERSION__|$version|g" \
-            -e "s|__ARCH__|$nfpmarch|g" \
-            -e "s|__BAUM__|$baum|g" \
-            verteilung/linux/nfpm.yaml.in
-    )
-} >"$dist/nfpm.yaml"
+sed -e "s|__VERSION__|$version|g" \
+    -e "s|__ARCH__|$nfpmarch|g" \
+    -e "s|__BAUM__|$baum|g" \
+    verteilung/linux/nfpm.yaml.in >"$dist/nfpm.yaml"
 "$werkzeuge/nfpm" package --config "$dist/nfpm.yaml" --packager deb --target "$dist"
 "$werkzeuge/nfpm" package --config "$dist/nfpm.yaml" --packager rpm --target "$dist"
 

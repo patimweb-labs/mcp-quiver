@@ -29,10 +29,6 @@ description: |
 contents:
   - src: __BAUM__/bin/quiver
     dst: /usr/bin/quiver
-  # Die Programme aus quiver-tools (Aufgabe 35). Hier steht nur die Marke;
-  # `packet.sh` setzt je Werkzeug zwei Zeilen ein — welche es gibt, weiß erst
-  # der Bau.
-__TOOLS__
   - src: __BAUM__/share/applications/de.weppelmann.mcp-quiver.desktop
     dst: /usr/share/applications/de.weppelmann.mcp-quiver.desktop
   - src: __BAUM__/share/metainfo/de.weppelmann.mcp-quiver.metainfo.xml

@@ -73,6 +73,12 @@ impl ksni::Tray for Symbol {
                     ..Default::default()
                 }
                 .into(),
+                TrayEintrag::Aktualisieren(text) => StandardItem {
+                    label: text,
+                    activate: Box::new(|s: &mut Symbol| s.z.senden(Befehl::ToolsAktualisieren)),
+                    ..Default::default()
+                }
+                .into(),
                 TrayEintrag::Autostart { text, an } => CheckmarkItem {
                     label: text,
                     checked: an,

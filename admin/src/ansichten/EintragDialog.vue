@@ -419,7 +419,7 @@ function neu_laden(): void {
         <Feld
           beschriftung="Befehl"
           :fehler="fehler.befehl"
-          hinweis="Ein Name wie quiver-devops findet das mitgelieferte Programm."
+          hinweis="Ein Name wie quiver-devops kommt vom Server."
         >
           <template #default="{ id }">
             <WpInput

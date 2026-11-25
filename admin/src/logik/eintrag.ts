@@ -302,10 +302,10 @@ export function laufzeit_text(laufzeit: Laufzeit): string {
 }
 
 /**
- * Ist der Befehl ein fester Pfad? Ein Name wie `quiver-devops` findet das
- * mitgelieferte Programm auf jedem Gerät; `/usr/local/bin/x` oder
+ * Ist der Befehl ein fester Pfad? Ein Name wie `quiver-devops` kommt vom
+ * Server und gilt auf jedem Gerät; `/usr/local/bin/x` oder
  * `C:\Programme\x.exe` gibt es nur dort, wo genau dieser Pfad steht
- * (Aufgabe 35).
+ * (Aufgabe 35/37).
  */
 export function ist_fester_pfad(befehl: string): boolean {
   const wert = befehl.trim();
@@ -321,8 +321,8 @@ export function pfad_warnung(befehl: string): string | null {
   if (!ist_fester_pfad(befehl)) return null;
   return (
     "Fest eingetragener Pfad: Dieses Programm läuft nur auf Geräten, auf " +
-    "denen es genau dort liegt. Ein Name wie quiver-devops findet das " +
-    "mitgelieferte Programm überall."
+    "denen es genau dort liegt. Ein Name wie quiver-devops kommt vom Server " +
+    "und gilt auf jedem Gerät."
   );
 }
 

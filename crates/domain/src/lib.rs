@@ -335,6 +335,105 @@ pub struct Geraet {
     pub gesperrt: bool,
 }
 
+/// Betriebssystem und Architektur eines Geräts (Aufgabe 37).
+///
+/// Der Client meldet beides; der Server sucht danach das Programm aus. Die
+/// Namen sind die der Release-Archive aus quiver-tools (Aufgabe 38):
+/// `windows`, `macos`, `linux` und `x64`, `arm64`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct System {
+    pub system: String,
+    pub arch: String,
+}
+
+impl System {
+    /// Die Namen, die der Server kennt. Alles andere wird abgelehnt – kein
+    /// Pfad, kein Name aus dem Netz wird je zu einem Ordner.
+    pub const SYSTEME: [&'static str; 3] = ["windows", "macos", "linux"];
+    /// Die Architekturen, die der Server kennt.
+    pub const ARCHITEKTUREN: [&'static str; 2] = ["x64", "arm64"];
+
+    /// Das System dieses Prozesses.
+    pub fn dieses() -> Self {
+        Self {
+            system: match std::env::consts::OS {
+                "linux" => "linux",
+                "macos" => "macos",
+                "windows" => "windows",
+                anderes => anderes,
+            }
+            .to_string(),
+            arch: match std::env::consts::ARCH {
+                "x86_64" | "x86" => "x64",
+                "aarch64" | "arm64" => "arm64",
+                anderes => anderes,
+            }
+            .to_string(),
+        }
+    }
+
+    /// Aus zwei Angaben (etwa aus einer Abfrage) ein geprüftes System bauen.
+    ///
+    /// `None` heißt: eine der beiden Angaben ist unbekannt. Der Server nimmt
+    /// dann keine Programme an – lieber nichts als das falsche.
+    pub fn aus_teilen(system: &str, arch: &str) -> Option<Self> {
+        let system = system.trim().to_ascii_lowercase();
+        let arch = arch.trim().to_ascii_lowercase();
+        if Self::SYSTEME.contains(&system.as_str()) && Self::ARCHITEKTUREN.contains(&arch.as_str())
+        {
+            return Some(Self { system, arch });
+        }
+        None
+    }
+}
+
+/// Ein Programm, das der Server für die Geräte bereithält (Aufgabe 37).
+///
+/// Der Client lädt genau diese Datei und prüft sie gegen `sha256` und
+/// `groesse`. Was hier steht, ist die einzige Wahrheit über das Programm –
+/// kein Pfad vom Server wird je als Pfad benutzt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Programm {
+    /// Der Programmname, z. B. `quiver-devops`.
+    pub name: String,
+    /// Die Fassung aus dem Release; `unbekannt` bei einem Programm, das der
+    /// Betreiber selbst abgelegt hat.
+    pub version: String,
+    /// Größe in Bytes.
+    pub groesse: u64,
+    /// SHA-256 über die Datei, klein und hexadezimal.
+    pub sha256: String,
+    /// Betriebssystem (`linux`, `macos`, `windows`).
+    pub system: String,
+    /// Architektur (`x64`, `arm64`).
+    pub arch: String,
+}
+
+impl Programm {
+    /// Passt dieses Programm zu diesem System?
+    pub fn passt(&self, system: &System) -> bool {
+        self.system == system.system && self.arch == system.arch
+    }
+}
+
+/// Ist dieser Programmname einer, den der Server verteilt (Aufgabe 37)?
+///
+/// Verteilt werden nur die eigenen Programme (`quiver-*`), und nur als
+/// reiner Name: `npx`, `uvx`, `docker` und Pfade zu eigenen Programmen
+/// laufen unverändert auf dem Gerät.
+///
+pub fn ist_verteilt(name: &str) -> bool {
+    let name = name.trim();
+    name.len() > "quiver-".len()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name.starts_with("quiver-")
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
 /// Was auf einem Gerät laufen soll: Eintrag + vom Server gefüllte Werte.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SollEintrag {
@@ -354,23 +453,68 @@ impl SollEintrag {
 /// Der Soll-Zustand eines Geräts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Soll {
-    /// Fingerabdruck über alle Einträge; gleich = nichts zu tun.
+    /// Fingerabdruck über alle Einträge und Programme; gleich = nichts zu tun.
     pub revision: String,
     pub eintraege: Vec<SollEintrag>,
+    /// Die Programme, die der Server für dieses Gerät und **sein** System
+    /// bereithält (Aufgabe 37). Welches Programm zu welchem Eintrag gehört,
+    /// sagt der Programmname im Befehl des Eintrags. Ein Eintrag, dessen
+    /// Programm hier fehlt, gibt es für dieses System nicht.
+    #[serde(default)]
+    pub programme: Vec<Programm>,
 }
 
 impl Soll {
-    pub fn neu(mut eintraege: Vec<SollEintrag>) -> Self {
+    pub fn neu(eintraege: Vec<SollEintrag>) -> Self {
+        Self::neu_mit(eintraege, Vec::new())
+    }
+
+    /// Ein Soll mit den Programmen, die der Server für dieses System hat.
+    ///
+    /// Die Programme gehören in die Revision: ändert sich ein Programm (neue
+    /// Fassung, andere Prüfsumme), ist das eine neue Revision – und damit ein
+    /// Anlass für jeden Client, nachzusehen (Aufgabe 37).
+    pub fn neu_mit(mut eintraege: Vec<SollEintrag>, mut programme: Vec<Programm>) -> Self {
         eintraege.sort_by(|a, b| a.eintrag.id.cmp(&b.eintrag.id));
-        let mut h = Sha256::new();
-        for e in &eintraege {
-            h.update(e.fingerabdruck());
-        }
+        programme.sort_by(|a, b| a.name.cmp(&b.name));
+        let revision = revision_aus(&eintraege, &programme);
         Self {
-            revision: hex::encode(h.finalize()),
+            revision,
             eintraege,
+            programme,
         }
     }
+
+    /// Dieselben Einträge mit einer anderen Programmliste (der Server rechnet
+    /// das Soll ohne System, weil ein Gerät keins nennt).
+    pub fn mit_programmen(mut self, mut programme: Vec<Programm>) -> Self {
+        programme.sort_by(|a, b| a.name.cmp(&b.name));
+        self.revision = revision_aus(&self.eintraege, &programme);
+        self.programme = programme;
+        self
+    }
+
+    /// Das Programm zu einem Programmnamen, falls der Server es hat.
+    pub fn programm(&self, name: &str) -> Option<&Programm> {
+        self.programme.iter().find(|programm| programm.name == name)
+    }
+}
+
+/// Der Fingerabdruck eines Solls: Einträge und Programme.
+fn revision_aus(eintraege: &[SollEintrag], programme: &[Programm]) -> String {
+    let mut h = Sha256::new();
+    for e in eintraege {
+        h.update(e.fingerabdruck());
+    }
+    for p in programme {
+        h.update(p.name.as_bytes());
+        h.update(p.version.as_bytes());
+        h.update(p.groesse.to_le_bytes());
+        h.update(p.sha256.as_bytes());
+        h.update(p.system.as_bytes());
+        h.update(p.arch.as_bytes());
+    }
+    hex::encode(h.finalize())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

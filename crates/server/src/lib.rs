@@ -42,6 +42,7 @@ mod host;
 mod kopfzeilen;
 mod krypto;
 mod oidc;
+mod programme;
 pub mod rechte;
 mod refresh;
 mod seiten;
@@ -183,6 +184,18 @@ async fn bauen(konfig: Konfig) -> anyhow::Result<(Router, Arc<Zustand>)> {
     let daten = konfig.daten.clone();
     let rumpf_zeit = konfig.rumpf_zeit;
     let zustand = Arc::new(Zustand::neu(conn, konfig, schluessel, oidc, graph, dummy));
+    // Aufgabe 37: was das Abbild mitbringt und was der Betreiber abgelegt hat.
+    // Fehlt alles, sagt der Start das deutlich – die Geräte bekommen dann kein
+    // Programm, und der Grund steht im Log.
+    let stand = zustand.programme.stand();
+    if stand.starts_with("keine Programme") {
+        tracing::warn!(
+            "Es liegen keine Programme bereit: {stand}. Geräte, deren Einträge ein \
+             quiver-Programm nennen, bekommen nichts (die Konfiguration bleibt)."
+        );
+    } else {
+        tracing::info!("Programme bereit: {stand}");
+    }
     // Erst jetzt, wenn Datenbank, `-wal`, `-shm` und Schlüssel da sind: die
     // Rechte nachziehen (Symlinks werden nicht verfolgt).
     if let Err(fehler) = rechte::daten_pruefen(&daten) {
@@ -223,6 +236,7 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
 
     let geraete = Router::new()
         .route("/soll", get(geraet::soll))
+        .route("/tools/{name}", get(geraet::tools))
         .route("/ereignisse", get(geraet::ereignisse))
         .route("/meldung", post(geraet::meldung))
         .route("/abmelden", post(geraet::abmelden))
@@ -276,6 +290,7 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         )
         .route("/codes", post(admin::code_anlegen))
         .route("/ueberblick", get(admin::ueberblick))
+        .route("/programme", get(admin::programme))
         .route("/benutzer", get(benutzer::benutzer_liste))
         .route(
             "/benutzer/{oid}",
@@ -391,16 +406,58 @@ pub(crate) fn soll_aus(bestand: &speicher::Bestand, geraet: &Geraet) -> anyhow::
     .map_err(|fehler| anyhow::anyhow!(fehler))
 }
 
+/// Die Programme, die zu diesem Soll gehören (Aufgabe 37).
+///
+/// Nur die, die ein Eintrag wirklich braucht, und nur für das System, das das
+/// Gerät gemeldet hat. Nennt das Gerät keins (älterer Client), bleibt die Liste
+/// leer – es bekommt dann keine Programme, sondern sucht sie wie bisher.
+fn mit_programmen(
+    soll: Soll,
+    system: Option<&quiver_domain::System>,
+    ablage: &crate::programme::Ablage,
+) -> Soll {
+    let Some(system) = system else {
+        return soll.mit_programmen(Vec::new());
+    };
+    let gebraucht: std::collections::BTreeSet<&str> = soll
+        .eintraege
+        .iter()
+        .filter_map(|eintrag| match &eintrag.eintrag.laufzeit {
+            quiver_domain::Laufzeit::Stdio { befehl, .. }
+                if quiver_domain::ist_verteilt(befehl) =>
+            {
+                Some(befehl.trim())
+            }
+            _ => None,
+        })
+        .collect();
+    let programme = ablage
+        .fuer(system)
+        .into_iter()
+        .filter(|programm| gebraucht.contains(programm.name.as_str()))
+        .collect();
+    soll.mit_programmen(programme)
+}
+
 /// Soll eines Geräts aus der Datenbank; Fehler daraus werden zu 500 mit Text.
-pub(crate) async fn soll_fuer(zustand: &Arc<Zustand>, id: &GeraetId) -> Ergebnis<Soll> {
+///
+/// Mit dem System des Geräts nennt das Soll auch die Programme, die der Server
+/// dafür hat (Aufgabe 37). Ohne System (`None`, ein älterer Client) bleibt die
+/// Programmliste leer.
+pub(crate) async fn soll_fuer_system(
+    zustand: &Arc<Zustand>,
+    id: &GeraetId,
+    system: Option<quiver_domain::System>,
+) -> Ergebnis<Soll> {
     let kennung = id.clone();
-    db(zustand, move |conn| {
+    let soll = db(zustand, move |conn| {
         let zeile = speicher::hole_geraet(conn, kennung.als_str())?
             .ok_or_else(|| anyhow::anyhow!("Gerät {kennung} gibt es nicht"))?;
         let bestand = speicher::bestand(conn)?;
         soll_aus(&bestand, &zeile.geraet)
     })
-    .await
+    .await?;
+    Ok(mit_programmen(soll, system.as_ref(), &zustand.programme))
 }
 
 /// Läuft, wenn Unterbefehle die Datenbank geändert haben: `PRAGMA data_version`

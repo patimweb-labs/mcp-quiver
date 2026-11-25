@@ -25,6 +25,8 @@ export function zustand_ton(zustand: EintragZustand): Ton {
     case "fehler":
       return "fehler";
     case "startet":
+    case "wird-geladen":
+    case "aktualisiert":
       return "leise";
     case "am-geraet-aus":
     case "unbekannt":
@@ -45,6 +47,11 @@ export function zustand_text(zustand: EintragZustand): string {
         : `Braucht Angaben: ${zustand.felder.join(", ")}`;
     case "startet":
       return "Startet …";
+    // Dieselben Wörter wie auf der Karte im Client (Nachtrag zu Aufgabe 37).
+    case "wird-geladen":
+      return "Wird vom Server geladen …";
+    case "aktualisiert":
+      return "Aktualisiert";
     case "am-geraet-aus":
       return "am Gerät abgeschaltet";
     case "fehler":

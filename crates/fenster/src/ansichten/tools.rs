@@ -21,8 +21,8 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
     bausteine::seite(ui, |ui| {
         hinweis(ui, sicht, aktionen);
         ergebnis(ui, sicht);
-        werkzeuge_fehlen(ui, sicht);
-        kopfzeile(ui, sicht, &mut exportieren, &mut importieren);
+        kopfzeile(ui, sicht, &mut exportieren, &mut importieren, aktionen);
+        fortschritt(ui, sicht);
         if sicht.modell.eintraege.is_empty() {
             leer(
                 ui,
@@ -85,37 +85,25 @@ pub fn zeigen(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) 
     }
 }
 
-/// Der Ordner mit den mitgelieferten Werkzeugen fehlt neben dem Programm
-/// (Aufgabe 35, §6): ein entpacktes ZIP ohne seinen Ordner `tools`.
-///
-/// Die Zeile steht über den Karten, weil sie für alle gilt: kein Eintrag, der
-/// einen bloßen Programmnamen nennt, kann hier laufen. Gelöst wird es nicht im
-/// Fenster, sondern beim Entpacken – deshalb ein Hinweis und kein Knopf.
-fn werkzeuge_fehlen(ui: &mut egui::Ui, sicht: &Sicht) {
-    if !sicht.modell.werkzeuge_fehlen {
-        return;
-    }
-    let f = *sicht.thema.farben();
-    let text = t(sicht.sprache, "tools.werkzeuge_fehlen");
-    bausteine::kasten(ui, &f, |ui| {
-        ui.horizontal(|ui| {
-            bausteine::icon(ui, &f, Icon::Hinweis, Ton::Warnung);
-            ui.add(egui::Label::new(bausteine::text(&f, &text, Ton::Warnung)).wrap());
-        });
-    });
-    ui.add_space(thema::SPACE_4);
-}
-
 /// Die Kopfzeile der Seite: Titel und Unterzeile links, „Exportieren“ und
 /// „Importieren“ rechts (Aufgabe 15). Ist das Fenster zu schmal für beides
 /// nebeneinander, stehen die Knöpfe darunter (Aufgabe 18): die Unterzeile
 /// wird dann nicht abgeschnitten.
-fn kopfzeile(ui: &mut egui::Ui, sicht: &Sicht, exportieren: &mut bool, importieren: &mut bool) {
+fn kopfzeile(
+    ui: &mut egui::Ui,
+    sicht: &mut Sicht,
+    exportieren: &mut bool,
+    importieren: &mut bool,
+    aktionen: &mut Vec<Aktion>,
+) {
     let f = *sicht.thema.farben();
     let sprache = sicht.sprache;
     let export = t(sprache, "einstellungen.exportieren");
     let import = t(sprache, "einstellungen.importieren");
-    let knoepfe = bausteine::knopfbreite(ui, &export) + bausteine::knopfbreite(ui, &import);
+    let aktualisieren = t(sprache, "tools.aktualisieren");
+    let knoepfe = bausteine::knopfbreite(ui, &export)
+        + bausteine::knopfbreite(ui, &import)
+        + bausteine::knopfbreite(ui, &aktualisieren);
     // So viel Platz braucht der Titel, damit er lesbar bleibt.
     let titel = thema::SPACE_8 * 5.0;
     let nebeneinander = ui.available_width() >= titel + knoepfe + thema::SPACE_3;
@@ -126,13 +114,21 @@ fn kopfzeile(ui: &mut egui::Ui, sicht: &Sicht, exportieren: &mut bool, importier
             |ui| titelkopf(ui, &f, sprache),
             |ui| {
                 // Die rechte Seite füllt egui von rechts: erst „Importieren“,
-                // damit links „Exportieren“ steht — wie in der Leiste darunter.
+                // damit links „Tools aktualisieren“ steht.
                 if bausteine::knopf(ui, &f, Icon::Hochladen, &import).clicked() {
                     *importieren = true;
                 }
                 if bausteine::knopf(ui, &f, Icon::Herunterladen, &export).clicked() {
                     *exportieren = true;
                 }
+                // Nachtrag zu Aufgabe 37: sofort beim Server nachfragen.
+                // Gesperrt, solange etwas läuft – dann gibt es nichts zu stoßen.
+                let laeuft = logik::fortschritt_dreht(&sicht.modell.fortschritt);
+                ui.add_enabled_ui(!laeuft, |ui| {
+                    if bausteine::knopf(ui, &f, Icon::Neuladen, &aktualisieren).clicked() {
+                        aktualisieren_anfordern(sicht, aktionen);
+                    }
+                });
             },
         );
     } else {
@@ -144,9 +140,59 @@ fn kopfzeile(ui: &mut egui::Ui, sicht: &Sicht, exportieren: &mut bool, importier
             if bausteine::knopf(ui, &f, Icon::Hochladen, &import).clicked() {
                 *importieren = true;
             }
+            let laeuft = logik::fortschritt_dreht(&sicht.modell.fortschritt);
+            ui.add_enabled_ui(!laeuft, |ui| {
+                if bausteine::knopf(ui, &f, Icon::Neuladen, &aktualisieren).clicked() {
+                    aktualisieren_anfordern(sicht, aktionen);
+                }
+            });
         });
     }
     ui.add_space(thema::SPACE_5);
+}
+
+/// „Tools aktualisieren“: ohne Verbindung sagt das Fenster warum, statt eine
+/// Anfrage zu schicken, die ins Leere ginge (Nachtrag zu Aufgabe 37).
+fn aktualisieren_anfordern(sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
+    if matches!(
+        sicht.modell.verbindung,
+        quiver_client::Verbindung::Verbunden { .. }
+    ) {
+        aktionen.push(Aktion::ToolsAktualisieren);
+    } else {
+        sicht.hinweis = Some(t(sicht.sprache, "tools.ohne_verbindung"));
+    }
+}
+
+/// Die Anzeige am Kopf: was gerade getan wird („Verbinde mit dem Server …“,
+/// „Tools werden geladen (3 von 12)“, „Wird gestartet …“), am Ende kurz
+/// „Alles aktuell“ (Nachtrag zu Aufgabe 37).
+///
+/// Sie steht nur, wenn es etwas zu tun gibt: unter 300 ms erscheint nichts,
+/// „Alles aktuell“ verschwindet nach vier Sekunden. Solange ein Ring dreht,
+/// zeichnet das Fenster weiter; sonst bleibt es ruhig (kein Dauerbild).
+fn fortschritt(ui: &mut egui::Ui, sicht: &mut Sicht) {
+    let (fortschritt, alter) = sicht.fortschritt_jetzt();
+    let Some(text) = logik::fortschritt_text(sicht.sprache, &fortschritt, alter) else {
+        return;
+    };
+    let f = *sicht.thema.farben();
+    // „Weniger Bewegung“ im System: dann kein drehender Ring, nur der Text.
+    let dreht = logik::fortschritt_dreht(&fortschritt) && ui.style().animation_time > 0.0;
+    bausteine::kasten(ui, &f, |ui| {
+        if dreht {
+            bausteine::status_dreht(ui, &f, Ton::Leise, &text);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        } else {
+            bausteine::status(ui, &f, Ton::Leise, &text);
+            let rest = logik::KURZ.saturating_sub(alter);
+            if !logik::fortschritt_dreht(&fortschritt) && !rest.is_zero() {
+                ui.ctx().request_repaint_after(rest);
+            }
+        }
+    });
+    ui.add_space(thema::SPACE_4);
 }
 
 /// Titel und Unterzeile der Seite.
@@ -165,12 +211,15 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let f = *sicht.thema.farben();
     let sprache = sicht.sprache;
     let ton = logik::zustand_ton(&eintrag.zustand);
-    let stand = logik::zustand_text(sprache, &eintrag.zustand);
+    let stand = logik::laden_text(sprache, &eintrag.zustand, eintrag.ladeanteil);
     let fehler = logik::fehlertext(&eintrag.zustand).map(str::to_string);
     // Fehlt das Programm, sagt die Karte das einmal – und zwar an der Stelle
     // des Zustands. Alles Technische bleibt weg, und einen Anmelde-Knopf gibt
     // es nicht: es gäbe nichts zu starten (Aufgabe 35, §5).
     let nicht_installiert = eintrag.nicht_installiert.is_some();
+    // Der Server hat das Programm für dieses System nicht (Aufgabe 37): kein
+    // Fehler, eine Auskunft – ebenfalls ohne Anmelde-Knopf.
+    let nicht_verfuegbar = nicht_installiert || eintrag.nicht_fuer_system;
     // Ein Knopf für die Angaben, nie zwei (Aufgabe 35, §5).
     let angaben_knopf = logik::kartenknopf(eintrag);
     let unter = (!eintrag.beschreibung.is_empty()).then(|| eintrag.beschreibung.clone());
@@ -183,6 +232,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
     let mut einrichten = false;
     let mut abbrechen = false;
     let mut schalten: Option<bool> = None;
+    let mut neu_versuchen = false;
     // Abgeschaltet: die Karte ist gedämpft, die Knöpfe sind gesperrt
     // (Aufgabe 19).
     let aus = eintrag.am_geraet_aus;
@@ -209,8 +259,23 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
             .show(
                 ui,
                 |ui| {
-                    if nicht_installiert {
-                        let satz = t(sprache, "tools.nicht_installiert_text");
+                    if logik::karte_dreht(&eintrag.zustand) {
+                        // Das Programm kommt gerade vom Server: Ring und Text,
+                        // mit Anteil, wenn die Größe bekannt ist (Nachtrag zu
+                        // Aufgabe 37).
+                        if ui.style().animation_time > 0.0 {
+                            bausteine::status_dreht(ui, &f, ton, &stand);
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(100));
+                        } else {
+                            bausteine::status(ui, &f, ton, &stand);
+                        }
+                    } else if nicht_installiert || eintrag.nicht_fuer_system {
+                        let satz = if eintrag.nicht_fuer_system {
+                            t(sprache, "tools.nicht_fuer_system")
+                        } else {
+                            t(sprache, "tools.nicht_installiert_text")
+                        };
                         bausteine::status(ui, &f, Ton::Warnung, &satz).on_hover_text(satz);
                     } else {
                         bausteine::status(ui, &f, ton, &stand);
@@ -257,9 +322,25 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
         // Fehlt das Programm, steht der Satz schon in der Zustandszeile; der
         // technische Text des Startfehlers kommt nicht zusätzlich auf die
         // Karte (Aufgabe 35, §5).
-        if let Some(fehler) = fehler.filter(|_| !nicht_installiert) {
+        if let Some(fehler) = fehler.filter(|_| !nicht_verfuegbar) {
             ui.add_space(thema::SPACE_1);
             bausteine::absatz(ui, &f, fehler, Ton::Fehler);
+            // „Erneut versuchen“ (Nachtrag zu Aufgabe 37): ein Programm, das
+            // nicht geladen werden konnte, wird dabei erneut geholt; ein
+            // abgeschalteter Eintrag bietet den Knopf nicht an.
+            if !aus {
+                ui.add_space(thema::SPACE_1);
+                if bausteine::knopf(
+                    ui,
+                    &f,
+                    Icon::Neuladen,
+                    &t(sprache, "tools.erneut_versuchen"),
+                )
+                .clicked()
+                {
+                    neu_versuchen = true;
+                }
+            }
         }
         // Eine Kennung, die nicht als Präfix taugt: der Eintrag startet nicht,
         // und das Fenster sagt warum (Paket 3).
@@ -275,7 +356,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
         // Die Anmeldung (Aufgabe 10): ein Tool kann eine Anmeldung des Users
         // brauchen. Sie wird hier im Fenster ausgelöst, nie von einem Agenten.
         // Fehlt das Programm, gibt es nichts anzumelden (Aufgabe 35, §5).
-        if let Some(zustand) = eintrag.anmeldung.as_ref().filter(|_| !nicht_installiert) {
+        if let Some(zustand) = eintrag.anmeldung.as_ref().filter(|_| !nicht_verfuegbar) {
             ui.add_space(thema::SPACE_2);
             let zeile = logik::anmeldung_zeile(sprache, zustand);
             egui::Sides::new()
@@ -337,7 +418,7 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
         // Eingerichtet wird auf der Seite des Tools selbst — „Einrichten“ ist
         // ein normaler Knopf, kein Hauptknopf. Ohne Programm gibt es auch
         // nichts einzurichten (Aufgabe 35, §5).
-        if let Some(zustand) = eintrag.einrichtung.as_ref().filter(|_| !nicht_installiert) {
+        if let Some(zustand) = eintrag.einrichtung.as_ref().filter(|_| !nicht_verfuegbar) {
             ui.add_space(thema::SPACE_2);
             let zeile = logik::einrichtung_zeile(sprache, zustand);
             egui::Sides::new()
@@ -578,6 +659,11 @@ fn karte(ui: &mut egui::Ui, sicht: &mut Sicht, eintrag: &EintragSicht, aktionen:
                 .map(|zugaenge| zugaenge.einzahl.clone())
                 .unwrap_or_default(),
         };
+    }
+    if neu_versuchen {
+        aktionen.push(Aktion::EintragNeuVersuchen {
+            eintrag: eintrag.id.clone(),
+        });
     }
     if anmelden {
         aktionen.push(Aktion::EintragAnmelden {

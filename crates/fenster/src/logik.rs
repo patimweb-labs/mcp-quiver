@@ -5,6 +5,8 @@
 //! welche Farbe ein Zustand hat, was in einem Feld steht, welche Schnipsel
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
+use std::time::Duration;
+
 use quiver_client::protokoll::{Status, Zeitraum};
 use quiver_client::{
     protokoll, AnmeldeZustand, Aufruf, EinrichtZustand, EintragSicht, Modell, Verbindung,
@@ -68,7 +70,9 @@ pub fn zustand_ton(zustand: &EintragZustand) -> Ton {
     match zustand {
         EintragZustand::Laeuft { .. } => Ton::Gut,
         EintragZustand::WartetAufWerte { .. } => Ton::Warnung,
-        EintragZustand::Startet => Ton::Leise,
+        EintragZustand::Startet | EintragZustand::WirdGeladen | EintragZustand::Aktualisiert => {
+            Ton::Leise
+        }
         EintragZustand::AmGeraetAus | EintragZustand::Unbekannt => Ton::Blass,
         EintragZustand::Fehler { .. } => Ton::Fehler,
     }
@@ -84,9 +88,73 @@ pub fn zustand_text(sprache: Sprache, zustand: &EintragZustand) -> String {
         }
         EintragZustand::WartetAufWerte { .. } => t(sprache, "tools.wartet"),
         EintragZustand::Startet => t(sprache, "tools.startet"),
+        EintragZustand::WirdGeladen => t(sprache, "tools.wird_geladen"),
+        EintragZustand::Aktualisiert => t(sprache, "tools.aktualisiert"),
         EintragZustand::AmGeraetAus => t(sprache, "tools.abgeschaltet"),
         EintragZustand::Unbekannt => t(sprache, "tools.unbekannt"),
         EintragZustand::Fehler { .. } => t(sprache, "tools.fehler"),
+    }
+}
+
+/// Der Text der Fortschrittsanzeige am Kopf der Werkzeugseite – `None`, wenn
+/// nichts zu zeigen ist (Nachtrag zu Aufgabe 37).
+///
+/// Was kürzer als [`FLACKER`] dauert, wird nicht gezeigt; „Alles aktuell“
+/// verschwindet nach [`KURZ`] von selbst.
+pub fn fortschritt_text(
+    sprache: Sprache,
+    fortschritt: &quiver_client::Fortschritt,
+    alter: Duration,
+) -> Option<String> {
+    use quiver_client::Fortschritt;
+    match fortschritt {
+        Fortschritt::Ruhe => None,
+        Fortschritt::Verbindet => {
+            (alter >= FLACKER).then(|| t(sprache, "tools.fortschritt_verbindet"))
+        }
+        Fortschritt::Laedt { fertig, gesamt } => {
+            (alter >= FLACKER).then(|| tf(sprache, "tools.fortschritt_laedt", &[fertig, gesamt]))
+        }
+        Fortschritt::Startet => (alter >= FLACKER).then(|| t(sprache, "tools.fortschritt_startet")),
+        Fortschritt::Fertig { geaendert: 0 } => {
+            (alter < KURZ).then(|| t(sprache, "tools.fortschritt_aktuell"))
+        }
+        Fortschritt::Fertig { geaendert } => {
+            (alter < KURZ).then(|| tf(sprache, "tools.fortschritt_geaendert", &[geaendert]))
+        }
+    }
+}
+
+/// Dreht sich dabei ein Ring? (Nein bei „Alles aktuell“ und bei Ruhe.)
+pub fn fortschritt_dreht(fortschritt: &quiver_client::Fortschritt) -> bool {
+    use quiver_client::Fortschritt;
+    matches!(
+        fortschritt,
+        Fortschritt::Verbindet | Fortschritt::Laedt { .. } | Fortschritt::Startet
+    )
+}
+
+/// So kurz darf etwas dauern, ohne gezeigt zu werden (kein Flackern).
+pub const FLACKER: Duration = Duration::from_millis(300);
+/// So lange steht „Alles aktuell“ da.
+pub const KURZ: Duration = Duration::from_secs(4);
+
+/// Lädt oder aktualisiert dieser Eintrag gerade sein Programm? Dann dreht sich
+/// auf der Karte ein Ring (Nachtrag zu Aufgabe 37).
+pub fn karte_dreht(zustand: &EintragZustand) -> bool {
+    matches!(
+        zustand,
+        EintragZustand::WirdGeladen | EintragZustand::Aktualisiert
+    )
+}
+
+/// Der Text auf der Karte während des Ladens – mit Anteil, wenn er bekannt ist.
+pub fn laden_text(sprache: Sprache, zustand: &EintragZustand, anteil: Option<u8>) -> String {
+    match (zustand, anteil) {
+        (EintragZustand::WirdGeladen, Some(prozent)) => {
+            tf(sprache, "tools.wird_geladen_anteil", &[&prozent])
+        }
+        _ => zustand_text(sprache, zustand),
     }
 }
 
@@ -267,6 +335,8 @@ pub enum TrayEintrag {
     Zustand(String),
     /// „Fenster öffnen".
     Zeigen(String),
+    /// „Tools aktualisieren" (Nachtrag zu Aufgabe 37).
+    Aktualisieren(String),
     /// „Beim Anmelden starten" mit Häkchen.
     Autostart {
         text: String,
@@ -303,12 +373,30 @@ pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
             } else {
                 tf(sprache, "tray.agenten", &[&agenten])
             };
-            format!(
+            let zusatz = tray_fortschritt(modell, sprache);
+            let bisher = format!(
                 "{} · {} · {agenten}",
                 t(sprache, "tray.verbunden"),
                 tf(sprache, "tray.tools", &[&tools])
-            )
+            );
+            match zusatz {
+                Some(zusatz) => format!("{bisher} · {zusatz}"),
+                None => bisher,
+            }
         }
+    }
+}
+
+/// Der kurze Text im Tray, solange etwas läuft (Nachtrag zu Aufgabe 37):
+/// „Lädt 3 von 12", „Startet …", „Alles aktuell".
+pub fn tray_fortschritt(modell: &Modell, sprache: Sprache) -> Option<String> {
+    use quiver_client::Fortschritt;
+    match &modell.fortschritt {
+        Fortschritt::Ruhe | Fortschritt::Verbindet => None,
+        Fortschritt::Laedt { fertig, gesamt } => Some(tf(sprache, "tray.laedt", &[fertig, gesamt])),
+        Fortschritt::Startet => Some(t(sprache, "tray.startet")),
+        Fortschritt::Fertig { geaendert: 0 } => Some(t(sprache, "tray.aktuell")),
+        Fortschritt::Fertig { geaendert } => Some(tf(sprache, "tray.aktualisiert", &[geaendert])),
     }
 }
 
@@ -318,6 +406,7 @@ pub fn tray_menu(modell: &Modell, autostart: bool, sprache: Sprache) -> Vec<Tray
     vec![
         TrayEintrag::Zustand(tray_zeile(modell, sprache)),
         TrayEintrag::Zeigen(t(sprache, "tray.fenster")),
+        TrayEintrag::Aktualisieren(t(sprache, "tools.aktualisieren")),
         TrayEintrag::Autostart {
             text: t(sprache, "tray.autostart"),
             an: autostart,
@@ -1339,7 +1428,7 @@ mod tests {
             protokoll_fuer_agenten: false,
             tresor_fehler: None,
             profil_hinweis: None,
-            werkzeuge_fehlen: false,
+            fortschritt: quiver_client::Fortschritt::Ruhe,
         }
     }
 
@@ -1388,6 +1477,8 @@ mod tests {
             am_geraet_aus: false,
             unzulaessig: None,
             nicht_installiert: None,
+            nicht_fuer_system: false,
+            ladeanteil: None,
         }
     }
 
@@ -2526,23 +2617,144 @@ mod tests {
     #[test]
     fn tray_menu_hat_die_vereinbarte_reihenfolge() {
         let menu = tray_menu(&modell(verbunden()), true, Sprache::De);
-        assert_eq!(menu.len(), 5);
+        assert_eq!(menu.len(), 6);
         assert!(
             matches!(&menu[0], TrayEintrag::Zustand(text) if text == "Verbunden · 0 Tools · 1 Agent")
         );
         assert!(matches!(&menu[1], TrayEintrag::Zeigen(text) if text == "Fenster öffnen"));
+        // Nachtrag zu Aufgabe 37: ohne Fenster erreichbar.
+        assert!(
+            matches!(&menu[2], TrayEintrag::Aktualisieren(text) if text == "Tools aktualisieren")
+        );
         assert!(matches!(
-            &menu[2],
+            &menu[3],
             TrayEintrag::Autostart { text, an: true } if text == "Beim Anmelden starten"
         ));
-        assert_eq!(menu[3], TrayEintrag::Trenner);
-        assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Beenden"));
+        assert_eq!(menu[4], TrayEintrag::Trenner);
+        assert!(matches!(&menu[5], TrayEintrag::Beenden(text) if text == "Beenden"));
         // Englisch, Autostart aus.
         let menu = tray_menu(&modell(verbunden()), false, Sprache::En);
         assert!(
-            matches!(&menu[2], TrayEintrag::Autostart { text, an: false } if text == "Start at login")
+            matches!(&menu[3], TrayEintrag::Autostart { text, an: false } if text == "Start at login")
         );
-        assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Quit"));
+        assert!(matches!(&menu[5], TrayEintrag::Beenden(text) if text == "Quit"));
+    }
+
+    /// Der kurze Text im Tray sagt, was gerade läuft (Nachtrag zu Aufgabe 37).
+    #[test]
+    fn tray_zeigt_den_fortschritt_kurz() {
+        use quiver_client::Fortschritt;
+        let mut m = modell(verbunden());
+        assert_eq!(tray_fortschritt(&m, Sprache::De), None);
+        m.fortschritt = Fortschritt::Verbindet;
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::De),
+            None,
+            "die Verbindung steht schon da"
+        );
+        m.fortschritt = Fortschritt::Laedt {
+            fertig: 3,
+            gesamt: 12,
+        };
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::De).as_deref(),
+            Some("Lädt 3 von 12")
+        );
+        assert!(tray_zeile(&m, Sprache::De).ends_with("Lädt 3 von 12"));
+        m.fortschritt = Fortschritt::Startet;
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::En).as_deref(),
+            Some("Starting …")
+        );
+        m.fortschritt = Fortschritt::Fertig { geaendert: 0 };
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::De).as_deref(),
+            Some("Alles aktuell")
+        );
+        m.fortschritt = Fortschritt::Fertig { geaendert: 2 };
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::En).as_deref(),
+            Some("2 updated")
+        );
+    }
+
+    /// Die Anzeige am Kopf: kein Flackern, „Alles aktuell“ nur kurz
+    /// (Nachtrag zu Aufgabe 37).
+    #[test]
+    fn fortschritt_verschwindet_wieder() {
+        use quiver_client::Fortschritt;
+        let sofort = std::time::Duration::ZERO;
+        let spaeter = FLACKER + std::time::Duration::from_millis(1);
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Ruhe, spaeter),
+            None
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Verbindet, sofort),
+            None,
+            "unter 300 ms wird nichts gezeigt"
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Verbindet, spaeter).as_deref(),
+            Some("Verbinde mit dem Server …")
+        );
+        assert_eq!(
+            fortschritt_text(
+                Sprache::De,
+                &Fortschritt::Laedt {
+                    fertig: 3,
+                    gesamt: 12
+                },
+                spaeter
+            )
+            .as_deref(),
+            Some("Tools werden geladen (3 von 12)")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::En, &Fortschritt::Startet, spaeter).as_deref(),
+            Some("Starting …")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Fertig { geaendert: 0 }, spaeter)
+                .as_deref(),
+            Some("Alles aktuell")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::En, &Fortschritt::Fertig { geaendert: 2 }, spaeter)
+                .as_deref(),
+            Some("2 tools updated")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Fertig { geaendert: 0 }, KURZ),
+            None,
+            "„Alles aktuell“ steht nur kurz"
+        );
+        assert!(fortschritt_dreht(&Fortschritt::Laedt {
+            fertig: 0,
+            gesamt: 1
+        }));
+        assert!(!fortschritt_dreht(&Fortschritt::Fertig { geaendert: 0 }));
+    }
+
+    /// Die Karte sagt beim Laden „Wird geladen …“ und mit bekanntem Anteil den
+    /// Prozentsatz (Nachtrag zu Aufgabe 37).
+    #[test]
+    fn die_karte_nennt_den_anteil() {
+        assert!(karte_dreht(&EintragZustand::WirdGeladen));
+        assert!(karte_dreht(&EintragZustand::Aktualisiert));
+        assert!(!karte_dreht(&EintragZustand::Startet));
+        assert_eq!(
+            laden_text(Sprache::De, &EintragZustand::WirdGeladen, Some(42)),
+            "Wird geladen … 42 %"
+        );
+        assert_eq!(
+            laden_text(Sprache::De, &EintragZustand::WirdGeladen, None),
+            "Wird vom Server geladen …"
+        );
+        assert_eq!(
+            laden_text(Sprache::En, &EintragZustand::Aktualisiert, Some(10)),
+            "Updated"
+        );
     }
 
     #[test]

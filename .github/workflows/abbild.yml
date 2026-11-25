@@ -77,6 +77,12 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.plattform }}
+          # Die Programme, die der Server an die Geräte verteilt (Aufgabe 37):
+          # das festgelegte Release von quiver-tools. Ist die Variable nicht
+          # gesetzt, baut das Abbild ohne Programme und sagt es im Bau-Log.
+          build-args: |
+            QUIVER_TOOLS_VERSION=${{ vars.QUIVER_TOOLS_VERSION }}
+            QUIVER_TOOLS_BASIS=${{ vars.QUIVER_TOOLS_BASIS || 'https://github.com/patimweb-labs/quiver-tools/releases/download' }}
           labels: |
             org.opencontainers.image.title=mcp-quiver-server
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

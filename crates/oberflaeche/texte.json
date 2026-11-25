@@ -351,6 +351,22 @@
     "de": "Getrennt · läuft weiter",
     "en": "Disconnected · still running"
   },
+  "tray.laedt": {
+    "de": "Lädt {} von {}",
+    "en": "Loading {} of {}"
+  },
+  "tray.startet": {
+    "de": "Startet …",
+    "en": "Starting …"
+  },
+  "tray.aktuell": {
+    "de": "Alles aktuell",
+    "en": "Everything up to date"
+  },
+  "tray.aktualisiert": {
+    "de": "{} aktualisiert",
+    "en": "{} updated"
+  },
   "tray.fenster": {
     "de": "Fenster öffnen",
     "en": "Open window"
@@ -1059,9 +1075,53 @@
     "de": "Dieses Tool ist auf diesem Gerät nicht installiert.",
     "en": "This tool is not installed on this device."
   },
-  "tools.werkzeuge_fehlen": {
-    "de": "Der Ordner „tools“ neben quiver fehlt. Bitte das ganze ZIP entpacken.",
-    "en": "The “tools” folder next to quiver is missing. Please unpack the whole ZIP."
+  "tools.nicht_fuer_system": {
+    "de": "Für dieses System gibt es das Tool nicht.",
+    "en": "This tool does not exist for this system."
+  },
+  "tools.wird_geladen": {
+    "de": "Wird vom Server geladen …",
+    "en": "Downloading from the server …"
+  },
+  "tools.wird_geladen_anteil": {
+    "de": "Wird geladen … {} %",
+    "en": "Downloading … {} %"
+  },
+  "tools.aktualisiert": {
+    "de": "Aktualisiert",
+    "en": "Updated"
+  },
+  "tools.fortschritt_verbindet": {
+    "de": "Verbinde mit dem Server …",
+    "en": "Connecting to the server …"
+  },
+  "tools.fortschritt_laedt": {
+    "de": "Tools werden geladen ({} von {})",
+    "en": "Downloading tools ({} of {})"
+  },
+  "tools.fortschritt_startet": {
+    "de": "Wird gestartet …",
+    "en": "Starting …"
+  },
+  "tools.fortschritt_aktuell": {
+    "de": "Alles aktuell",
+    "en": "Everything up to date"
+  },
+  "tools.fortschritt_geaendert": {
+    "de": "{} Tools aktualisiert",
+    "en": "{} tools updated"
+  },
+  "tools.aktualisieren": {
+    "de": "Tools aktualisieren",
+    "en": "Update tools"
+  },
+  "tools.ohne_verbindung": {
+    "de": "Keine Verbindung zum Server – bitte zuerst verbinden. Die geladenen Tools laufen weiter.",
+    "en": "No connection to the server — please connect first. Downloaded tools keep running."
+  },
+  "tools.erneut_versuchen": {
+    "de": "Erneut versuchen",
+    "en": "Try again"
   },
   "tools.ergaenzen": {
     "de": "Angaben ergänzen",

@@ -165,34 +165,56 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 - [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
 - [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.
 
-## Werkzeuge im Paket (Aufgabe 35)
-- [ ] Die Werkzeuge werden bei jedem Lauf aus dem Netz geholt und neu übersetzt
-      (12 Kisten je Plattform). `rust-cache` hilft nur, solange der Zielordner
-      derselbe bleibt; ein eigener Zwischenspeicher für den Stand aus
-      `verteilung/tools/stand.txt` fehlt. Ein Release dauert dadurch spürbar
-      länger, und ein GitHub-Ausfall beim Klonen hält den Bau an.
-- [ ] Das Anheben des Standes ist Handarbeit (eine Zeile in
-      `verteilung/tools/stand.txt`); es gibt weder eine Prüfung „gibt es diesen
-      Commit?“, die vor dem Release läuft, noch einen Hinweis, wenn eine
-      neuere quiver-tools-Version heraußen ist.
-- [ ] Fehlt `strip` auf dem Läufer, stehen die Werkzeuge ungestrippt im Paket;
-      das steht dann im Bericht (`dist/TOOLS.txt`), aber niemand bricht ab.
-      Unter Windows ist `strip` nicht garantiert vorhanden.
-- [ ] Die Windows-Seite (`.zip` mit `tools\`, MSI-Fragment `werkzeuge.wxs`) ist
-      hier nicht baubar (macOS) — nur nach Vorlage geschrieben. Das erzeugte
-      Fragment hat keinen Prüflauf gegen `wix build` gesehen.
-- [ ] Die Werkzeuge werden für jede Architektur auf dem jeweiligen Läufer
-      gebaut; ein aarch64-Werkzeugsatz lässt sich lokal nicht gegenprüfen.
-- [ ] Ein Eintrag mit festem Pfad wird nicht auf „liegt das Programm hier?“
-      geprüft, sondern beim Start; die Verwaltung warnt nur. Ob das Fenster den
-      Zustand nach dem Speichern sofort zeigt, hängt am nächsten Abgleich.
+## Werkzeuge vom Server (Aufgabe 37)
+- [ ] Ein geändertes Programm im Ordner des Servers ändert die Revision, aber
+      niemand wird benachrichtigt: Geräte merken es beim nächsten Abgleich
+      (Ereignis, spätestens nach fünf Minuten). Ein Wächter, der den Ordner
+      beobachtet und `melde_aenderung` auslöst, fehlt.
+- [ ] Die Drossel für Programm-Abrufe ist der allgemeine Zähler
+      (`treffer`, 30 frei, dann wachsende Sperre) statt eines eigenen Budgets
+      je Gerät und Stunde. Für den Normalbetrieb reicht das; ein Gerät, das
+      viele Programme auf einmal braucht, kann kurz warten müssen.
+- [ ] End-to-End **nicht** geprüft: „Platte voll“ (ENOSPC beim Schreiben der
+      Zwischendatei), die Windows-Sperre einer laufenden Datei (der Code
+      stoppt vor dem Ersetzen, aber es gibt keinen Windows-Lauf dafür) und
+      „Entzug genau während des Ladens“ (der Abruf bekommt dann 403; der Test
+      deckt nur den Abruf nach dem Entzug ab).
+- [ ] Zwei Abgleiche zugleich sind über eine Sperre im Client serialisiert;
+      ein Test, der zwei gleichzeitig startet, fehlt (die Sperre ist die
+      einzige Absicherung).
+- [ ] `QUIVER_TOOLS_DIR` zeigt auf einen Entwicklungsordner mit flach
+      liegenden Programmen; ein ausgecheckter Stand wird nicht gegen eine
+      Prüfsumme geprüft (so gewollt, aber es steht nirgends im Fenster).
+- [ ] Die Verwaltung zeigt die Programme und die je Gerät laufenden Fassungen
+      im Überblick; ein Filter „welcher Eintrag braucht ein Programm, das
+      fehlt?“ fehlt.
+- [ ] „Weniger Bewegung“ ist über egui genähert: dreht die Animation nicht
+      (`animation_time` = 0), steht der Text ohne Ring. Eine Plattform-Anfrage
+      (macOS/Windows-Einstellung) liest der Client nicht.
+- [ ] Der Knopf „Tools aktualisieren“ fragt beim Server nach; das Ändern einer
+      Datei im Programmordner löst von selbst **kein** Ereignis aus (siehe
+      oben), deshalb ist der Knopf der schnelle Weg.
+- [ ] Laufende Werkzeugaufrufe werden vor einem Programmtausch bis zu 10 s
+      abgewartet; danach wird getauscht und der Grund steht im Protokoll des
+      Eintrags. Ein Hinweis im Fenster („wartet auf 2 laufende Aufrufe“) fehlt,
+      und ein Test dafür gibt es nicht (er bräuchte einen hängenden Aufruf).
+
+## Release der Werkzeuge (Aufgabe 38, anderes Repo)
+- [ ] Solange es kein Release von quiver-tools gibt, baut das Abbild ohne
+      Programme (es sagt es beim Bauen). `vars.QUIVER_TOOLS_VERSION` muss im
+      Repo gesetzt werden, sobald das Release da ist.
+- [ ] Der Bau prüft die Archive gegen `SHA256SUMS`; die Prüfsummen **je
+      Programm** aus `LISTE.json` rechnet der Server beim Ausliefern selbst
+      nach. Ein Abgleich „LISTE.json gegen die entpackten Programme“ beim
+      Bauen fehlt.
 
 ## Anmeldung eines Tools (Aufgabe 35, §5)
 - [ ] Der Weg auf einem echten Windows-Gerät (Konsolenfenster, Standardbrowser,
       Loopback hinter der Firewall, Tresor unter `%APPDATA%`) ist hier nicht
       nachstellbar (macOS). Geprüft ist, was prüfbar ist: `CREATE_NO_WINDOW` für
-      jeden Kindprozess, Binden nur an `127.0.0.1`, und die Suche nach
-      `tools\*.exe`. Ein Lauf auf Windows steht aus.
+      jeden Kindprozess, Binden nur an `127.0.0.1`, und die Ablage der
+      Programme unter `%APPDATA%` (nur der Benutzer). Ein Lauf auf Windows
+      steht aus.
 - [ ] **Exit 3 („läuft bald ab“) kennt noch kein Werkzeug.** Der Client wertet
       ihn aus und die Karte zeigt den Zustand; `quiver-m365` und `quiver-zep`
       melden ihn bisher nicht. Bis dahin bleibt es bei „angemeldet“ und einem

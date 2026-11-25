@@ -49,3 +49,17 @@ Konfiguration, zurück in die Gruppe funktioniert ohne neue Angaben, falsche Pr�
 nicht zugewiesenes Tool abrufen (403), fremdes Gerät, Entzug während des Ladens, Platte voll, Windows-Sperre, zwei Abgleiche zugleich.
 README: „automatisch installiert, aktualisiert und entfernt“ muss danach stimmen. fmt, clippy, `cargo test --workspace`, admin-Tests.
 **Nicht committen, nicht pushen.**
+
+## Anzeige beim Laden (Nachtrag)
+
+- Nach Start und Anmeldung, solange abgeglichen oder geladen wird: ein Spinner mit Text am Kopf der Tool-Seite („Verbinde mit dem
+  Server …“, „Tools werden geladen (3 von 12)“, „Wird gestartet …“), am Ende kurz „Alles aktuell“ und weg. Fortschritt gesamt; je Karte
+  „Wird geladen …“ (mit Anteil, wenn die Größe bekannt ist) bzw. „Wird aktualisiert …“ mit Spinner. Tray: kurzer Text.
+- Die Anzeige steht **nur, wenn es etwas zu tun gibt**; wenn alles aktuell ist, erscheint beim Start nur kurz „Alles aktuell“.
+  Kein Flackern unter 300 ms. Der Spinner bremst das Fenster nicht (nur bei laufender Anzeige neu zeichnen); bei „weniger Bewegung“
+  des Systems statisch.
+- Fehler beim Laden: klarer Satz je Karte mit Knopf „Erneut versuchen“; ein Tool, das nicht lädt, hält die anderen nicht auf.
+- Knopf **„Tools aktualisieren“** auf der Tool-Seite (und im Tray): fragt sofort beim Server nach, zeigt den Spinner, ist währenddessen
+  gesperrt, meldet „Alles aktuell“ bzw. „2 Tools aktualisiert“. Ohne Verbindung: klarer Hinweis. Laufende Tool-Aufrufe werden zu Ende
+  geführt, bevor ein Tool getauscht wird (Frist, danach Meldung).
+- Verwaltung: gleiche Wörter. Englisch und Deutsch. Tests für jeden Zustand, Bilder in beiden Themen.

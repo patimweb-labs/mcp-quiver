@@ -49,9 +49,6 @@
         <Feature Id="Alles" Title="mcp-quiver" Level="1">
             <ComponentGroupRef Id="Programm" />
             <ComponentGroupRef Id="StartmenueVerknuepfung" />
-            <!-- Die Programme aus quiver-tools (Aufgabe 35); die Gruppe steht
-                 in dem beim Bauen erzeugten `werkzeuge.wxs`. -->
-            <ComponentGroupRef Id="Werkzeuge" />
         </Feature>
     </Package>
 

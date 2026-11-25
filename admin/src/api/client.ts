@@ -29,6 +29,7 @@ import type {
   EntraGruppe,
   GeraetAendern,
   GeraetStand,
+  Programm,
   Gruppe,
   GruppeId,
   Gruppenmitglied,
@@ -389,6 +390,16 @@ export class Client {
   }
 
   // -------------------------------------------------------------- Geräte
+
+  /**
+   * Welche Programme der Server für welche Systeme bereithält (Aufgabe 37).
+   *
+   * Geändert wird hier nichts: was gilt, entscheiden die Dateien im Ordner
+   * (nur root am Server).
+   */
+  async programme(): Promise<Programm[]> {
+    return anfrage<Programm[]>(`${API_BASIS}/admin/programme`);
+  }
 
   async geraete(): Promise<GeraetStand[]> {
     const liste = await anfrage<GeraetStand[]>(`${API_BASIS}/admin/geraete`);
