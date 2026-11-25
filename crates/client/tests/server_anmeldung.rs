@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{Query, State as AxState};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -24,6 +24,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use futures_util::StreamExt;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use quiver_client::{Anmeldewege, Browser, Kern, KernKonfig, SpeicherTresor, Tresor, Verbindung};
 use quiver_domain::{
@@ -862,6 +863,139 @@ async fn gesperrt_und_kein_zugriff_stoppen_alle_tools() {
         .await;
     assert!(stand.eintraege.is_empty(), "alle Tools sind aus");
     p.kern.beenden().await;
+}
+
+/// Ein stummer Server für den einen Fall, der nicht vom Ereignis abhängen
+/// darf: der Strom ist offen, das Ereignis des Entzugs fiel aber zwischen das
+/// letzte Soll und das Abonnement — es hat niemand gehört, und die Revision
+/// bleibt gleich, weil der Server sie aus dem gespeicherten Gerätestand rechnet.
+///
+/// Antworten: das erste `soll` liefert den erwarteten (leeren) Stand, jedes
+/// weitere `403 kein-zugriff`; der Strom schickt genau ein Ereignis mit der
+/// Revision dieses Standes und dann nichts mehr; `meldung` nimmt an.
+async fn stummer_server(erste_revision: String) -> String {
+    let leer = quiver_domain::Soll::neu(Vec::new());
+    let abrufe = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route(
+            "/api/v1/geraet/soll",
+            get({
+                let abrufe = abrufe.clone();
+                move || {
+                    let abrufe = abrufe.clone();
+                    let leer = leer.clone();
+                    async move {
+                        // Nur der erste Abruf gelingt: danach ist der Zugang
+                        // entzogen, ohne dass sich die Revision ändert.
+                        if abrufe.fetch_add(1, Ordering::SeqCst) == 0 {
+                            Json(leer).into_response()
+                        } else {
+                            (
+                                StatusCode::FORBIDDEN,
+                                Json(json!({
+                                    "fehler": "dem Benutzer ist keine Gruppe zugeordnet",
+                                    "grund": "kein-zugriff",
+                                })),
+                            )
+                                .into_response()
+                        }
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/geraet/ereignisse",
+            get({
+                let revision = erste_revision.clone();
+                move || {
+                    let revision = revision.clone();
+                    async move {
+                        let anfang = futures_util::stream::once(async move {
+                            Ok::<_, std::io::Error>(format!("event: soll\ndata: {revision}\n\n"))
+                        });
+                        // Danach offen und still: kein Ereignis, kein Byte.
+                        let koerper = anfang.chain(futures_util::stream::pending()).boxed();
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "text/event-stream")
+                            .body(Body::from_stream(koerper))
+                            .expect("Antwort")
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/geraet/meldung",
+            post(|| async { StatusCode::NO_CONTENT }),
+        );
+    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .expect("Port frei");
+    let basis = format!("http://{}", listener.local_addr().expect("Adresse"));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    basis
+}
+
+/// Der Entzug hängt nicht am Ereignis: der Client fragt direkt nach dem Öffnen
+/// des Stroms nach.
+///
+/// Das ist der Fall, der in der CI einmal auffiel: der Admin nimmt die Gruppe
+/// weg, während der Client gerade zwischen „Soll holen“ und „Strom öffnen“
+/// steckt. Das Ereignis geht an ein Abonnement, das es noch nicht gibt, und die
+/// Revision bleibt gleich – ohne Nachfrage bliebe der Client „verbunden“ und
+/// die Werkzeuge liefen weiter, bis die nächste Nachfrage fällig ist (fünf
+/// Minuten). Hier kommt nie ein Ereignis: der Entzug muss trotzdem sofort
+/// wirken.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entzug_ohne_ereignis_wirkt_beim_oeffnen_des_stroms() {
+    let p = Pruefung::mit_entra().await;
+    p.gruppe_anlegen().await;
+    p.anmelden().await;
+    p.warte_auf("verbunden", |m| {
+        matches!(m.verbindung, Verbindung::Verbunden { .. })
+    })
+    .await;
+    p.kern.beenden().await;
+
+    // Der stumme Server gibt den Stand bekannt, den der Client gleich hat.
+    let leer = quiver_domain::Soll::neu(Vec::new());
+    let stub = stummer_server(leer.revision.clone()).await;
+
+    // Dasselbe Profil (Geräte-Token, Angaben), nur eine andere Adresse:
+    // Loopback, wie im Betrieb erlaubt.
+    let profil = p.ordner.join("profil");
+    let zustand = profil.join("zustand.json");
+    let text = std::fs::read_to_string(&zustand).expect("zustand.json");
+    std::fs::write(&zustand, text.replace(&p.basis, &stub)).expect("zustand.json");
+    let client = Kern::starten(KernKonfig {
+        profil,
+        mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
+        tresor: p.tresor.clone(),
+        browser: p.browser.clone(),
+    })
+    .await
+    .expect("Kern startet");
+
+    let mut modell = client.modell();
+    let stand = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let stand = modell.borrow_and_update().clone();
+            if stand.abgelehnt && stand.anmelde_grund == Some(AnmeldeGrund::KeinZugriff) {
+                return stand;
+            }
+            modell.changed().await.expect("das Modell lebt");
+        }
+    })
+    .await
+    .expect("der Entzug wirkt ohne Ereignis (kein Warten auf die Nachfrage)");
+    assert!(stand.eintraege.is_empty(), "alle Tools sind aus");
+    assert!(
+        !matches!(stand.verbindung, Verbindung::Verbunden { .. }),
+        "nicht mehr „verbunden“: {stand:?}"
+    );
+    client.beenden().await;
 }
 
 /// `neu-anmelden`: alle Tools aus, aber Geräte-Token und Angaben bleiben.
