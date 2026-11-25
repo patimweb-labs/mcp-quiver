@@ -8,7 +8,6 @@ import {
   WpCheckbox,
   WpIconButton,
   WpInput,
-  WpSelect,
   WpTextarea,
 } from "@weppelmann/components";
 
@@ -22,6 +21,7 @@ import {
   optionen_als_text,
   optionen_aus_text,
 } from "../logik/feld";
+import Auswahl from "./Auswahl.vue";
 import Feld from "./Feld.vue";
 
 const props = defineProps<{
@@ -112,13 +112,13 @@ function optionenSetzen(text: string): void {
     </Feld>
 
     <div class="feldkarte__zeile">
-      <WpSelect
+      <Auswahl
         :model-value="feld.art ? feld_art_name(feld.art) : 'text'"
         :options="FELD_ARTEN"
         label="Art"
         @update:model-value="artSetzen"
       />
-      <WpSelect
+      <Auswahl
         :model-value="feld.quelle"
         :options="quellen"
         label="Quelle"

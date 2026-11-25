@@ -369,6 +369,12 @@ pub(crate) async fn gruppe_loeschen(
     let weg = db(&zustand, move |conn| {
         let gruppe: Option<Gruppe> = speicher::hole(conn, speicher::GRUPPEN, &kennung)?;
         let weg = speicher::loesche(conn, speicher::GRUPPEN, &kennung)?;
+        if weg {
+            // Zuordnungen von Hand verschwinden mit der Gruppe (Aufgabe 33):
+            // eine Zugehörigkeit zu einer Gruppe, die es nicht gibt, wäre eine
+            // Zeile, die nichts bewirkt und beim nächsten Anlegen falsch wirkt.
+            speicher::handzuordnungen_zu_gruppe_loeschen(conn, &kennung)?;
+        }
         if let (true, Some(gruppe)) = (weg, gruppe) {
             // Eine automatisch angelegte Gruppe bleibt gelöscht: die Id wird
             // gemerkt, bis der Admin sie wieder aufnimmt (Aufgabe 23).
@@ -468,7 +474,7 @@ pub(crate) async fn geraet_setzen(
                 .unwrap_or_default(),
             None => Vec::new(),
         };
-        let wirksam = speicher::wirksame_gruppen(conn, &manuell, &entra)?;
+        let wirksam = speicher::wirksame_gruppen(conn, zeile.oid.as_deref(), &manuell, &entra)?;
         let geraet = Geraet {
             id: zeile.geraet.id,
             name: aenderung.name,

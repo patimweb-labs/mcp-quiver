@@ -228,6 +228,67 @@ pub struct BenutzerSicht {
     /// `gueltig` oder `neu_anmelden`.
     pub token_stand: String,
     pub geraete: u32,
+    /// Alle wirksamen Gruppen mit Herkunft (Aufgabe 33).
+    #[serde(default)]
+    pub gruppen: Vec<BenutzerGruppe>,
+}
+
+/// Eine wirksame Gruppenzugehörigkeit eines Benutzers (Aufgabe 33).
+///
+/// Der Schlüssel ist `gruppe` (die Kennung); `titel` und `entra_ids` sind nur
+/// Anzeige. Entra-Gruppen mit gleichem Namen bleiben so unterscheidbar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenutzerGruppe {
+    pub gruppe: String,
+    /// Titel der Gruppe, sonst die Kennung.
+    pub titel: String,
+    /// Kommt über eine Entra-Gruppe; nicht hier entfernbar (in Entra ändern).
+    pub aus_entra: bool,
+    /// Von Hand vergeben; entfernbar.
+    pub von_hand: bool,
+    /// Am Gerät gesetzt (Altweg, Aufgabe 20); hier nicht entfernbar.
+    #[serde(default)]
+    pub aus_geraet: bool,
+    /// Wer sie von Hand vergeben hat.
+    #[serde(default)]
+    pub von: Option<String>,
+    /// Wann sie von Hand vergeben wurde (RFC 3339).
+    #[serde(default)]
+    pub seit: Option<String>,
+    /// Die Entra-Objekt-Ids, über die die Gruppe kommt (Anzeige).
+    #[serde(default)]
+    pub entra_ids: Vec<String>,
+}
+
+/// Ein Mitglied einer Gruppe (Aufgabe 33).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Gruppenmitglied {
+    pub oid: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub gesperrt: bool,
+    /// Über Entra zugeordnet; nicht hier entfernbar.
+    pub aus_entra: bool,
+    /// Von Hand hinzugefügt; entfernbar.
+    pub von_hand: bool,
+    /// Wer hinzugefügt hat.
+    #[serde(default)]
+    pub von: Option<String>,
+    /// Wann hinzugefügt wurde (RFC 3339).
+    #[serde(default)]
+    pub seit: Option<String>,
+}
+
+/// `PUT /admin/benutzer/{oid}/gruppen/{gruppe}` und
+/// `PUT /admin/gruppen/{id}/mitglieder/{oid}` (Aufgabe 33): dieselbe
+/// Zugehörigkeit, von beiden Seiten bedient.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ZuordnungAendern {
+    /// `true` = hinzufügen, `false` = entfernen.
+    pub vorhanden: bool,
+    /// Nötig, wenn sich ein Admin selbst die letzte Gruppe nimmt.
+    #[serde(default)]
+    pub selbst_bestaetigt: bool,
 }
 
 /// `PUT /admin/benutzer/{oid}`; fehlende Felder bleiben, wie sie sind.

@@ -47,6 +47,7 @@ function benutzer(teil: Partial<BenutzerSicht> = {}): BenutzerSicht {
     zuletzt: null,
     token_stand: "gueltig",
     geraete: 0,
+    gruppen: [],
     ...teil,
   };
 }

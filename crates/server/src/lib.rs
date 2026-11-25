@@ -49,6 +49,7 @@ mod sitzung;
 mod speicher;
 pub mod spur;
 pub mod unterbefehl;
+mod zuordnung;
 mod zustand;
 
 use std::path::PathBuf;
@@ -281,6 +282,19 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
             put(benutzer::benutzer_setzen).delete(benutzer::benutzer_loeschen),
         )
         .route("/benutzer/{oid}/pruefen", post(benutzer::benutzer_pruefen))
+        .route("/benutzer/{oid}/gruppen", get(zuordnung::benutzer_gruppen))
+        .route(
+            "/benutzer/{oid}/gruppen/{gruppe}",
+            put(zuordnung::benutzer_gruppe_setzen),
+        )
+        .route(
+            "/gruppen/{id}/mitglieder",
+            get(zuordnung::gruppe_mitglieder),
+        )
+        .route(
+            "/gruppen/{id}/mitglieder/{oid}",
+            put(zuordnung::mitglied_setzen),
+        )
         .route("/entra-schluessel", get(benutzer::entra_ausweis))
         .route("/entra-gruppen", get(benutzer::entra_gruppen))
         .route("/entra-gruppen/{id}", put(benutzer::entra_gruppe_setzen))

@@ -6,12 +6,12 @@ import {
   WpButton,
   WpDialog,
   WpInput,
-  WpMultiselect,
 } from "@weppelmann/components";
 
 import { ApiFehler, fehlertext, type Client } from "../api/client";
 import type { GeraetStand, Gruppe, GruppeId } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import Mehrfachauswahl from "../bausteine/Mehrfachauswahl.vue";
 
 const props = defineProps<{
   offen: boolean;
@@ -106,7 +106,7 @@ function neu_laden(): void {
       </Feld>
 
       <div class="auswahl">
-        <WpMultiselect
+        <Mehrfachauswahl
           :model-value="gewaehlt"
           :options="gruppenOptionen"
           label="Gruppen"

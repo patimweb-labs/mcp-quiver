@@ -108,6 +108,14 @@ Entra ID:
 
 ![Gruppen: eine aus Microsoft Entra ID abgebildet, eine lokal, jede mit ihren Sätzen](docs/bilder/admin-dark-gruppen.png)
 
+Eine Gruppe lässt sich auch von Hand zuordnen, von beiden Seiten — beim
+Benutzer unter *Gruppen* oder bei der Gruppe unter *Mitglieder*. Woher eine
+Zugehörigkeit kommt, ist sichtbar; was aus Entra kommt, ändert man nur dort:
+
+| Gruppen eines Benutzers | Mitglieder einer Gruppe |
+| --- | --- |
+| ![Gruppen eines Benutzers: eine aus Entra, eine von Hand, die Auswahlliste liegt über dem Dialog](docs/bilder/admin-dark-benutzer-gruppen.png) | ![Mitglieder einer Gruppe, die Auswahlliste liegt über dem Dialog](docs/bilder/admin-dark-gruppen-mitglieder.png) |
+
 Weitere Bilder beider Oberflächen liegen in [`docs/bilder/`](docs/bilder/).
 Sie sind **erzeugt**, nicht von Hand abgelegt: Die Oberflächentests zeichnen
 jede Seite und jeden Dialog in drei Größen mit einem stehenden Kern,

@@ -18,8 +18,9 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use quiver_protocol::{
-    AnmeldeGrund as QuiverGrund, Anmeldeart, Anmeldearten, BenutzerAendern, BenutzerSicht,
-    EntraAusweis, EntraGruppe, EntraGruppeAendern, Ich, PruefspurEintrag, Rolle, RootAnmelden,
+    AnmeldeGrund as QuiverGrund, Anmeldeart, Anmeldearten, BenutzerAendern, BenutzerGruppe,
+    BenutzerSicht, EntraAusweis, EntraGruppe, EntraGruppeAendern, Ich, PruefspurEintrag, Rolle,
+    RootAnmelden,
 };
 use time::OffsetDateTime;
 
@@ -273,15 +274,14 @@ pub(crate) async fn ich(
     axum::Extension(kontext): axum::Extension<SitzungKontext>,
 ) -> Ergebnis<Json<Ich>> {
     let kennung = kontext.benutzer.oid.clone();
-    let geraete = db(&zustand, move |conn| {
-        Ok(speicher::geraete_von_user(conn, &kennung)?.len())
+    let eigen = kontext.benutzer.clone();
+    let stand = db(&zustand, move |conn| {
+        let geraete = speicher::geraete_von_user(conn, &kennung)?.len();
+        sicht_aus(conn, &eigen, u32::try_from(geraete).unwrap_or(u32::MAX))
     })
     .await?;
     Ok(Json(Ich {
-        benutzer: sicht(
-            &kontext.benutzer,
-            u32::try_from(geraete).unwrap_or(u32::MAX),
-        ),
+        benutzer: stand,
         art: kontext.art,
     }))
 }
@@ -315,6 +315,15 @@ pub(crate) async fn abmelden(
 // -------------------------------------------------------------- Verwaltung
 
 pub(crate) fn sicht(benutzer: &Benutzer, geraete: u32) -> BenutzerSicht {
+    sicht_mit_gruppen(benutzer, geraete, Vec::new())
+}
+
+/// Die Sicht eines Benutzers mit seinen wirksamen Gruppen (Aufgabe 33).
+pub(crate) fn sicht_mit_gruppen(
+    benutzer: &Benutzer,
+    geraete: u32,
+    gruppen: Vec<BenutzerGruppe>,
+) -> BenutzerSicht {
     BenutzerSicht {
         oid: benutzer.oid.clone(),
         email: benutzer.email.clone(),
@@ -325,7 +334,18 @@ pub(crate) fn sicht(benutzer: &Benutzer, geraete: u32) -> BenutzerSicht {
         zuletzt: benutzer.zuletzt.clone(),
         token_stand: benutzer.token_stand.clone(),
         geraete,
+        gruppen,
     }
+}
+
+/// Sicht eines Benutzers samt wirksamen Gruppen – braucht eine Verbindung.
+pub(crate) fn sicht_aus(
+    conn: &rusqlite::Connection,
+    benutzer: &Benutzer,
+    geraete: u32,
+) -> anyhow::Result<BenutzerSicht> {
+    let gruppen = crate::zuordnung::benutzer_gruppen_sicht(conn, benutzer)?;
+    Ok(sicht_mit_gruppen(benutzer, geraete, gruppen))
 }
 
 pub(crate) async fn benutzer_liste(
@@ -335,7 +355,11 @@ pub(crate) async fn benutzer_liste(
         let mut aus = Vec::new();
         for benutzer in speicher::benutzer_liste(conn)? {
             let geraete = speicher::geraete_von_user(conn, &benutzer.oid)?.len();
-            aus.push(sicht(&benutzer, u32::try_from(geraete).unwrap_or(u32::MAX)));
+            aus.push(sicht_aus(
+                conn,
+                &benutzer,
+                u32::try_from(geraete).unwrap_or(u32::MAX),
+            )?);
         }
         Ok(aus)
     })
@@ -431,10 +455,11 @@ pub(crate) async fn benutzer_setzen(
             }
         }
         let geraete = speicher::geraete_von_user(conn, &kennung)?.len();
-        Ok(Ok(sicht(
+        Ok(Ok(sicht_aus(
+            conn,
             &benutzer,
             u32::try_from(geraete).unwrap_or(u32::MAX),
-        )))
+        )?))
     })
     .await??;
     zustand.melde_aenderung();
@@ -512,10 +537,11 @@ pub(crate) async fn benutzer_pruefen(
             return Ok(None);
         };
         let geraete = speicher::geraete_von_user(conn, &kennung)?.len();
-        Ok(Some(sicht(
+        Ok(Some(sicht_aus(
+            conn,
             &benutzer,
             u32::try_from(geraete).unwrap_or(u32::MAX),
-        )))
+        )?))
     })
     .await?
     .ok_or_else(|| FehlerAntwort::nicht_gefunden(format!("Benutzer {oid} gibt es nicht")))?;

@@ -37,7 +37,8 @@ pub const UNBEGRENZT: &str = "unbegrenzt";
 ///     geholt wurde.
 /// 4 = Härtung: Alter und letzte Nutzung des Geräte-Tokens, Zähler in der
 ///     Prüfspur, gemerkte Root-Anmeldeadressen, Indizes für Ablauf und Zeit.
-pub const SCHEMA_VERSION: i64 = 4;
+/// 5 = Aufgabe 33: `benutzer_gruppen` – von Hand vergebene Zugehörigkeiten.
+pub const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -142,6 +143,18 @@ CREATE TABLE IF NOT EXISTS entra_gruppen (
     name_entra    TEXT,
     name_entra_am TEXT
 );
+-- Von Hand vergebene Zugehörigkeit (Aufgabe 33). Sie gehört dem **Benutzer**
+-- und überlebt Auffrischung, Neuanmeldung und neue Geräte. `von` ist, wer sie
+-- vergeben hat; `seit` wann. Die Entra-Ids stehen weiter in `benutzer`. 
+CREATE TABLE IF NOT EXISTS benutzer_gruppen (
+    oid    TEXT NOT NULL,
+    tid    TEXT NOT NULL,
+    gruppe TEXT NOT NULL,
+    von    TEXT NOT NULL,
+    seit   TEXT NOT NULL,
+    PRIMARY KEY (oid, gruppe)
+);
+CREATE INDEX IF NOT EXISTS benutzer_gruppen_gruppe ON benutzer_gruppen (gruppe);
 "#;
 
 /// Datenbank öffnen, sichern (nur bei einer Datei), migrieren, prüfen.
@@ -909,10 +922,12 @@ pub fn sperre_setzen(conn: &Connection, oid: &str, gesperrt: bool) -> anyhow::Re
     )? > 0)
 }
 
-/// Benutzer löschen: Token, Sitzungen und alle Geräte gehen mit.
+/// Benutzer löschen: Token, Sitzungen, Geräte und Zugehörigkeiten gehen mit.
 pub fn benutzer_loeschen(conn: &Connection, oid: &str) -> anyhow::Result<bool> {
     conn.execute("DELETE FROM geraete WHERE oid = ?1", params![oid])?;
     conn.execute("DELETE FROM sitzungen WHERE oid = ?1", params![oid])?;
+    // Eine Zuordnung ohne Benutzer wäre eine Zeile, die niemand mehr sieht.
+    handzuordnungen_von_loeschen(conn, oid)?;
     Ok(conn.execute("DELETE FROM benutzer WHERE oid = ?1", params![oid])? > 0)
 }
 
@@ -1843,7 +1858,7 @@ pub fn entra_gruppe_loeschen_merken(
 pub fn geraete_gruppen_neu(conn: &Connection, oid: &str, entra: &[String]) -> anyhow::Result<bool> {
     let mut geaendert = false;
     for zeile in geraete_von_user(conn, oid)? {
-        let wirksam = wirksame_gruppen(conn, &zeile.manuell, entra)?;
+        let wirksam = wirksame_gruppen(conn, Some(oid), &zeile.manuell, entra)?;
         if wirksam != zeile.geraet.gruppen {
             let mut geraet = zeile.geraet;
             geraet.gruppen = wirksam;
@@ -1855,14 +1870,36 @@ pub fn geraete_gruppen_neu(conn: &Connection, oid: &str, entra: &[String]) -> an
 }
 
 /// Wirksame Gruppen eines Geräts: die am Gerät gesetzten **und** die über die
-/// Entra-Ids des Benutzers zugeordneten (SPEC §5, Aufgabe 20).
+/// Entra-Ids des Benutzers zugeordneten **und** die von Hand vergebenen
+/// (SPEC §5, Aufgaben 20 und 33).
+///
+/// **Eine Stelle** für Soll, Verwaltung und Nachprüfen. Gruppen, die es nicht
+/// mehr gibt, zählen nicht (gelöschte Gruppe → Zuordnung verschwindet); ein
+/// gesperrter oder gelöschter Benutzer kommt hier gar nicht erst durch, weil
+/// beide Wege vorher abweisen.
 pub fn wirksame_gruppen(
     conn: &Connection,
+    oid: Option<&str>,
     manuell: &[GruppeId],
     entra: &[String],
 ) -> anyhow::Result<Vec<GruppeId>> {
     let gruppen: Vec<Gruppe> = liste(conn, GRUPPEN)?;
-    let mut aus = manuell.to_vec();
+    let hand = match oid {
+        Some(oid) => handzuordnungen_von(conn, oid)?,
+        None => Vec::new(),
+    };
+    let mut aus: Vec<GruppeId> = manuell
+        .iter()
+        .filter(|id| gruppen.iter().any(|gruppe| &gruppe.id == *id))
+        .cloned()
+        .collect();
+    for zuordnung in hand {
+        if gruppen.iter().any(|gruppe| gruppe.id == zuordnung.gruppe)
+            && !aus.contains(&zuordnung.gruppe)
+        {
+            aus.push(zuordnung.gruppe);
+        }
+    }
     for gruppe in gruppen {
         if gruppe
             .entra
@@ -1875,6 +1912,119 @@ pub fn wirksame_gruppen(
     }
     aus.sort();
     Ok(aus)
+}
+
+/// Alle wirksamen Gruppen eines Benutzers über **alle** seine Geräte – die
+/// Sicht der Verwaltung (Aufgabe 33).
+///
+/// Ein gesperrter oder gelöschter Benutzer hat keine wirksamen Gruppen: seine
+/// Zuordnungen wirken nicht.
+pub fn wirksame_gruppen_benutzer(conn: &Connection, oid: &str) -> anyhow::Result<Vec<GruppeId>> {
+    let Some(benutzer) = benutzer_holen(conn, oid)? else {
+        return Ok(Vec::new());
+    };
+    if benutzer.gesperrt {
+        return Ok(Vec::new());
+    }
+    let mut aus: Vec<GruppeId> = Vec::new();
+    for zeile in geraete_von_user(conn, oid)? {
+        for id in wirksame_gruppen(conn, Some(oid), &zeile.manuell, &benutzer.entra)? {
+            if !aus.contains(&id) {
+                aus.push(id);
+            }
+        }
+    }
+    if aus.is_empty() {
+        // Ohne Gerät gibt es trotzdem Zugehörigkeiten: sie wirken, sobald ein
+        // Gerät dazukommt.
+        aus = wirksame_gruppen(conn, Some(oid), &[], &benutzer.entra)?;
+    }
+    aus.sort();
+    Ok(aus)
+}
+
+// ------------------------------------------- Zugehörigkeiten von Hand (33)
+
+/// Eine von Hand vergebene Zugehörigkeit: Benutzer → Gruppe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Handzuordnung {
+    pub oid: String,
+    pub gruppe: GruppeId,
+    /// Wer sie vergeben hat (E-Mail, Name oder Objekt-Id).
+    pub von: String,
+    /// Wann (RFC 3339).
+    pub seit: String,
+}
+
+fn handzuordnung_aus(zeile: &rusqlite::Row<'_>) -> rusqlite::Result<Handzuordnung> {
+    Ok(Handzuordnung {
+        oid: zeile.get(0)?,
+        gruppe: GruppeId::neu(zeile.get::<_, String>(1)?),
+        von: zeile.get(2)?,
+        seit: zeile.get(3)?,
+    })
+}
+
+/// Alle Zugehörigkeiten eines Benutzers, die von Hand vergeben wurden.
+pub fn handzuordnungen_von(conn: &Connection, oid: &str) -> anyhow::Result<Vec<Handzuordnung>> {
+    let mut stmt = conn.prepare(
+        "SELECT oid, gruppe, von, seit FROM benutzer_gruppen WHERE oid = ?1 ORDER BY gruppe",
+    )?;
+    let zeilen = stmt.query_map(params![oid], handzuordnung_aus)?;
+    Ok(zeilen.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Alle Zugehörigkeiten zu einer Gruppe, die von Hand vergeben wurden.
+pub fn handzuordnungen_zu_gruppe(
+    conn: &Connection,
+    gruppe: &str,
+) -> anyhow::Result<Vec<Handzuordnung>> {
+    let mut stmt = conn.prepare(
+        "SELECT oid, gruppe, von, seit FROM benutzer_gruppen WHERE gruppe = ?1 ORDER BY oid",
+    )?;
+    let zeilen = stmt.query_map(params![gruppe], handzuordnung_aus)?;
+    Ok(zeilen.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Eine Zugehörigkeit von Hand setzen. `false` heißt: sie gab es schon, und
+/// wer sie wann vergeben hat, bleibt stehen (kein zweiter Eintrag).
+pub fn handzuordnung_setzen(
+    conn: &Connection,
+    oid: &str,
+    tid: &str,
+    gruppe: &GruppeId,
+    von: &str,
+    jetzt: OffsetDateTime,
+) -> anyhow::Result<bool> {
+    Ok(conn.execute(
+        "INSERT OR IGNORE INTO benutzer_gruppen (oid, tid, gruppe, von, seit) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![oid, tid, gruppe.als_str(), von, hilfen::als_text(jetzt)],
+    )? > 0)
+}
+
+/// Eine von Hand vergebene Zugehörigkeit entfernen; `false` heißt: es gab keine.
+pub fn handzuordnung_entfernen(conn: &Connection, oid: &str, gruppe: &str) -> anyhow::Result<bool> {
+    Ok(conn.execute(
+        "DELETE FROM benutzer_gruppen WHERE oid = ?1 AND gruppe = ?2",
+        params![oid, gruppe],
+    )? > 0)
+}
+
+/// Alle Zugehörigkeiten eines Benutzers entfernen (Löschung des Benutzers).
+pub fn handzuordnungen_von_loeschen(conn: &Connection, oid: &str) -> anyhow::Result<usize> {
+    Ok(conn.execute("DELETE FROM benutzer_gruppen WHERE oid = ?1", params![oid])?)
+}
+
+/// Alle Zugehörigkeiten zu einer Gruppe entfernen (Löschung der Gruppe).
+pub fn handzuordnungen_zu_gruppe_loeschen(
+    conn: &Connection,
+    gruppe: &str,
+) -> anyhow::Result<usize> {
+    Ok(conn.execute(
+        "DELETE FROM benutzer_gruppen WHERE gruppe = ?1",
+        params![gruppe],
+    )?)
 }
 
 // ---------------------------------------------------- Datenbankänderung sehen
@@ -2074,6 +2224,196 @@ mod tests {
         let conn = oeffnen(&pfad).unwrap();
         assert!(benutzer_liste(&conn).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    /// Aufgabe 33: Eine alte Datenbank (Schema 4) bekommt die Tabelle für
+    /// Zugehörigkeiten von Hand, und alles Vorhandene bleibt stehen.
+    #[test]
+    fn migration_legt_die_zuordnungstabelle_an_und_behaelt_die_daten() {
+        let ordner = ordner("zuordnung-migration");
+        let pfad = ordner.join("quiver.db");
+        {
+            let conn = Connection::open(&pfad).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+                 CREATE TABLE saetze    (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+                 CREATE TABLE gruppen   (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+                 CREATE TABLE geraete (
+                    id TEXT PRIMARY KEY, json TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+                    zuletzt_gesehen TEXT, meldung_json TEXT, oid TEXT, tid TEXT,
+                    manuell_json TEXT NOT NULL DEFAULT '[]',
+                    token_erstellt TEXT, token_zuletzt TEXT);
+                 CREATE TABLE benutzer (
+                    oid TEXT PRIMARY KEY, tid TEXT NOT NULL, email TEXT, name TEXT,
+                    rolle TEXT NOT NULL DEFAULT 'benutzer',
+                    gesperrt INTEGER NOT NULL DEFAULT 0,
+                    entra_json TEXT NOT NULL DEFAULT '[]', token TEXT, passwort TEXT,
+                    token_erneuert TEXT, token_stand TEXT NOT NULL DEFAULT 'neu_anmelden',
+                    erstellt TEXT NOT NULL, zuletzt TEXT);
+                 PRAGMA user_version = 4;",
+            )
+            .unwrap();
+            let gruppe = Gruppe {
+                id: GruppeId::neu("team"),
+                titel: "Team".into(),
+                saetze: Vec::new(),
+                entra: Vec::new(),
+            };
+            setze(&conn, GRUPPEN, "team", &gruppe).unwrap();
+            conn.execute(
+                "INSERT INTO benutzer (oid, tid, email, rolle, erstellt) \
+                 VALUES ('oid-1', 'tenant', 'test@example.test', 'benutzer', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = oeffnen(&pfad).unwrap();
+        assert!(
+            ordner
+                .join(format!("quiver.db.vor-{SCHEMA_VERSION}"))
+                .exists(),
+            "Sicherung vor der Migration liegt daneben"
+        );
+        // Die neue Tabelle ist da und leer: nichts wurde erfunden.
+        assert!(handzuordnungen_von(&conn, "oid-1").unwrap().is_empty());
+        assert_eq!(
+            liste::<Gruppe>(&conn, GRUPPEN).unwrap().len(),
+            1,
+            "Gruppen bleiben"
+        );
+        assert_eq!(benutzer_liste(&conn).unwrap().len(), 1, "Benutzer bleiben");
+        // Und sie nimmt eine Zugehörigkeit auf.
+        assert!(handzuordnung_setzen(
+            &conn,
+            "oid-1",
+            "tenant",
+            &GruppeId::neu("team"),
+            "root@example.test",
+            jetzt()
+        )
+        .unwrap());
+        assert_eq!(handzuordnungen_von(&conn, "oid-1").unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&ordner);
+    }
+
+    /// Aufgabe 33: Zugehörigkeiten von Hand sind einmalig, bleiben stehen und
+    /// verschwinden mit Benutzer oder Gruppe.
+    #[test]
+    fn zuordnungen_von_hand_sind_einmalig_und_verschwinden_mit_ihrem_ziel() {
+        let conn = gedaechtnis();
+        let team = Gruppe {
+            id: GruppeId::neu("team"),
+            titel: "Team".into(),
+            saetze: Vec::new(),
+            entra: Vec::new(),
+        };
+        setze(&conn, GRUPPEN, "team", &team).unwrap();
+        assert!(
+            handzuordnung_setzen(&conn, "oid-1", "t", &team.id, "wer@example.test", jetzt())
+                .unwrap(),
+            "die erste Vergabe ist neu"
+        );
+        // Zweimal vergeben ändert nichts: wer und wann bleiben die ersten.
+        assert!(!handzuordnung_setzen(
+            &conn,
+            "oid-1",
+            "t",
+            &team.id,
+            "andere@example.test",
+            jetzt()
+        )
+        .unwrap());
+        let zeilen = handzuordnungen_von(&conn, "oid-1").unwrap();
+        assert_eq!(zeilen.len(), 1);
+        assert_eq!(zeilen[0].von, "wer@example.test");
+        assert_eq!(handzuordnungen_zu_gruppe(&conn, "team").unwrap().len(), 1);
+        assert!(handzuordnung_entfernen(&conn, "oid-1", "team").unwrap());
+        assert!(!handzuordnung_entfernen(&conn, "oid-1", "team").unwrap());
+        assert!(handzuordnungen_von(&conn, "oid-1").unwrap().is_empty());
+
+        // Mit dem Benutzer geht die Zuordnung; mit der Gruppe ebenso.
+        handzuordnung_setzen(&conn, "oid-1", "t", &team.id, "wer", jetzt()).unwrap();
+        handzuordnungen_von_loeschen(&conn, "oid-1").unwrap();
+        assert!(handzuordnungen_zu_gruppe(&conn, "team").unwrap().is_empty());
+        handzuordnung_setzen(&conn, "oid-2", "t", &team.id, "wer", jetzt()).unwrap();
+        handzuordnungen_zu_gruppe_loeschen(&conn, "team").unwrap();
+        assert!(handzuordnungen_von(&conn, "oid-2").unwrap().is_empty());
+    }
+
+    /// Aufgabe 33: wirksam sind Entra ∪ von Hand ∪ Gerät (alt) – und nur
+    /// Gruppen, die es noch gibt.
+    #[test]
+    fn wirksame_gruppen_vereinigen_entra_hand_und_geraet() {
+        let conn = gedaechtnis();
+        let gruppe = |id: &str, entra: Vec<String>| Gruppe {
+            id: GruppeId::neu(id),
+            titel: id.to_string(),
+            saetze: Vec::new(),
+            entra,
+        };
+        setze(
+            &conn,
+            GRUPPEN,
+            "entra",
+            &gruppe("entra", vec!["ENTRA-A".into()]),
+        )
+        .unwrap();
+        setze(&conn, GRUPPEN, "hand", &gruppe("hand", Vec::new())).unwrap();
+        setze(&conn, GRUPPEN, "geraet", &gruppe("geraet", Vec::new())).unwrap();
+        handzuordnung_setzen(&conn, "oid-1", "t", &GruppeId::neu("hand"), "wer", jetzt()).unwrap();
+        let wirksam = wirksame_gruppen(
+            &conn,
+            Some("oid-1"),
+            &[GruppeId::neu("geraet"), GruppeId::neu("geloescht")],
+            &["entra-a".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            wirksam,
+            vec![
+                GruppeId::neu("entra"),
+                GruppeId::neu("geraet"),
+                GruppeId::neu("hand")
+            ]
+        );
+        // Ohne Benutzer zählt nur, was am Gerät und in Entra steht.
+        let ohne = wirksame_gruppen(&conn, None, &[GruppeId::neu("geraet")], &[]).unwrap();
+        assert_eq!(ohne, vec![GruppeId::neu("geraet")]);
+    }
+
+    /// Aufgabe 33: Ein gesperrter Benutzer hat keine wirksamen Gruppen; seine
+    /// Zuordnungen bleiben aber gespeichert.
+    #[test]
+    fn gesperrter_benutzer_hat_keine_wirksamen_gruppen() {
+        let conn = gedaechtnis();
+        let gruppe = Gruppe {
+            id: GruppeId::neu("team"),
+            titel: "Team".into(),
+            saetze: Vec::new(),
+            entra: Vec::new(),
+        };
+        setze(&conn, GRUPPEN, "team", &gruppe).unwrap();
+        conn.execute(
+            "INSERT INTO benutzer (oid, tid, rolle, gesperrt, erstellt) \
+             VALUES ('oid-1', 't', 'benutzer', 0, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        handzuordnung_setzen(&conn, "oid-1", "t", &gruppe.id, "wer", jetzt()).unwrap();
+        assert_eq!(
+            wirksame_gruppen_benutzer(&conn, "oid-1").unwrap(),
+            vec![GruppeId::neu("team")]
+        );
+        conn.execute("UPDATE benutzer SET gesperrt = 1 WHERE oid = 'oid-1'", [])
+            .unwrap();
+        assert!(wirksame_gruppen_benutzer(&conn, "oid-1")
+            .unwrap()
+            .is_empty());
+        // Gelöscht: auch nichts.
+        assert!(wirksame_gruppen_benutzer(&conn, "fehlt")
+            .unwrap()
+            .is_empty());
+        assert_eq!(handzuordnungen_von(&conn, "oid-1").unwrap().len(), 1);
     }
 
     #[test]
@@ -2355,6 +2695,7 @@ mod tests {
         setze(&conn, GRUPPEN, "b", &b).unwrap();
         let wirksam = wirksame_gruppen(
             &conn,
+            None,
             &[GruppeId::neu("b")],
             &["entra-a".to_string(), "entra-fremd".to_string()],
         )

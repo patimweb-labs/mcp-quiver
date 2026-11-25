@@ -89,7 +89,9 @@ temporary data folder — no real tenant, no real vault):
 ```bash
 cargo build -p quiver-server
 npm run pruefung            # setup → sign out → sign in → wrong password →
-                            # overview → change one set: 0 CSP violations,
+                            # overview → change one set → dropdowns in a dialog
+                            # (list above the dialog, height unchanged) →
+                            # memberships from both sides: 0 CSP violations,
                             # 0 console errors
 npm run pruefung:anmeldung  # device sign-in → confirmation → redirect to
                             # 127.0.0.1:<port>/quiver with a code, against a

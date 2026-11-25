@@ -4,13 +4,9 @@
 // liefern (AGENTS.md §2.4). Rollen kommen aus `rollen.ts`; die Aktionen
 // entsprechen genau den Feldern von `BenutzerAendern` im Vertrag.
 
-import type {
-  BenutzerAendern,
-  BenutzerSicht,
-  EntraGruppe,
-  Rolle,
-} from "../api/typen";
+import type { BenutzerAendern, BenutzerSicht, Rolle } from "../api/typen";
 import { anzeige_name } from "./anmeldung";
+import { herkuenfte } from "./mitglieder";
 import { rang, rolle_eintrag, rolle_fest, rollen_text } from "./rollen";
 import type { Ton } from "./ton";
 
@@ -87,34 +83,38 @@ export function filtern(
 
 // -------------------------------------------------------- Entra-Gruppen
 
-export interface Gruppenzeile {
+/**
+ * Die Gruppen eines Benutzers für die Tabelle – mit Herkunft (Aufgabe 33).
+ *
+ * Der Server rechnet sie schon aus (`BenutzerSicht.gruppen`); hier kommen nur
+ * die Chips und ein Hinweis dazu. Der Schlüssel ist die Kennung, der Titel ist
+ * Anzeige.
+ */
+export interface Gruppenanzeige {
   id: string;
-  /** Anzeigename, sonst die Objekt-Id (mehr weiß der Server nicht). */
-  name: string;
+  titel: string;
+  /** „aus Entra“, „von Hand“, „am Gerät“ – in dieser Reihenfolge. */
+  herkunft: string[];
+  /** Alles, was im Hinweis steht: Kennung, Herkunft und wann/wer. */
+  hinweis: string;
 }
 
-/**
- * Die Entra-Gruppen eines Benutzers mit Anzeigename. Ids bleiben der
- * Schlüssel (ADR 0002, Punkt 2); der Name ist nur Anzeige.
- */
-export function entra_gruppen(
-  benutzer: BenutzerSicht,
-  gesehen: EntraGruppe[],
-): Gruppenzeile[] {
-  // Der Titel der quiver-Gruppe; fehlt die Gruppe (gelöscht), der Name aus
-  // Entra. Die Id steht nur im Hinweis, nie als Text (Aufgabe 30).
-  const namen = new Map(
-    gesehen.map((gruppe) => [
-      gruppe.id.toLowerCase(),
-      gruppe.anzeigename?.trim() || gruppe.name_entra?.trim() || "",
-    ]),
-  );
-  return benutzer.entra
-    .map((id) => ({
-      id,
-      name: namen.get(id.toLowerCase()) || "unbenannt",
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, "de", { sensitivity: "base" }));
+export function gruppen_zeilen(benutzer: BenutzerSicht): Gruppenanzeige[] {
+  return benutzer.gruppen.map((eintrag) => {
+    const herkunft = herkuenfte(eintrag);
+    const teile = [eintrag.titel, eintrag.gruppe, ...herkunft.map((h) => h.text)];
+    if (eintrag.von_hand && eintrag.seit) {
+      teile.push(
+        `von Hand seit ${eintrag.seit}${eintrag.von ? ` von ${eintrag.von}` : ""}`,
+      );
+    }
+    return {
+      id: eintrag.gruppe,
+      titel: eintrag.titel,
+      herkunft: herkunft.map((h) => h.text),
+      hinweis: teile.join(" · "),
+    };
+  });
 }
 
 // --------------------------------------------------------- Stand der Prüfung
@@ -171,12 +171,20 @@ export interface Aktionen {
   sperre: boolean;
   pruefen: boolean;
   loeschen: boolean;
+  /** Gruppen von Hand zuordnen (Aufgabe 33); der Root bekommt keine. */
+  gruppen: boolean;
 }
 
 /** Was darf an diesem Benutzer geändert werden? Root: nichts. */
 export function aktionen(benutzer: BenutzerSicht, entra: boolean): Aktionen {
   if (rolle_fest(benutzer.rolle)) {
-    return { rolle: false, sperre: false, pruefen: false, loeschen: false };
+    return {
+      rolle: false,
+      sperre: false,
+      pruefen: false,
+      loeschen: false,
+      gruppen: false,
+    };
   }
   return {
     // Eine Rolle, für die es keinen Wechsel gibt (etwa eine spätere Rolle aus
@@ -186,6 +194,7 @@ export function aktionen(benutzer: BenutzerSicht, entra: boolean): Aktionen {
     // Ein gesperrter Benutzer hat kein Token, das man einlösen könnte.
     pruefen: entra && !benutzer.gesperrt,
     loeschen: true,
+    gruppen: true,
   };
 }
 

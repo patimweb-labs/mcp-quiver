@@ -9,12 +9,12 @@ import {
   WpCheckbox,
   WpDialog,
   WpInput,
-  WpMultiselect,
 } from "@weppelmann/components";
 
 import { fehlertext, type Client } from "../api/client";
 import type { Code, Gruppe, GruppeId } from "../api/typen";
 import Feld from "../bausteine/Feld.vue";
+import Mehrfachauswahl from "../bausteine/Mehrfachauswahl.vue";
 import Kopierbar from "../bausteine/Kopierbar.vue";
 import Status from "../bausteine/Status.vue";
 import { datum, restzeit } from "../logik/format";
@@ -108,7 +108,7 @@ function neu(): void {
 
     <div v-else class="form">
       <div class="auswahl">
-        <WpMultiselect
+        <Mehrfachauswahl
           :model-value="gewaehlt"
           :options="gruppenOptionen"
           label="Gruppen"

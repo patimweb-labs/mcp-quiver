@@ -340,6 +340,54 @@ export interface BenutzerSicht {
   /** `gueltig` oder `neu_anmelden`. */
   token_stand: string;
   geraete: number;
+  /** Alle wirksamen Gruppen mit Herkunft (Aufgabe 33). */
+  gruppen: BenutzerGruppe[];
+}
+
+/**
+ * Eine wirksame Gruppenzugehörigkeit eines Benutzers (Aufgabe 33). Der
+ * Schlüssel ist `gruppe`; `titel` und `entra_ids` sind nur Anzeige.
+ */
+export interface BenutzerGruppe {
+  gruppe: GruppeId;
+  titel: string;
+  /** Über eine Entra-Gruppe; nicht in der Verwaltung entfernbar. */
+  aus_entra: boolean;
+  /** Von Hand vergeben; entfernbar. */
+  von_hand: boolean;
+  /** Am Gerät gesetzt (Altweg); hier nicht entfernbar. */
+  aus_geraet: boolean;
+  /** Wer sie von Hand vergeben hat. */
+  von: string | null;
+  /** Wann (RFC 3339). */
+  seit: string | null;
+  /** Die Entra-Objekt-Ids, über die die Gruppe kommt. */
+  entra_ids: string[];
+}
+
+/** Ein Mitglied einer Gruppe (Aufgabe 33). */
+export interface Gruppenmitglied {
+  oid: string;
+  email: string | null;
+  name: string | null;
+  gesperrt: boolean;
+  /** Über Entra zugeordnet; nicht in der Verwaltung entfernbar. */
+  aus_entra: boolean;
+  /** Von Hand hinzugefügt; entfernbar. */
+  von_hand: boolean;
+  von: string | null;
+  seit: string | null;
+}
+
+/**
+ * `PUT /api/v1/admin/benutzer/{oid}/gruppen/{gruppe}` und
+ * `PUT /api/v1/admin/gruppen/{id}/mitglieder/{oid}` (Aufgabe 33).
+ */
+export interface ZuordnungAendern {
+  /** `true` = hinzufügen, `false` = entfernen. */
+  vorhanden: boolean;
+  /** Nötig, wenn sich ein Admin selbst die letzte Gruppe nimmt. */
+  selbst_bestaetigt?: boolean;
 }
 
 /** `GET /api/v1/auth/ich`: wer ist angemeldet? */

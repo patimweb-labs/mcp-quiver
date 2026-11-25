@@ -26,11 +26,12 @@ use jsonwebtoken::{
     decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
 };
 use quiver_domain::{
-    Eintrag, EintragId, Feld, Herkunft, Laufzeit, Quelle, Satz, SatzEintrag, SatzId, Werte,
+    Eintrag, EintragId, Feld, Gruppe, GruppeId, Herkunft, Laufzeit, Quelle, Satz, SatzEintrag,
+    SatzId, Werte,
 };
 use quiver_protocol::{
-    AnmeldenAntwort, BenutzerAendern, BenutzerSicht, CodeAnlegen, GeraeteTausch,
-    GeraeteTausch as Tausch, Rolle,
+    AnmeldenAntwort, BenutzerAendern, BenutzerGruppe, BenutzerSicht, CodeAnlegen, GeraetStand,
+    GeraeteTausch, GeraeteTausch as Tausch, Gruppenmitglied, Rolle,
 };
 use quiver_server::entra_schluessel::{erzeugen, SchluesselHalter, SCHLUESSEL_DATEI};
 use quiver_server::GRAPH_BASIS;
@@ -1699,6 +1700,264 @@ async fn refresh_rotation_und_invalid_grant() {
     .await;
 }
 
+/// Aufgabe 33: Eine Gruppe von Hand zuordnen – von beiden Seiten, wirksam
+/// sofort, und die Auffrischung aus Entra nimmt sie nicht weg.
+#[tokio::test]
+async fn zuordnungen_von_hand_wirken_sofort_und_ueberleben_die_auffrischung() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let geraet = p.geraet_anmelden("Rechner", 51234).await;
+        assert_eq!(geraet.geraet.gruppen, vec![GruppeId::neu("team")]);
+
+        // Eine zweite Gruppe ohne Entra-Bezug.
+        let hand = Gruppe {
+            id: GruppeId::neu("hand"),
+            titel: "Handverlesen".into(),
+            saetze: Vec::new(),
+            entra: Vec::new(),
+        };
+        let angelegt = p
+            .admin("PUT", "/admin/gruppen/hand", Some(json!(hand)))
+            .await;
+        assert_eq!(angelegt.status, StatusCode::OK, "{}", angelegt.text);
+
+        // Erst steht nur die Entra-Gruppe da: „aus Entra“, nicht entfernbar.
+        let liste = p
+            .admin("GET", &format!("/admin/benutzer/{OID}/gruppen"), None)
+            .await;
+        assert_eq!(liste.status, StatusCode::OK, "{}", liste.text);
+        let gruppen: Vec<BenutzerGruppe> = serde_json::from_value(liste.json).expect("Gruppen");
+        assert_eq!(gruppen.len(), 1);
+        assert_eq!(gruppen[0].gruppe, "team");
+        assert!(gruppen[0].aus_entra && !gruppen[0].von_hand && !gruppen[0].aus_geraet);
+        assert_eq!(gruppen[0].entra_ids, vec![GRUPPE_ENTRA.to_string()]);
+
+        // Von Hand zuordnen (Benutzerseite).
+        let dazu = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/hand"),
+                Some(json!({ "vorhanden": true })),
+            )
+            .await;
+        assert_eq!(dazu.status, StatusCode::OK, "{}", dazu.text);
+        let gruppen: Vec<BenutzerGruppe> = serde_json::from_value(dazu.json).expect("Gruppen");
+        assert_eq!(gruppen.len(), 2);
+        let von_hand = gruppen
+            .iter()
+            .find(|gruppe| gruppe.gruppe == "hand")
+            .expect("die Gruppe von Hand");
+        assert!(von_hand.von_hand && !von_hand.aus_entra);
+        assert_eq!(von_hand.von.as_deref(), Some(ROOT_EMAIL));
+        assert!(von_hand.seit.is_some(), "seit steht dabei");
+
+        // Von der Gruppenseite ist dasselbe Mitglied zu sehen.
+        let mitglieder = p.admin("GET", "/admin/gruppen/hand/mitglieder", None).await;
+        assert_eq!(mitglieder.status, StatusCode::OK, "{}", mitglieder.text);
+        let mitglieder: Vec<Gruppenmitglied> =
+            serde_json::from_value(mitglieder.json).expect("Mitglieder");
+        assert_eq!(mitglieder.len(), 1);
+        assert_eq!(mitglieder[0].oid, OID);
+        assert!(mitglieder[0].von_hand && !mitglieder[0].aus_entra);
+
+        // Wirksam sofort: das Gerät hat beide Gruppen, ohne neue Anmeldung.
+        let geraete = p.admin("GET", "/admin/geraete", None).await;
+        let staende: Vec<GeraetStand> = serde_json::from_value(geraete.json).expect("Geräte");
+        assert_eq!(
+            staende[0].geraet.gruppen,
+            vec![GruppeId::neu("hand"), GruppeId::neu("team")]
+        );
+
+        // Die Auffrischung aus Entra (echter Refresh) lässt „von Hand“ stehen.
+        let geprueft = p
+            .admin("POST", &format!("/admin/benutzer/{OID}/pruefen"), None)
+            .await;
+        assert_eq!(geprueft.status, StatusCode::OK, "{}", geprueft.text);
+        let liste = p
+            .admin("GET", &format!("/admin/benutzer/{OID}/gruppen"), None)
+            .await;
+        let gruppen: Vec<BenutzerGruppe> = serde_json::from_value(liste.json).expect("Gruppen");
+        assert_eq!(gruppen.len(), 2, "die Zuordnung von Hand bleibt");
+        assert!(
+            gruppen.iter().any(|gruppe| gruppe.gruppe == "hand"),
+            "die Gruppe von Hand fehlt nach der Auffrischung"
+        );
+
+        // Entzug wirkt sofort.
+        let weg = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/hand"),
+                Some(json!({ "vorhanden": false })),
+            )
+            .await;
+        assert_eq!(weg.status, StatusCode::OK, "{}", weg.text);
+        let geraete = p.admin("GET", "/admin/geraete", None).await;
+        let staende: Vec<GeraetStand> = serde_json::from_value(geraete.json).expect("Geräte");
+        assert_eq!(staende[0].geraet.gruppen, vec![GruppeId::neu("team")]);
+
+        // Die Prüfspur nennt wer, wen, welche Gruppe und was geschah.
+        let spur = p.admin("GET", "/admin/pruefspur?limit=200", None).await;
+        let eintraege: Vec<quiver_protocol::PruefspurEintrag> =
+            serde_json::from_value(spur.json).expect("Prüfspur");
+        let texte: Vec<&str> = eintraege
+            .iter()
+            .filter(|eintrag| eintrag.art == "zuordnung")
+            .map(|eintrag| eintrag.text.as_str())
+            .collect();
+        assert!(
+            texte
+                .iter()
+                .any(|text| text.contains(OID) && text.contains("Gruppe hand hinzugefügt")),
+            "Hinzufügen fehlt in der Spur: {texte:?}"
+        );
+        assert!(
+            texte
+                .iter()
+                .any(|text| text.contains(OID) && text.contains("Gruppe hand entfernt")),
+            "Entfernen fehlt in der Spur: {texte:?}"
+        );
+        assert!(
+            eintraege
+                .iter()
+                .any(|eintrag| eintrag.art == "zuordnung" && eintrag.akteur == ROOT_EMAIL),
+            "wer es war, steht dabei"
+        );
+
+        // Der Root bekommt keine Gruppen.
+        let root = p
+            .admin(
+                "PUT",
+                "/admin/benutzer/root/gruppen/hand",
+                Some(json!({ "vorhanden": true })),
+            )
+            .await;
+        assert_eq!(root.status, StatusCode::CONFLICT, "{}", root.text);
+
+        // Unbekannte Gruppe und unbekannter Benutzer: 404, nichts erfunden.
+        let fehlt = p
+            .admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/gibt-es-nicht"),
+                Some(json!({ "vorhanden": true })),
+            )
+            .await;
+        assert_eq!(fehlt.status, StatusCode::NOT_FOUND, "{}", fehlt.text);
+        let fremd = p
+            .admin(
+                "PUT",
+                "/admin/benutzer/00000000-0000-0000-0000-000000000000/gruppen/hand",
+                Some(json!({ "vorhanden": true })),
+            )
+            .await;
+        assert_eq!(fremd.status, StatusCode::NOT_FOUND, "{}", fremd.text);
+
+        // In der Benutzerliste steht die Herkunft mit dabei (eine Antwort für
+        // die ganze Tabelle, kein Nachladen je Zeile).
+        let liste = p.admin("GET", "/admin/benutzer", None).await;
+        let sicht: Vec<BenutzerSicht> = serde_json::from_value(liste.json).expect("Benutzer");
+        let wer = sicht
+            .iter()
+            .find(|eintrag| eintrag.oid == OID)
+            .expect("der Benutzer steht in der Liste");
+        assert_eq!(wer.gruppen.len(), 1, "nur die Entra-Gruppe ist übrig");
+        assert!(wer.gruppen[0].aus_entra);
+    })
+    .await;
+}
+
+/// Aufgabe 33: Wer sich selbst die letzte Gruppe nimmt, muss bestätigen –
+/// sonst gilt danach „kein Zugriff“.
+#[tokio::test]
+async fn selbst_aussperren_nur_mit_bestaetigung() {
+    mit_zeitlimit(async {
+        let p = Pruefung::mit_entra().await;
+        p.eintrag_anlegen().await;
+        let geraet = p.geraet_anmelden("Rechner", 51234).await;
+
+        let hand = Gruppe {
+            id: GruppeId::neu("hand"),
+            titel: "Handverlesen".into(),
+            saetze: Vec::new(),
+            entra: Vec::new(),
+        };
+        assert_eq!(
+            p.admin("PUT", "/admin/gruppen/hand", Some(json!(hand)))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        // Der Benutzer ernennt sich selbst zum Admin und meldet sich an.
+        assert_eq!(
+            p.admin(
+                "PUT",
+                &format!("/admin/benutzer/{OID}"),
+                Some(json!(BenutzerAendern {
+                    rolle: Some(Rolle::Admin),
+                    ..Default::default()
+                })),
+            )
+            .await
+            .status,
+            StatusCode::OK
+        );
+        let cookie = p.verwaltungs_anmeldung().await;
+        let selbst = p
+            .admin_mit(
+                &cookie,
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/hand"),
+                Some(json!({ "vorhanden": true })),
+            )
+            .await;
+        assert_eq!(selbst.status, StatusCode::OK, "{}", selbst.text);
+
+        // Die Entra-Gruppe fällt weg (Testdaten: der Benutzer steht in keiner
+        // Entra-Gruppe mehr) – damit ist „hand“ die letzte Gruppe.
+        {
+            let conn = rusqlite::Connection::open(p.daten.join("quiver.db")).expect("Datenbank");
+            conn.execute(
+                &format!("UPDATE benutzer SET entra_json = '[]' WHERE oid = '{OID}'"),
+                [],
+            )
+            .expect("Entra-Gruppen geleert");
+        }
+
+        let ohne = p
+            .admin_mit(
+                &cookie,
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/hand"),
+                Some(json!({ "vorhanden": false })),
+            )
+            .await;
+        assert_eq!(ohne.status, StatusCode::CONFLICT, "{}", ohne.text);
+        assert!(
+            ohne.text.contains("letzte Gruppe"),
+            "die Warnung nennt den Grund: {}",
+            ohne.text
+        );
+
+        // Mit Bestätigung geht es – und das Gerät hat keinen Zugriff mehr.
+        let bestaetigt = p
+            .admin_mit(
+                &cookie,
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/hand"),
+                Some(json!({ "vorhanden": false, "selbst_bestaetigt": true })),
+            )
+            .await;
+        assert_eq!(bestaetigt.status, StatusCode::OK, "{}", bestaetigt.text);
+        let abgewiesen = p
+            .anfrage("GET", "/geraet/soll", Some(&geraet.token), None, &[], None)
+            .await;
+        assert_eq!(abgewiesen.status, StatusCode::FORBIDDEN);
+        assert_eq!(abgewiesen.json["grund"], "kein-zugriff");
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn nachpruefen_je_benutzer_nicht_gleichzeitig() {
     mit_zeitlimit(async {
@@ -1814,6 +2073,17 @@ async fn verwaltungssitzung_nur_fuer_admins_und_rechte_frisch() {
         assert_eq!(entzogen.status, StatusCode::OK);
         let danach = p.admin_mit(&cookie, "GET", "/admin/ueberblick", None).await;
         assert_eq!(danach.status, StatusCode::FORBIDDEN);
+        // Auch die Zuordnung von Hand ist damit gesperrt (Aufgabe 33): die
+        // Sitzung lebt noch, die Rolle nicht.
+        let zuordnung = p
+            .admin_mit(
+                &cookie,
+                "PUT",
+                &format!("/admin/benutzer/{OID}/gruppen/team"),
+                Some(json!({ "vorhanden": true })),
+            )
+            .await;
+        assert_eq!(zuordnung.status, StatusCode::FORBIDDEN);
     })
     .await;
 }

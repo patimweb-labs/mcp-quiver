@@ -494,6 +494,113 @@ async function main() {
     await seite.getByText("Prüfrechner", { exact: false }).first().waitFor();
     console.log("ok: Geräte erklären die Anmeldung statt Codes");
 
+    // 15b. Aufgabe 33: Auswahlliste im Dialog – sie liegt über dem Dialog, der
+    // Dialog wächst nicht und bekommt keinen Scrollbalken. Dazu die Zuordnung
+    // von Hand, von beiden Seiten.
+    const nachlese = await anfrage(server.basis, "/api/v1/admin/gruppen/nachlese", {
+      methode: "PUT",
+      cookie: sitzungswert,
+      kopf: { Origin: server.basis },
+      rumpf: { id: "nachlese", titel: "Nachlese", saetze: [], entra: [] },
+    });
+    if (nachlese.status !== 200) {
+      throw new Error(`Gruppe Nachlese: ${nachlese.status} ${nachlese.text}`);
+    }
+
+    await seite.goto(`${server.basis}/#/benutzer`, { waitUntil: "domcontentloaded" });
+    await seite.getByRole("heading", { level: 1, name: "Benutzer" }).waitFor();
+    await waehle("Gruppen");
+    const gruppenDialog = seite.getByRole("dialog", { name: /Gruppen von/ });
+    await gruppenDialog.waitFor();
+    if ((await gruppenDialog.getByText("aus Entra", { exact: true }).count()) === 0) {
+      throw new Error("die Gruppe aus Entra ist nicht als solche gekennzeichnet");
+    }
+    const hoehe_zu = (await gruppenDialog.boundingBox())?.height ?? 0;
+
+    const auswahl = gruppenDialog.getByRole("combobox", { name: /Gruppen hinzufügen/ });
+    await auswahl.click();
+    const liste = seite.locator("[data-auswahl] [role=listbox]");
+    await liste.waitFor();
+    // Die Liste hängt am `body`, nicht im Dialog: sie kann nicht abgeschnitten
+    // werden und schiebt den Dialog nicht.
+    const eltern = await liste.evaluate((el) => el.closest("[role=dialog]") !== null);
+    if (eltern) throw new Error("die Auswahlliste steckt im Dialog");
+    // Hand-Cursor auf allem Klickbaren (AGENTS.md §2.12).
+    const zeiger = await auswahl.evaluate((el) => getComputedStyle(el).cursor);
+    const eintragszeiger = await seite
+      .getByRole("option", { name: /Nachlese/ })
+      .evaluate((el) => getComputedStyle(el).cursor);
+    if (zeiger !== "pointer" || eintragszeiger !== "pointer") {
+      throw new Error(`kein Hand-Cursor: Feld ${zeiger}, Eintrag ${eintragszeiger}`);
+    }
+    const kasten = await liste.boundingBox();
+    if (!kasten || kasten.y < 0 || kasten.y + kasten.height > 900) {
+      throw new Error(`die Liste liegt außerhalb des Fensters: ${JSON.stringify(kasten)}`);
+    }
+    const hoehe_offen = (await gruppenDialog.boundingBox())?.height ?? 0;
+    if (Math.abs(hoehe_offen - hoehe_zu) > 1) {
+      throw new Error(`der Dialog wächst mit der Liste: ${hoehe_zu} → ${hoehe_offen}`);
+    }
+    const scrollt = await gruppenDialog.evaluate(
+      (el) => el.scrollHeight > el.clientHeight + 1,
+    );
+    if (scrollt) throw new Error("der Dialog scrollt, sobald die Liste offen ist");
+
+    // Escape schließt nur die Liste.
+    await seite.keyboard.press("Escape");
+    await wartenAuf(async () => (await liste.count()) === 0, {
+      was: "Escape schließt die Liste",
+      ms: SCHRITT_MS,
+    });
+    if ((await gruppenDialog.count()) === 0) {
+      throw new Error("Escape hat den ganzen Dialog geschlossen");
+    }
+    console.log("ok: Auswahlliste über dem Dialog, Höhe unverändert, Esc nur für die Liste");
+
+    // Von der Benutzerseite zuordnen.
+    await auswahl.click();
+    await liste.waitFor();
+    await seite.getByRole("option", { name: /Nachlese/ }).click();
+    await gruppenDialog.getByRole("button", { name: "Hinzufügen" }).click();
+    await gruppenDialog.getByText("von Hand", { exact: true }).waitFor();
+    console.log("ok: Gruppe von der Benutzerseite zugeordnet");
+
+    // Von der Gruppenseite wieder weg: der umgekehrte Weg, dieselbe Zeile.
+    await gruppenDialog.getByRole("button", { name: "Schließen" }).click();
+    await seite.goto(`${server.basis}/#/gruppen`, { waitUntil: "domcontentloaded" });
+    await seite.getByRole("heading", { level: 1, name: "Gruppen" }).waitFor();
+    await seite
+      .getByRole("article")
+      .filter({ hasText: "Nachlese" })
+      .getByRole("button", { name: "Bearbeiten" })
+      .click();
+    const gruppeDialog = seite.getByRole("dialog", { name: "Gruppe bearbeiten" });
+    await gruppeDialog.waitFor();
+    await gruppeDialog.getByRole("heading", { name: "Mitglieder" }).waitFor();
+    await gruppeDialog.getByText("Test Person", { exact: false }).waitFor();
+    await gruppeDialog
+      .getByRole("button", { name: "Von Hand entfernen" })
+      .first()
+      .click();
+    const entfernen = seite.getByRole("dialog", { name: "Aus der Gruppe entfernen" });
+    await entfernen.waitFor();
+    await entfernen.getByRole("button", { name: "Entfernen" }).click();
+    await gruppeDialog
+      .getByText("Noch niemand in dieser Gruppe", { exact: false })
+      .waitFor({ timeout: SCHRITT_MS });
+    await gruppeDialog.getByRole("button", { name: "Abbrechen" }).click();
+    console.log("ok: Mitglied von der Gruppenseite entfernt");
+
+    // Und in der Benutzerliste ist die Gruppe wieder weg.
+    await seite.goto(`${server.basis}/#/benutzer`, { waitUntil: "domcontentloaded" });
+    await seite.getByRole("heading", { level: 1, name: "Benutzer" }).waitFor();
+    await wartenAuf(
+      async () =>
+        (await seite.getByRole("row", { name: /Test Person/ }).getByText("Nachlese").count()) === 0,
+      { was: "Gruppe verschwindet aus der Benutzerliste", ms: SCHRITT_MS },
+    );
+    console.log("ok: Zuordnung von beiden Seiten bedient");
+
     // 16. Löschen – die letzte Handlung, danach ist der Benutzer weg.
     await seite.goto(`${server.basis}/#/benutzer`, {
       waitUntil: "domcontentloaded",

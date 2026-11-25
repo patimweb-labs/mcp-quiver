@@ -1,0 +1,76 @@
+/* Die gemeinsame Ebene aller Auswahllisten (Aufgabe 33): sie liegt am `body`,
+   nicht im Dialog, und wird deshalb hier gestaltet – nicht in einem der beiden
+   Bausteine, damit beide dieselbe Ebene zeigen. */
+
+.auswahl-ebene {
+  position: fixed;
+  z-index: 200;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  background: var(--wp-color-bg-panel);
+  border: var(--wp-size-border) solid var(--wp-color-border-strong);
+}
+.auswahl-ebene__liste {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.auswahl-ebene__eintrag {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-2);
+  padding: 6px var(--wp-space-2);
+  font-size: var(--wp-font-size-md);
+  cursor: pointer;
+}
+.auswahl-ebene__eintrag.is-aktiv {
+  background: var(--wp-color-bg-hover);
+}
+.auswahl-ebene__eintrag.is-gewaehlt {
+  background: var(--wp-color-bg-selected);
+}
+.auswahl-ebene__eintrag.is-gesperrt {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.auswahl-ebene__haken {
+  flex: none;
+  width: var(--wp-font-size-md);
+  height: var(--wp-font-size-md);
+  color: var(--wp-color-accent-default);
+}
+.auswahl-ebene__text {
+  flex: 1;
+  min-width: 0;
+}
+.auswahl-ebene__hinweis {
+  color: var(--wp-color-text-faint);
+  font-size: var(--wp-font-size-xs);
+}
+.auswahl-ebene__leer {
+  padding: 6px var(--wp-space-2);
+  color: var(--wp-color-text-faint);
+  font-size: var(--wp-font-size-sm);
+}
+.auswahl-ebene__kasten {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--wp-font-size-md);
+  height: var(--wp-font-size-md);
+  border: var(--wp-size-border) solid var(--wp-color-border-strong);
+  background: var(--wp-color-bg-input);
+}
+.auswahl-ebene__kasten.is-an {
+  background: var(--wp-color-accent-default);
+  border-color: var(--wp-color-accent-default);
+  color: var(--wp-color-text-on-accent);
+}
+.auswahl-ebene__suche {
+  padding: 4px var(--wp-space-2);
+  border-bottom: var(--wp-size-border) solid var(--wp-color-border-subtle);
+  color: var(--wp-color-text-muted);
+  font-size: var(--wp-font-size-sm);
+}

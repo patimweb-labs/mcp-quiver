@@ -36,6 +36,7 @@ describe("Art der Prüfspur", () => {
       "fehlschlag",
       "rolle",
       "aenderung",
+      "zuordnung",
       "geraet",
       "nachpruefen",
       "einrichtung",

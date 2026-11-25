@@ -2,7 +2,9 @@
 // Der Wert eines Felds, nach seiner Art (Aufgabe 16). Dieselben Arten wie im
 // Client-Fenster: Text, Passwort, Zahl, Schalter, Adresse, Auswahl.
 import { computed } from "vue";
-import { WpCheckbox, WpInput, WpSelect } from "@weppelmann/components";
+import { WpCheckbox, WpInput } from "@weppelmann/components";
+
+import Auswahl from "./Auswahl.vue";
 
 import type { Feld } from "../api/typen";
 import {
@@ -17,6 +19,8 @@ const props = defineProps<{
   modelValue: string;
   /** Kennung des Eingabefelds, aus `Feld.vue`. */
   id?: string;
+  /** Kennung des Hinweises, aus `Feld.vue`. */
+  beschrieben?: string;
   placeholder?: string;
 }>();
 
@@ -42,8 +46,10 @@ function zahlSetzen(wert: string): void {
     :label="feld_titel(feld)"
     @update:model-value="(an) => emit('update:modelValue', an ? 'an' : 'aus')"
   />
-  <WpSelect
+  <Auswahl
     v-else-if="typeof art !== 'string'"
+    :id="id"
+    :beschrieben="beschrieben"
     :model-value="modelValue.length > 0 ? modelValue : null"
     :options="auswahl"
     placeholder="Auswählen …"

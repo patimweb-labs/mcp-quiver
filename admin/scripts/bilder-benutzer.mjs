@@ -247,6 +247,29 @@ async function bild(browser, { thema, breite, hoehe, seite, datei, cookie, basis
   }
 }
 
+/**
+ * Ein Bild von einem Dialog mit offener Auswahlliste (Aufgabe 33): erst die
+ * Seite, dann der Dialog, dann die Liste. So steht auf dem Bild, dass die
+ * Liste **über** dem Dialog liegt.
+ */
+async function bildDialog(browser, { thema, breite, hoehe, seite, datei, cookie, basis, oeffnen }) {
+  const context = await kontext(browser, breite, hoehe, thema, cookie, basis);
+  try {
+    const page = await context.newPage();
+    await page.goto(`${basis}/#/${seite.id}`, { waitUntil: "domcontentloaded" });
+    await page
+      .getByRole("heading", { level: 1, name: seite.titel })
+      .waitFor({ timeout: 15000 });
+    await oeffnen(page);
+    await page.waitForTimeout(300);
+    const pfad = `${ZIEL}${datei}`;
+    await page.screenshot({ path: pfad, fullPage: false });
+    console.log(pfad);
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   await mkdir(ZIEL, { recursive: true });
   const ordner = await mkdtemp(join(tmpdir(), "quiver-bilder-"));
@@ -319,6 +342,24 @@ async function main() {
     if (gruppe.status !== 200) {
       throw new Error(`Gruppe: ${gruppe.status} ${gruppe.text}`);
     }
+    // Eine dritte, freie Gruppe: sie steht im Dialog „Gruppen hinzufügen“ als
+    // Auswahl bereit (Aufgabe 33), ohne zugeordnet zu sein.
+    const betrieb = await anfrage(server.basis, "/api/v1/admin/gruppen/betrieb", {
+      methode: "PUT",
+      cookie,
+      kopf: { Origin: server.basis },
+      rumpf: {
+        id: "betrieb",
+        titel: "Betrieb",
+        saetze: ["basis"],
+        entra: [],
+      },
+    });
+    if (betrieb.status !== 200) {
+      throw new Error(`Gruppe: ${betrieb.status} ${betrieb.text}`);
+    }
+
+    // Eine zweite, rein lokale Gruppe — so zeigt das Bild beide Arten.
     // Eine zweite, rein lokale Gruppe — so zeigt das Bild beide Arten.
     const lokal = await anfrage(
       server.basis,
@@ -378,6 +419,22 @@ async function main() {
       rumpf: { gesperrt: true },
     });
 
+    // Aufgabe 33: eine Gruppe von Hand – Alex bekommt „Entwicklung“ direkt,
+    // Ben bleibt gesperrt und ohne. So zeigen die Bilder beide Herkünfte.
+    const zuordnung = await anfrage(
+      server.basis,
+      `/api/v1/admin/benutzer/${ALEX.oid}/gruppen/entwicklung`,
+      {
+        methode: "PUT",
+        cookie,
+        kopf: { Origin: server.basis },
+        rumpf: { vorhanden: true },
+      },
+    );
+    if (zuordnung.status !== 200) {
+      throw new Error(`Zuordnung: ${zuordnung.status} ${zuordnung.text}`);
+    }
+
     // Prüfspur füllen: Anmeldungen, Nachprüfungen und ein Fehlschlag. Der
     // Nachbau muss wieder Anna ausstellen – das neue ID-Token muss dieselbe
     // Identität haben wie das gespeicherte Refresh-Token.
@@ -415,6 +472,58 @@ async function main() {
           datei: `admin-${thema}-${seite.datei}.png`,
           cookie,
           basis: server.basis,
+        });
+      }
+    }
+
+    // Aufgabe 33: beide Seiten der Zuordnung, mit offener Auswahlliste.
+    const dialogBilder = [
+      {
+        id: "benutzer-gruppen",
+        datei: "benutzer-gruppen",
+        seite: { id: "benutzer", titel: "Benutzer" },
+        oeffnen: async (page) => {
+          await page
+            .getByRole("row", { name: /Alex/ })
+            .getByRole("button", { name: /^Aktionen für/ })
+            .click();
+          await page.waitForTimeout(300);
+          await page.getByRole("menuitem", { name: "Gruppen", exact: true }).click();
+          const dialog = page.getByRole("dialog", { name: /Gruppen von/ });
+          await dialog.waitFor();
+          await dialog.getByRole("combobox", { name: /Gruppen hinzufügen/ }).click();
+          await page.locator("[data-auswahl] [role=listbox]").waitFor();
+        },
+      },
+      {
+        id: "gruppen-mitglieder",
+        datei: "gruppen-mitglieder",
+        seite: { id: "gruppen", titel: "Gruppen" },
+        oeffnen: async (page) => {
+          await page
+            .getByRole("article")
+            .filter({ hasText: "Entwicklung" })
+            .getByRole("button", { name: "Bearbeiten" })
+            .click();
+          const dialog = page.getByRole("dialog", { name: "Gruppe bearbeiten" });
+          await dialog.waitFor();
+          await dialog.getByRole("heading", { name: "Mitglieder" }).waitFor();
+          await dialog.getByRole("combobox", { name: /Benutzer hinzufügen/ }).click();
+          await page.locator("[data-auswahl] [role=listbox]").waitFor();
+        },
+      },
+    ];
+    for (const thema of THEMEN) {
+      for (const eintrag of dialogBilder) {
+        await bildDialog(browser, {
+          thema,
+          breite: 1440,
+          hoehe: 900,
+          seite: eintrag.seite,
+          datei: `admin-${thema}-${eintrag.datei}.png`,
+          cookie,
+          basis: server.basis,
+          oeffnen: eintrag.oeffnen,
         });
       }
     }
