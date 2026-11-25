@@ -8,6 +8,17 @@ Pflegt `release-please` aus den Conventional Commits; von Hand kommt nur der
 Eintrag zur ersten Version hierher. Der Tag ist `v<Version>` und muss zur
 Version in `[workspace.package]` passen.
 
+## [0.4.1](https://github.com/patimweb-labs/mcp-quiver/compare/v0.4.0...v0.4.1) (2026-11-25)
+
+
+### Behoben
+
+* Eintrag startet neu, wenn sich nur sein Programm ändert ([a6095d9](https://github.com/patimweb-labs/mcp-quiver/commit/a6095d9c8b60d4db5ca98842897b4f744edeee08))
+* Eintrag startet neu, wenn sich nur sein Programm ändert ([c86216c](https://github.com/patimweb-labs/mcp-quiver/commit/c86216c385b9ad191b6c9911a503b146615ba8a3))
+* Prüfskript mit altem Bash, Neustart-Test auch unter Windows ([2e95a37](https://github.com/patimweb-labs/mcp-quiver/commit/2e95a37e4b654e94fca85cdfcea59d5d66b88fa4))
+* Tools vom Server – alte Pfade, Pakete, Löschen unter Windows ([ce3fd87](https://github.com/patimweb-labs/mcp-quiver/commit/ce3fd877209b6f0bbba44cb2a47542f3c1f518b0))
+* Tools vom Server fertigstellen ([5d5f883](https://github.com/patimweb-labs/mcp-quiver/commit/5d5f883e62c56581600db36c0382c84ea8edbe4b))
+
 ## [0.4.0](https://github.com/patimweb-labs/mcp-quiver/compare/v0.3.0...v0.4.0) (2026-11-25)
 
 
