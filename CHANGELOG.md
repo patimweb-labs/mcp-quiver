@@ -8,6 +8,20 @@ Pflegt `release-please` aus den Conventional Commits; von Hand kommt nur der
 Eintrag zur ersten Version hierher. Der Tag ist `v<Version>` und muss zur
 Version in `[workspace.package]` passen.
 
+## [0.4.0](https://github.com/patimweb-labs/mcp-quiver/compare/v0.3.0...v0.4.0) (2026-11-25)
+
+
+### Neu
+
+* Tools kommen vom Server ([2ee62d4](https://github.com/patimweb-labs/mcp-quiver/commit/2ee62d4549490b32a612cc3501edc081c0349269))
+* Tools neben dem Client, klare Anmeldung und Karten ([d113a24](https://github.com/patimweb-labs/mcp-quiver/commit/d113a24f8a610dc853d1ca3c4aa27341c15d4a0c))
+* Tools neben dem Client, klare Anmeldung und Karten ([be5694d](https://github.com/patimweb-labs/mcp-quiver/commit/be5694d50a7579ff5ea6724d4aa01d18d7159000))
+
+
+### Behoben
+
+* Angaben zum Programm vor dem Ablegen prüfen, Testordner unter Windows ([eced41c](https://github.com/patimweb-labs/mcp-quiver/commit/eced41c0b6dfdc8f5536abe466a07a0fe7460bdd))
+
 ## [0.3.0](https://github.com/patimweb-labs/mcp-quiver/compare/v0.2.0...v0.3.0) (2026-11-25)
 
 
