@@ -423,7 +423,6 @@ impl Programm {
 /// laufen unverändert auf dem Gerät.
 ///
 pub fn ist_verteilt(name: &str) -> bool {
-    let name = name.trim();
     name.len() > "quiver-".len()
         && !name.contains('/')
         && !name.contains('\\')

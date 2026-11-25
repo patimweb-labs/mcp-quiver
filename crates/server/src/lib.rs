@@ -424,7 +424,7 @@ fn mit_programmen(
         .iter()
         .filter_map(|eintrag| match &eintrag.eintrag.laufzeit {
             quiver_domain::Laufzeit::Stdio { befehl, .. }
-                if quiver_domain::ist_verteilt(befehl) =>
+                if quiver_domain::ist_verteilt(befehl.trim()) =>
             {
                 Some(befehl.trim())
             }

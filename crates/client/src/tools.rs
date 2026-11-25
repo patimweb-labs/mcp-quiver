@@ -340,6 +340,9 @@ mod tests {
             "quiver-tools-{}-{name}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|dauer| dauer.as_nanos())
+                .unwrap_or(0)
         ));
         fs::remove_dir_all(&ordner).ok();
         fs::create_dir_all(&ordner).expect("Testordner");

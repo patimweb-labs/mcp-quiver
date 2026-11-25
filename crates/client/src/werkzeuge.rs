@@ -127,6 +127,23 @@ pub enum StartFehler {
     NichtLadbar(String),
 }
 
+/// So groß darf ein Programm höchstens sein (dieselbe Grenze wie im Server).
+const PROGRAMM_BYTES_MAX: u64 = 128 * 1024 * 1024;
+
+/// Taugt die Angabe des Servers? Name und Prüfsumme werden Teile eines Pfades,
+/// deshalb wird beides geprüft, **bevor** ein Ordner angelegt oder angefasst
+/// wird: der Name wie in [`quiver_domain::ist_verteilt`], die Prüfsumme genau
+/// 64 kleine Hex-Zeichen.
+fn angabe_gueltig(programm: &Programm) -> bool {
+    quiver_domain::ist_verteilt(&programm.name)
+        && programm.sha256.len() == 64
+        && programm
+            .sha256
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && programm.groesse <= PROGRAMM_BYTES_MAX
+}
+
 /// Die Ablage der verteilten Programme im Profil.
 #[derive(Debug, Clone)]
 pub struct Ablage {
@@ -163,7 +180,7 @@ impl Ablage {
 
     /// Prüfen, ob diese Fassung da und unversehrt ist.
     pub fn pruefen(&self, programm: &Programm) -> Result<PathBuf, PruefFehler> {
-        if !quiver_domain::ist_verteilt(&programm.name) {
+        if !angabe_gueltig(programm) {
             return Err(PruefFehler::KeinProgramm);
         }
         let pfad = self.pfad(programm);
@@ -215,11 +232,8 @@ impl Ablage {
         programm: &Programm,
         mut fortschritt: impl FnMut(u64),
     ) -> anyhow::Result<PathBuf> {
-        if !quiver_domain::ist_verteilt(&programm.name) {
-            anyhow::bail!(
-                "»{}« ist kein Programm, das der Server verteilt",
-                programm.name
-            );
+        if !angabe_gueltig(programm) {
+            anyhow::bail!("Der Server nennt ein ungültiges Programm");
         }
         if let Ok(pfad) = self.pruefen(programm) {
             return Ok(pfad);
@@ -440,6 +454,9 @@ mod tests {
             "quiver-ablage-{}-{name}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|dauer| dauer.as_nanos())
+                .unwrap_or(0)
         ));
         std::fs::remove_dir_all(&ordner).ok();
         std::fs::create_dir_all(&ordner).expect("Testordner");
@@ -556,6 +573,57 @@ mod tests {
             "{text}"
         );
         assert!(ablage.vorhanden(&programm).is_none());
+    }
+
+    /// Name und Prüfsumme kommen vom Server und werden Teile eines Pfades: was
+    /// nicht genau passt, legt weder einen Ordner an noch wird etwas abgerufen.
+    #[tokio::test]
+    async fn eine_ungueltige_angabe_legt_keinen_ordner_an() {
+        let profil = baum("ungueltig");
+        let ablage = Ablage::neu(&profil);
+        let gut = programm("quiver-devops", b"hallo");
+        let aussen = baum("aussen");
+        let mut faelle = Vec::new();
+        for sha256 in [
+            "../../../aussen".to_string(),
+            aussen.to_string_lossy().to_string(),
+            "A".repeat(64),
+            "a".repeat(63),
+            String::new(),
+        ] {
+            faelle.push(Programm {
+                sha256,
+                ..gut.clone()
+            });
+        }
+        for name in [
+            "../quiver-devops",
+            " quiver-devops",
+            "quiver-devops ",
+            "devops",
+        ] {
+            faelle.push(Programm {
+                name: name.to_string(),
+                ..gut.clone()
+            });
+        }
+        faelle.push(Programm {
+            groesse: PROGRAMM_BYTES_MAX + 1,
+            ..gut.clone()
+        });
+        for fall in faelle {
+            assert_eq!(ablage.pruefen(&fall), Err(PruefFehler::KeinProgramm));
+            let fehler = ablage
+                .holen(&reqwest::Client::new(), "http://127.0.0.1:9", "t", &fall)
+                .await
+                .expect_err("abgelehnt");
+            assert!(
+                format!("{fehler}").contains("ungültiges Programm"),
+                "{fehler}"
+            );
+        }
+        assert!(!ablage.wurzel().exists());
+        assert_eq!(std::fs::read_dir(&aussen).unwrap().count(), 0);
     }
 
     #[test]

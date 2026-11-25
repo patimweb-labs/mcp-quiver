@@ -333,7 +333,10 @@ mod tests {
         let ordner = std::env::temp_dir().join(format!(
             "quiver-programme-{}-{name}-{:?}",
             std::process::id(),
-            SystemTime::now()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|dauer| dauer.as_nanos())
+                .unwrap_or(0)
         ));
         std::fs::remove_dir_all(&ordner).ok();
         std::fs::create_dir_all(&ordner).expect("Testordner");
