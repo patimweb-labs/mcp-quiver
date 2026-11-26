@@ -1183,6 +1183,7 @@ impl Pruefung {
             eintraege: vec![SatzEintrag {
                 eintrag: EintragId::neu("wetter"),
                 werte: serde_json::from_value(json!({"PFAD": "/tmp/wetter"})).expect("Werte"),
+                fest: Default::default(),
             }],
         };
         for (pfad, wert) in [

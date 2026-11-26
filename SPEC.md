@@ -137,7 +137,7 @@ Zuweisungsquelle ──► Satz ──► Einträge (Version/Kanal) + vorbelegte
 ## 6. Konfiguration in Schichten
 
 ```
-Standard des Eintrags  →  Werte des Satzes (Admin)  →  Werte am Gerät (User)
+fest vom Server  →  Wert am Gerät  →  Vorschlag vom Server  →  Standard des Eintrags
 ```
 
 | Quelle | Wer füllt | Wo gespeichert |
@@ -145,6 +145,31 @@ Standard des Eintrags  →  Werte des Satzes (Admin)  →  Werte am Gerät (User
 | `server` | Admin | Server, wird mitgepusht |
 | `client` | User am Gerät | Client-Konfiguration |
 | `geheim` | User am Gerät | Tresor-Datei des Clients, verlässt das Gerät nie |
+
+**Festlegung: Vorbelegung durch den Admin (Aufgabe 36).** Jedes Feld außer
+Geheimnissen lässt sich im Satz vorbelegen, auch eines mit Quelle `client`
+(z. B. die MCP-Adresse von ZEP, die Adresse des Wikis). Je Wert gilt
+**Vorschlag** (der User darf ihn am Gerät ändern) oder **fest** (im Client
+sichtbar, nicht änderbar, „von deiner Firma vorgegeben“). Geheime Felder nimmt
+der Server nicht an (422): Benutzername und Passwort bleiben Sache des Users.
+Ein Schalter lässt sich nur auf `aus` festlegen – der Admin kann etwas
+verbieten, nicht heimlich freigeben. „Fest“ ohne Wert ist keine Vorgabe und
+wird abgelehnt. Gespeichert wird beides je Satz-Eintrag: `werte` wie bisher und
+zusätzlich `fest` (die Namen der festen Felder); fehlt `fest`, ist alles ein
+Vorschlag (Altdaten).
+
+Ein Pflichtfeld, das vorbelegt ist, gilt als gesetzt; der Dialog zeigt es
+ausgefüllt und fragt es nicht ab. Feste Werte und **übernommene** Vorschläge
+speichert der Client nicht am Gerät: der Serverwert gilt, und eine Änderung
+wirkt beim nächsten Abgleich – ohne neue Anmeldung. Hat der User etwas anderes
+eingetragen, gewinnt sein Wert; „Auf Vorschlag zurücksetzen“ nimmt ihn zurück.
+Bei mehreren Sätzen gewinnt weiter die höhere Priorität.
+
+*Preis:* Die Firma bekommt Einfluss auf Werte, die bisher am Gerät entstanden
+(eine Adresse, ein Pfad) – falsch gepflegt, steht ein Tool still, bis der Admin
+sie ändert. Ein fester Wert ist erst nach einem Abgleich wirksam. Und wer einen
+Vorschlag bewusst ändert, hat wieder einen Wert am Gerät, den der Admin nicht
+mehr sieht.
 
 **Festlegung: Sicherung der Geräte-Angaben.** Export und Import schreiben eine
 JSON-Datei (`format: mcp-quiver/einstellungen`, `version: 1`) mit den Werten und

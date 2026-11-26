@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Sätze: benannte Sammlungen von Einträgen mit vorbelegten Server-Werten.
+// Sätze: benannte Sammlungen von Einträgen mit vorbelegten Werten.
 import { onMounted, ref, shallowRef } from "vue";
 import { Layers, Pencil, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import {

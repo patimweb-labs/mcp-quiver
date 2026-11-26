@@ -135,6 +135,17 @@ Standardbrowser — sonst nichts, keine Anmeldung, kein Lauscher.
 
 ![Angaben-Dialog mit Hilfe-Link](../docs/bilder/fenster-dark-angaben-800.png)
 
+Ein Admin kann Werte **vom Server vorbelegen** (Satz-Dialog, je Feld
+*Vorschlag* oder *Fest*; Geheimnisse stehen dort gar nicht zur Wahl). Ein
+*Vorschlag* kommt ausgefüllt an und bleibt änderbar; sobald der Benutzer etwas
+anderes einträgt, steht daneben **Auf Vorschlag zurücksetzen**. Ein *fester*
+Wert ist ausgegraut und nicht änderbar — dabei steht „von deiner Firma
+vorgegeben“. Ein vorbelegtes Pflichtfeld gilt als gesetzt. Feste Werte und
+übernommene Vorschläge speichert das Gerät nicht, deshalb wirkt eine Änderung
+des Admins beim nächsten Abgleich, ohne neue Anmeldung.
+
+![Angaben-Dialog mit fester Vorgabe und Vorschlag](../docs/bilder/fenster-dark-vorgaben-800.png)
+
 Felder tragen eine **Art** (Verwaltung: *Art* und *Titel*): Text, Passwort,
 Zahl, Schalter (Häkchen), Adresse (mit `http(s)://`-Prüfung) oder Auswahl mit
 festen Optionen. Ein *Titel* ersetzt den Feldnamen im Dialog — so steht
