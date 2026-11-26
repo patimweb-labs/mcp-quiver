@@ -135,8 +135,12 @@ impl Aufstellung {
 
 /// Die Art der Installation aus dem Programmpfad erkennen.
 pub fn art_erkennen(programm: &Path, umgebung: &Umgebung) -> Installationsart {
-    let text = programm.to_string_lossy();
-    let klein = text.to_ascii_lowercase();
+    // Pfade ohne Rücksicht auf das Trennzeichen vergleichen: `\` und `/`
+    // gelten gleich (Windows kennt beide).
+    let klein = programm
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('\\', "/");
     match umgebung.system.as_str() {
         "macos" => {
             if bundel_von(programm).is_some() {
@@ -150,7 +154,11 @@ pub fn art_erkennen(programm: &Path, umgebung: &Umgebung) -> Installationsart {
             let im_programme_ordner = umgebung.lokal.as_ref().is_some_and(|lokal| {
                 pfad_beginnt_mit(
                     &klein,
-                    &lokal.join("Programs").to_string_lossy().to_lowercase(),
+                    &lokal
+                        .join("Programs")
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .replace('\\', "/"),
                 )
             });
             if im_programme_ordner {
