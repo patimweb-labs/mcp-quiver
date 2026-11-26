@@ -64,7 +64,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && chmod 755 /usr/local/bin/programme
 # Die Fassung des Releases (ohne „v“). Leer = keine Programme.
-ARG QUIVER_TOOLS_VERSION=0.1.0
+ARG QUIVER_TOOLS_VERSION=0.2.1
 ARG QUIVER_TOOLS_BASIS="https://github.com/patimweb-labs/quiver-tools/releases/download"
 ENV QUIVER_TOOLS_VERSION=$QUIVER_TOOLS_VERSION \
     QUIVER_TOOLS_BASIS=$QUIVER_TOOLS_BASIS \

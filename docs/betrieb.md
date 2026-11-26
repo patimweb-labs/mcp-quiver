@@ -225,7 +225,7 @@ nothing (their configuration stays). The version is set in the `Dockerfile`; to
 build with another one:
 
 ```bash
-docker build --build-arg QUIVER_TOOLS_VERSION=0.1.0 -t mcp-quiver-server .
+docker build --build-arg QUIVER_TOOLS_VERSION=0.2.1 -t mcp-quiver-server .
 ```
 
 With an empty value (`QUIVER_TOOLS_VERSION=`) it builds without programs and says so.

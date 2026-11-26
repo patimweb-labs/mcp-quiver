@@ -234,7 +234,7 @@ Geräte bekommen nichts (ihre Konfiguration bleibt). Die Fassung steht im
 `Dockerfile`; eine andere beim Bauen:
 
 ```bash
-docker build --build-arg QUIVER_TOOLS_VERSION=0.1.0 -t mcp-quiver-server .
+docker build --build-arg QUIVER_TOOLS_VERSION=0.2.1 -t mcp-quiver-server .
 ```
 
 Mit leerer Angabe (`QUIVER_TOOLS_VERSION=`) baut es ohne Programme und sagt es.
