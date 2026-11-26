@@ -13,7 +13,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 // Die Ebene ist für beide Bausteine dieselbe; ihr Aussehen lädt mit ihnen.
 import "./auswahl-ebene.css";
 
-import { anker_sichtbar, listenplatz, type Listenplatz } from "../logik/liste";
+import { HOEHE_MAX, anker_sichtbar, listenplatz, type Listenplatz } from "../logik/liste";
 
 let zaehler = 0;
 
@@ -56,7 +56,11 @@ export function useAuswahlEbene() {
       schliessen();
       return;
     }
-    platz.value = listenplatz(anker_mass, fenster);
+    // Die echte Höhe der Liste (ohne die gesetzte Höchsthöhe): passt sie unten
+    // nicht ganz hin, klappt sie nach oben, wenn dort mehr Platz ist.
+    const inhalt = ebene.value?.scrollHeight ?? 0;
+    const wunsch = inhalt > 0 ? Math.min(inhalt, HOEHE_MAX) : HOEHE_MAX;
+    platz.value = listenplatz(anker_mass, fenster, wunsch);
   }
 
   function oeffnen(): void {
@@ -64,7 +68,11 @@ export function useAuswahlEbene() {
     // Erst messen, wenn das Feld steht: sonst ist die Höhe 0.
     platz.value = null;
     offen.value = true;
-    void nextTick(messen);
+    // Zweimal: erst ins Fenster setzen, dann mit der echten Höhe nachrechnen.
+    void nextTick(() => {
+      messen();
+      void nextTick(messen);
+    });
   }
 
   function schliessen(): void {
