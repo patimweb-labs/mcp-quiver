@@ -8,6 +8,29 @@ Pflegt `release-please` aus den Conventional Commits; von Hand kommt nur der
 Eintrag zur ersten Version hierher. Der Tag ist `v<Version>` und muss zur
 Version in `[workspace.package]` passen.
 
+## [0.5.0](https://github.com/patimweb-labs/mcp-quiver/compare/v0.4.1...v0.5.0) (2026-11-26)
+
+
+### Neu
+
+* Angaben vom Server vorbelegen (Vorschlag oder fest) ([02215a2](https://github.com/patimweb-labs/mcp-quiver/commit/02215a2fc80a2dbce54ac13f98c4ee55cbaa5a97))
+* Angaben vom Server vorbelegen (Vorschlag oder fest) ([3934449](https://github.com/patimweb-labs/mcp-quiver/commit/3934449ba1e5e00ce11a0e42f640d38fb07fc716))
+* Client bietet Updates an und spielt sie ein ([a791872](https://github.com/patimweb-labs/mcp-quiver/commit/a791872927d0f3894e2b8fbefa777b09f2aed8a1))
+
+
+### Behoben
+
+* .pkg installiert immer nach /Applications, Import nur unter macOS ([947dde5](https://github.com/patimweb-labs/mcp-quiver/commit/947dde58fb2e9336b8828370d804ea4706a44d5a))
+* Auswahllisten und Fenster der Verwaltung bleiben im Bild ([02ab075](https://github.com/patimweb-labs/mcp-quiver/commit/02ab075ccf4b3ed5ef555352de4167214788bb12))
+* Auswahllisten und Fenster der Verwaltung bleiben im Bild ([195beb4](https://github.com/patimweb-labs/mcp-quiver/commit/195beb4c9fdb5719583c90896de25c9236fa1b38))
+* Installationsart unabhängig vom Pfadtrennzeichen erkennen ([c28e25a](https://github.com/patimweb-labs/mcp-quiver/commit/c28e25a80a95c5d5f0d46cd4efd64363d1363556))
+
+
+### Bau und Pakete
+
+* Server-Abbild mit quiver-tools 0.2.1 ([2ca0eaf](https://github.com/patimweb-labs/mcp-quiver/commit/2ca0eaf582095ceca56a8c528bf21352c2413237))
+* Server-Abbild mit quiver-tools 0.2.1 ([3205322](https://github.com/patimweb-labs/mcp-quiver/commit/3205322fd60fec4f2cdc26416974cdfdab10f9c7))
+
 ## [0.4.1](https://github.com/patimweb-labs/mcp-quiver/compare/v0.4.0...v0.4.1) (2026-11-25)
 
 
