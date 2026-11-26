@@ -42,9 +42,11 @@ pub mod protokoll;
 pub mod rechte;
 mod server_anmeldung;
 mod sse;
+mod tools;
 mod tresor;
 pub mod update;
 pub mod vorgaben;
+mod werkzeuge;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
@@ -54,8 +56,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use quiver_domain::{
-    EintragId, FehlendesFeld, Feld, Geraet, Mehrfach, Quelle, Soll, SollEintrag, Werte, Zugang,
-    MEHRFACH_UMGEBUNG,
+    EintragId, FehlendesFeld, Feld, Geraet, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag, Werte,
+    Zugang, MEHRFACH_UMGEBUNG,
 };
 use quiver_protocol::{AnmeldeGrund, Anmeldearten, EintragZustand, PRAEFIX};
 use rmcp::model::Tool;
@@ -69,9 +71,11 @@ pub use einstellungen::{Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung}
 use hilfen::Abbruch;
 pub use protokoll::{Aufruf, LogFilter, Zeile};
 pub use server_anmeldung::{Browser, SystemBrowser};
+pub use tools::{Fund, Herkunft, NichtGefunden, Suche, ORDNER_SCHALTER};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 pub use update::UpdateLage;
 pub use vorgaben::Vorgaben;
+pub use werkzeuge::Ablage;
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
 const STATUS_ABSTAND: Duration = Duration::from_secs(10 * 60);
@@ -96,6 +100,10 @@ pub struct KernKonfig {
     /// Vorgaben der Firma (Aufgabe 34): Vorrang vor dem Profil. Standard: was
     /// das System meldet; Tests setzen sie ausdrücklich.
     pub vorgaben: Vorgaben,
+    /// Wie quiver hier installiert ist (Aufgabe 39): Art, Programmpfad und ob
+    /// der Ordner schreibbar ist. Standard: das erkennt der Client selbst;
+    /// Tests setzen einen Programmordner im Testordner.
+    pub aufstellung: update::Aufstellung,
 }
 
 impl KernKonfig {
@@ -110,6 +118,7 @@ impl KernKonfig {
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
             browser: Arc::new(SystemBrowser),
             vorgaben: vorgaben::lesen(&vorgaben::Ort::aus_umgebung()),
+            aufstellung: update::Aufstellung::dieses(),
         }
     }
 }
@@ -205,6 +214,23 @@ pub struct EintragSicht {
     /// Dann steht hier der Grund im Klartext – das Fenster zeigt ihn.
     #[serde(default)]
     pub unzulaessig: Option<String>,
+    /// Das Programm dieses Eintrags gibt es auf diesem Gerät nicht
+    /// (Aufgabe 37): der Name aus der Bibliothek ist kein verteiltes Programm
+    /// und liegt weder im Entwicklungsordner noch im `PATH`. Dann steht hier
+    /// der Programmname, die Karte sagt „Dieses Tool ist auf diesem Gerät
+    /// nicht installiert.“ und bietet weder Anmeldung noch Einrichtung an – es
+    /// gäbe nichts zu starten.
+    #[serde(default)]
+    pub nicht_installiert: Option<String>,
+    /// Der Server verteilt die Programme, hat dieses aber nicht für das System
+    /// des Geräts (Aufgabe 37). Die Karte sagt „Für dieses System gibt es das
+    /// Tool nicht.“ – kein Fehler.
+    #[serde(default)]
+    pub nicht_fuer_system: bool,
+    /// Wie weit das Laden dieses Programms ist (0–100), solange die Karte
+    /// „Wird vom Server geladen …“ zeigt (Nachtrag zu Aufgabe 37).
+    #[serde(default)]
+    pub ladeanteil: Option<u8>,
 }
 
 /// Ein Zugang eines Eintrags mit `mehrfach`, wie ihn das Fenster zeigt:
@@ -251,6 +277,29 @@ pub struct Anmeldewege {
     pub entra: bool,
     /// Einmal-Code: ohne Entra der Weg dieses Servers.
     pub code: bool,
+}
+
+/// Was der Client gerade tut – die Anzeige am Kopf der Werkzeugseite
+/// (Nachtrag zu Aufgabe 37).
+///
+/// Die Sätze stehen nicht hier, sondern in den Texten der Oberfläche (deutsch
+/// und englisch): der Kern liefert den Zustand, das Fenster die Worte.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "art", rename_all = "kebab-case")]
+pub enum Fortschritt {
+    /// Nichts zu tun.
+    #[default]
+    Ruhe,
+    /// Der Soll-Zustand wird geholt.
+    Verbindet,
+    /// Programme werden geladen: `fertig` von `gesamt`.
+    Laedt { fertig: u32, gesamt: u32 },
+    /// Die Einträge starten.
+    Startet,
+    /// Fertig: `geaendert` Programme wurden geholt oder aktualisiert (0 =
+    /// alles war schon aktuell). Das Fenster zeigt das kurz und blendet es
+    /// wieder aus.
+    Fertig { geaendert: u32 },
 }
 
 /// Alles, was das Fenster zeigt.
@@ -301,6 +350,10 @@ pub struct Modell {
     /// Hinweistext. Leer heißt: keine Vorgaben.
     #[serde(default)]
     pub vorgaben: Vorgaben,
+    /// Was gerade getan wird (Abgleich, Programme laden, Starten) – für die
+    /// Anzeige am Kopf der Werkzeugseite (Nachtrag zu Aufgabe 37).
+    #[serde(default)]
+    pub fortschritt: Fortschritt,
 }
 
 /// Der Stand eines Eintrags, ohne Verbindung (der Teil, der ins Modell geht).
@@ -408,6 +461,11 @@ impl Auslastung {
         self.gesamt == 0
     }
 
+    /// Wie viele Aufrufe dieses Eintrags laufen gerade?
+    pub(crate) fn offen(&self, id: &EintragId) -> usize {
+        self.je_eintrag.get(id).copied().unwrap_or(0)
+    }
+
     pub(crate) fn freigeben(&mut self, id: &EintragId) {
         if let Some(offen) = self.je_eintrag.get_mut(id) {
             *offen = offen.saturating_sub(1);
@@ -444,6 +502,16 @@ struct Stand {
     agenten: Vec<profil::Agent>,
     soll: Soll,
     laeufer: BTreeMap<EintragId, Laeufer>,
+    /// Karten-Zustand während eines Programm-Ladens (Aufgabe 37): „Wird vom
+    /// Server geladen …“, „Aktualisiert“. Gehört nicht zum Läufer, weil es vor
+    /// dem ersten Start noch keinen gibt. Hat Vorrang vor dem Läufer-Zustand
+    /// und verschwindet, sobald geladen ist.
+    ladezustand: BTreeMap<EintragId, EintragZustand>,
+    /// Wie weit das Laden je Eintrag ist (0–100) – der Anteil auf der Karte,
+    /// solange die Größe des Programms bekannt ist.
+    ladeanteil: BTreeMap<EintragId, u8>,
+    /// Was gerade getan wird – für die Anzeige am Kopf der Werkzeugseite.
+    fortschritt: Fortschritt,
     /// Anmeldezustand je Eintrag; nur lokal, gehört nicht zur Meldung.
     anmeldung: BTreeMap<EintragId, AnmeldeZustand>,
     /// Einrichtungszustand je Eintrag; ebenfalls nur lokal.
@@ -471,6 +539,9 @@ struct Stand {
     endpunkt: String,
     /// Der Stand des Updates (Aufgabe 34).
     update: UpdateLage,
+    /// Diese Version wurde mit „Später“ abgelehnt (Aufgabe 39): der Hinweis
+    /// bleibt weg, bis der Client neu startet oder eine neuere Version kommt.
+    update_abgelehnt: Option<String>,
 }
 
 impl Stand {
@@ -490,6 +561,8 @@ impl Stand {
                     zugaenge: &self.zugaenge,
                     zugang_geheim: &self.zugang_geheim,
                     am_geraet_aus: &self.am_geraet_aus,
+                    ladezustand: &self.ladezustand,
+                    ladeanteil: &self.ladeanteil,
                 },
                 &self.laeufer,
                 &self.anmeldung,
@@ -513,8 +586,16 @@ impl Stand {
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
             tresor_fehler: self.tresor_fehler.clone(),
             profil_hinweis: self.profil_hinweis.clone(),
-            update: self.update.clone(),
+            update: match (&self.update, &self.update_abgelehnt) {
+                (UpdateLage::Verfuegbar { version, .. }, Some(abgelehnt))
+                    if version == abgelehnt =>
+                {
+                    UpdateLage::Keins
+                }
+                (lage, _) => lage.clone(),
+            },
             vorgaben: Vorgaben::default(),
+            fortschritt: self.fortschritt.clone(),
         }
     }
 
@@ -561,6 +642,10 @@ struct Lokales<'a> {
     zugang_geheim: &'a BTreeMap<EintragId, BTreeMap<String, Werte>>,
     /// Auf diesem Gerät abgeschaltete Einträge (Aufgabe 19).
     am_geraet_aus: &'a BTreeSet<EintragId>,
+    /// Programme, die gerade vom Server kommen (Aufgabe 37).
+    ladezustand: &'a BTreeMap<EintragId, EintragZustand>,
+    /// Wie weit sie sind (0–100).
+    ladeanteil: &'a BTreeMap<EintragId, u8>,
 }
 
 /// Die Sicht auf die Einträge: Soll + lokale Werte → was das Fenster zeigt.
@@ -577,6 +662,8 @@ fn eintraege_sicht(
         zugaenge,
         zugang_geheim,
         am_geraet_aus,
+        ladezustand,
+        ladeanteil,
     } = lokal;
     soll.eintraege
         .iter()
@@ -606,12 +693,31 @@ fn eintraege_sicht(
             // Eine Kennung, die nicht als Präfix taugt, startet nichts – und
             // das Fenster sagt, warum (Paket 3).
             let unzulaessig = quiver_domain::kennung_fehler(id.als_str()).map(str::to_string);
+            // Fehlt das Programm, sagt die Karte das einmal und bietet keine
+            // Anmeldung an (Aufgabe 37). Ein abgeschalteter Eintrag braucht
+            // die Frage nicht: er startet ohnehin nichts.
+            let verteilt = tools::verteilt_name(&eintrag.eintrag.laufzeit);
+            // „Für dieses System gibt es das Tool nicht“ gilt nur, wenn auch
+            // kein eigener Pfad auf diesem Gerät liegt: der läuft weiter
+            // (Altbestand, eigenes Programm des Betreibers, Aufgabe 37).
+            let nicht_fuer_system = !aus
+                && verteilt.as_deref().is_some_and(|name| {
+                    soll.programm(name).is_none()
+                        && werkzeuge::eigener_pfad(&eintrag.eintrag.laufzeit).is_none()
+                });
+            let nicht_installiert = (!aus && !nicht_fuer_system)
+                .then(|| tools::fehlt(&eintrag.eintrag.laufzeit))
+                .flatten();
             EintragSicht {
                 id: id.clone(),
                 titel: eintrag.eintrag.titel.clone(),
                 beschreibung: eintrag.eintrag.beschreibung.clone(),
                 zustand: if aus {
                     EintragZustand::AmGeraetAus
+                } else if let Some(laden) = ladezustand.get(id) {
+                    // „Wird vom Server geladen …“ / „Aktualisiert“ hat Vorrang:
+                    // solange geladen wird, ist der Läufer-Zustand alt.
+                    laden.clone()
                 } else {
                     zustand
                         .map(|l| l.stand.zustand.clone())
@@ -662,6 +768,9 @@ fn eintraege_sicht(
                 }),
                 am_geraet_aus: aus,
                 unzulaessig,
+                nicht_installiert,
+                nicht_fuer_system,
+                ladeanteil: ladeanteil.get(id).copied(),
             }
         })
         .collect()
@@ -832,6 +941,20 @@ fn export_daten(
 /// Geheimfelder und je Zugang dessen Geheimfelder.
 type Geheimplan = (EintragId, Vec<String>, Vec<(String, Vec<String>)>);
 
+/// Eine Version als Ordnername: nur Zeichen, die kein Pfad sind.
+fn version_sicher(version: &str) -> String {
+    let text: String = version
+        .chars()
+        .filter(|zeichen| zeichen.is_ascii_alphanumeric() || matches!(zeichen, '.' | '-' | '_'))
+        .take(64)
+        .collect();
+    if text.is_empty() {
+        String::from("unbekannt")
+    } else {
+        text
+    }
+}
+
 /// Innerei des Kerns; geteilt zwischen Fassade, Abgleich und Endpunkt.
 pub(crate) struct Innen {
     pub(crate) konfig: KernKonfig,
@@ -871,9 +994,194 @@ pub(crate) struct Innen {
     pub(crate) liste_zuletzt: Mutex<Option<std::time::Instant>>,
     /// Ist eine weitere Meldung schon vorgemerkt?
     pub(crate) liste_geplant: AtomicBool,
+    /// Die Programme, die vom Server geladen wurden (Aufgabe 37).
+    pub(crate) ablage: werkzeuge::Ablage,
+    /// Betriebssystem und Architektur dieses Geräts, wie der Server sie hört.
+    pub(crate) system: quiver_domain::System,
+    /// Nur ein Programm-Laden zur Zeit: zwei Abgleiche zugleich sollen nicht
+    /// dieselbe Datei zweimal schreiben (Aufgabe 37).
+    pub(crate) programm_wache: tokio::sync::Mutex<()>,
+    /// Ist der erste Abgleich dieses Laufs noch offen? Dann zeigt das Fenster
+    /// danach kurz „Alles aktuell“ (Nachtrag zu Aufgabe 37).
+    pub(crate) erster_abgleich: AtomicBool,
+    /// Hat der Benutzer „Tools aktualisieren“ gedrückt? Dann zeigt das Fenster
+    /// auch dann „Alles aktuell“, wenn nichts zu tun war.
+    pub(crate) fertig_zeigen: AtomicBool,
+    /// Wo quiver liegt und wie es installiert ist (Aufgabe 39).
+    pub(crate) aufstellung: update::Aufstellung,
 }
 
 impl Innen {
+    /// Warten, bis kein Aufruf dieses Eintrags mehr läuft – höchstens `frist`.
+    ///
+    /// `true` heißt: es läuft nichts mehr. Wird ein Programm ersetzt, sollen
+    /// laufende Aufrufe zu Ende gehen, statt mitten in der Arbeit abzubrechen
+    /// (Nachtrag zu Aufgabe 37).
+    pub(crate) async fn aufrufe_abwarten(&self, id: &EintragId, frist: Duration) -> bool {
+        let ende = std::time::Instant::now() + frist;
+        loop {
+            let offen = self
+                .auslastung
+                .lock()
+                .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+                .offen(id);
+            if offen == 0 {
+                return true;
+            }
+            if std::time::Instant::now() >= ende {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Alle Werkzeuge sauber beenden (Aufgabe 39): erst stoppen, dann warten,
+    /// bis kein Aufruf mehr läuft. So wird nicht mitten in einer Arbeit
+    /// getauscht.
+    pub(crate) async fn alle_tools_stoppen(self: &Arc<Self>) {
+        let ids: Vec<EintragId> = self.stand().laeufer.keys().cloned().collect();
+        for id in &ids {
+            stoppe_in(self, id);
+        }
+        for id in &ids {
+            self.aufrufe_abwarten(id, Duration::from_secs(10)).await;
+        }
+    }
+
+    /// Was gerade getan wird – für die Anzeige am Kopf der Werkzeugseite
+    /// (Nachtrag zu Aufgabe 37). Nur melden, wenn es sich ändert.
+    pub(crate) fn fortschritt_setzen(&self, fortschritt: Fortschritt) {
+        let geaendert = {
+            let mut stand = self.stand();
+            if stand.fortschritt == fortschritt {
+                false
+            } else {
+                stand.fortschritt = fortschritt;
+                true
+            }
+        };
+        if geaendert {
+            self.modell_schicken();
+        }
+    }
+
+    /// Wie weit das Laden eines Programms ist (0–100).
+    pub(crate) fn ladeanteil_setzen(&self, id: &EintragId, anteil: u8) {
+        let geaendert = {
+            let mut stand = self.stand();
+            stand.ladeanteil.insert(id.clone(), anteil.min(100)) != Some(anteil.min(100))
+        };
+        if geaendert {
+            self.modell_schicken();
+        }
+    }
+
+    /// „Wird vom Server geladen …“ / „Aktualisiert“ auf die Karte setzen
+    /// (Aufgabe 37); `None` nimmt es wieder weg.
+    pub(crate) fn ladezustand_setzen(&self, id: &EintragId, zustand: Option<EintragZustand>) {
+        {
+            let mut stand = self.stand();
+            match zustand {
+                Some(zustand) => {
+                    stand.ladezustand.insert(id.clone(), zustand);
+                }
+                None => {
+                    stand.ladezustand.remove(id);
+                }
+            }
+        }
+        self.modell_schicken();
+    }
+
+    /// Den Befehl eines Eintrags zu einem startbaren Programm machen
+    /// (Aufgabe 37): verteilte Programme kommen aus der Ablage im Profil und
+    /// werden vor **jedem** Start erneut geprüft.
+    ///
+    /// Ist die Datei beschädigt oder fehlt sie, wird sie – genau einmal –
+    /// nachgeladen; passt sie dann nicht, gibt es einen Fehler.
+    pub(crate) async fn laufzeit_mit_programm(
+        &self,
+        id: &EintragId,
+        laufzeit: Laufzeit,
+    ) -> anyhow::Result<Laufzeit> {
+        let _wache = self.programm_wache.lock().await;
+        let programme = self.stand().soll.programme.clone();
+        let mut nachgeladen = false;
+        loop {
+            match werkzeuge::aufloesen(&self.ablage, &programme, &laufzeit) {
+                werkzeuge::Aufloesung::Fremd => return Ok(laufzeit),
+                werkzeuge::Aufloesung::Pfad(pfad) => {
+                    return Ok(werkzeuge::mit_pfad(&laufzeit, &pfad))
+                }
+                werkzeuge::Aufloesung::NichtFuerSystem(_) => {
+                    return Err(werkzeuge::StartFehler::NichtFuerSystem.into())
+                }
+                werkzeuge::Aufloesung::Beschaedigt(name) => {
+                    let fehler = || werkzeuge::StartFehler::NichtLadbar(name.clone());
+                    if nachgeladen {
+                        return Err(fehler().into());
+                    }
+                    let (server, token) = self.zugang();
+                    let (Some(server), Some(token)) = (server, token) else {
+                        return Err(fehler().into());
+                    };
+                    let Some(programm) = programme
+                        .iter()
+                        .find(|programm| programm.name == name)
+                        .cloned()
+                    else {
+                        return Err(werkzeuge::StartFehler::NichtFuerSystem.into());
+                    };
+                    tracing::info!(eintrag = %id, programm = %name, "Programm wird geprüft und neu geladen");
+                    self.ablage
+                        .holen(&self.http, &server, &token, &programm)
+                        .await
+                        .map_err(|grund| {
+                            tracing::warn!(eintrag = %id, "Programm {name} nicht ladbar: {grund:#}");
+                            werkzeuge::StartFehler::NichtLadbar(name.clone())
+                        })?;
+                    nachgeladen = true;
+                }
+            }
+        }
+    }
+
+    /// Wie [`Innen::laufzeit_mit_programm`], für einen Anmelde- oder
+    /// Einrichtungsbefehl (Aufgabe 37): auch er startet das verteilte Programm
+    /// – und nur, wenn es geprüft ist.
+    pub(crate) async fn befehl_mit_programm(
+        &self,
+        id: &EintragId,
+        befehl: anmeldung::Befehl,
+    ) -> anyhow::Result<anmeldung::Befehl> {
+        if tools::verteilt_name(&Laufzeit::Stdio {
+            befehl: befehl.programm.clone(),
+            argumente: befehl.argumente.clone(),
+            umgebung: befehl.umgebung.clone(),
+        })
+        .is_none()
+        {
+            return Ok(befehl);
+        }
+        let laufzeit = self
+            .laufzeit_mit_programm(
+                id,
+                Laufzeit::Stdio {
+                    befehl: befehl.programm.clone(),
+                    argumente: befehl.argumente.clone(),
+                    umgebung: befehl.umgebung.clone(),
+                },
+            )
+            .await?;
+        let Laufzeit::Stdio { befehl: pfad, .. } = laufzeit else {
+            return Ok(befehl);
+        };
+        Ok(anmeldung::Befehl {
+            programm: pfad,
+            ..befehl
+        })
+    }
+
     pub(crate) fn stand(&self) -> MutexGuard<'_, Stand> {
         self.stand
             .lock()
@@ -965,6 +1273,18 @@ impl Innen {
             if stand.verbindung == verbindung {
                 false
             } else {
+                // Ohne Verbindung gibt es keinen Fortschritt zu zeigen: sonst
+                // stünde „Verbinde mit dem Server …“ für immer da. Auch ein
+                // vorgemerktes „Alles aktuell“ verfällt: es gibt keinen
+                // Abgleich, auf den es sich beziehen könnte.
+                if !matches!(
+                    verbindung,
+                    Verbindung::Verbunden { .. } | Verbindung::Verbindet { .. }
+                ) {
+                    stand.fortschritt = Fortschritt::Ruhe;
+                    self.fertig_zeigen
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                }
                 stand.verbindung = verbindung;
                 true
             }
@@ -985,6 +1305,12 @@ impl Innen {
         for id in ids {
             stoppe_in(self, &id);
         }
+        // Aufgabe 37: Abmelden am Gerät löscht die Programme. Die
+        // Konfiguration bleibt – sie hängt an der Kennung des Eintrags. Das
+        // Löschen wartet auf das Ende der Prozesse (Windows hält die Datei
+        // sonst fest); was dann noch liegt, nimmt der nächste Start mit.
+        self.ablage.alles_loeschen().await;
+        self.stand().ladezustand.clear();
         let geloescht = self.konfig.tresor.loeschen("geraet-token");
         {
             let mut stand = self.stand();
@@ -1002,6 +1328,7 @@ impl Innen {
             // Eintrag bleibt aber abgeschaltet (Aufgabe 19).
             stand.angenommen = false;
             stand.verbindung = Verbindung::NichtEingebunden;
+            stand.fortschritt = Fortschritt::Ruhe;
         }
         self.speichern();
         self.modell_schicken();
@@ -1505,12 +1832,47 @@ impl Innen {
                         (id.clone(), zustand)
                     })
                     .collect(),
+                // Nur was wirklich läuft: die Verwaltung zeigt damit je Gerät,
+                // welche Programme in welcher Fassung dort laufen (Aufgabe 37).
+                programme: programme_im_lauf(&stand),
             }
         };
         if let Err(fehler) = abgleich::meldung_senden(&self.http, &server, &token, &meldung).await {
             tracing::warn!("Meldung an den Server: {fehler}");
         }
     }
+}
+
+/// Die Programme, die auf diesem Gerät gerade laufen (Aufgabe 37).
+///
+/// Die Fassung ist die des Solls; sie ist es auch, die der Client vor dem Start
+/// geprüft hat. Was nur im Soll steht, aber nicht läuft (Fehler, abgeschaltet),
+/// kommt nicht mit.
+fn programme_im_lauf(stand: &Stand) -> Vec<quiver_domain::Programm> {
+    let mut namen = BTreeSet::new();
+    let mut programme = Vec::new();
+    for eintrag in &stand.soll.eintraege {
+        let laeuft = matches!(
+            stand
+                .laeufer
+                .get(&eintrag.eintrag.id)
+                .map(|l| &l.stand.zustand),
+            Some(EintragZustand::Laeuft { .. })
+        );
+        if !laeuft {
+            continue;
+        }
+        let Some(name) = tools::verteilt_name(&eintrag.eintrag.laufzeit) else {
+            continue;
+        };
+        let Some(programm) = stand.soll.programm(&name) else {
+            continue;
+        };
+        if namen.insert(name) {
+            programme.push(programm.clone());
+        }
+    }
+    programme
 }
 
 /// Ist dieser Name schon vergeben? Vergleich ohne Groß-/Kleinschreibung und
@@ -1561,18 +1923,48 @@ pub(crate) fn zugang_geheim_schluessel(id: &EintragId, name: &str, feld: &str) -
 
 /// Den Anmeldezustand eines Eintrags prüfen und ablegen.
 ///
-/// `None`, wenn der Eintrag keine Anmeldung braucht (dann passiert nichts).
+/// `None`, wenn der Eintrag keine Anmeldung braucht (dann passiert nichts)
+/// oder wenn sein Programm auf diesem Gerät fehlt (Aufgabe 35, §5): dann gibt
+/// es nichts zu prüfen, und die Karte sagt das ohne Knopf.
+///
 /// Sonst das Ergebnis des `status`-Befehls: Exit 0 = angemeldet (erste Zeile
-/// von stdout ist das Konto), Exit 1 = abgemeldet, alles andere ein Fehler.
+/// von stdout ist das Konto), Exit 1 = abgemeldet, Exit 3 = läuft bald ab,
+/// alles andere ein Fehler. Während der Befehl läuft, steht der Zustand auf
+/// [`AnmeldeZustand::Pruefe`]; das Fenster zeigt dann ein Drehsymbol ohne
+/// Knopf.
 async fn status_pruefen(innen: &Arc<Innen>, id: &EintragId) -> Option<AnmeldeZustand> {
     let soll = innen.soll_eintrag(id)?;
     soll.eintrag.anmeldung.as_ref()?;
+    if tools::fehlt(&soll.eintrag.laufzeit).is_some() {
+        return None;
+    }
+    // Für dieses System gibt es das Programm nicht (und keinen eigenen Pfad):
+    // nichts zu prüfen.
+    if tools::verteilt_name(&soll.eintrag.laufzeit).is_some_and(|name| {
+        innen.stand().soll.programm(&name).is_none()
+            && werkzeuge::eigener_pfad(&soll.eintrag.laufzeit).is_none()
+    }) {
+        return None;
+    }
+    innen.anmeldung_setzen(id, AnmeldeZustand::Pruefe);
     let (lokal, geheim) = innen.werte(id);
     let zustand =
         match anmeldung::befehl_bauen(&soll, anmeldung::Anmeldebefehl::Status, &lokal, &geheim) {
             Ok(befehl) => {
                 let frist = anmeldung::Anmeldebefehl::Status.frist();
-                match anmeldung::laufen(id, &befehl, frist).await {
+                let befehl = match innen.befehl_mit_programm(id, befehl).await {
+                    Ok(befehl) => befehl,
+                    Err(fehler) => {
+                        innen.anmeldung_setzen(
+                            id,
+                            AnmeldeZustand::Fehler {
+                                text: format!("{fehler:#}"),
+                            },
+                        );
+                        return None;
+                    }
+                };
+                match anmeldung::laufen(id, &befehl, frist, &innen.protokoll).await {
                     Ok(ausgang) => anmeldung::zustand_aus(&ausgang),
                     Err(fehler) => AnmeldeZustand::Fehler {
                         text: format!("{fehler:#}"),
@@ -1621,6 +2013,8 @@ async fn anmeldung_lauf(innen: Arc<Innen>) {
                 .filter(|eintrag| {
                     eintrag.eintrag.anmeldung.is_some()
                         && !stand.am_geraet_aus.contains(&eintrag.eintrag.id)
+                        // Ohne Programm gibt es nichts zu prüfen (Aufgabe 35, §5).
+                        && tools::fehlt(&eintrag.eintrag.laufzeit).is_none()
                 })
                 .map(|eintrag| eintrag.eintrag.id.clone())
                 .collect()
@@ -1733,11 +2127,13 @@ async fn starte_in(innen: &Arc<Innen>, eintrag: &SollEintrag) {
         if !darf_laufen(&stand, &id) {
             return;
         }
+        // Mit dem Programm: ändert es sich, startet der Eintrag neu.
+        let fingerabdruck = stand.soll.fingerabdruck(eintrag);
         stand.laeufer.insert(
             id.clone(),
             Laeufer {
                 generation,
-                fingerabdruck: eintrag.fingerabdruck(),
+                fingerabdruck,
                 stand: LaeuferStand::neu(EintragZustand::Startet),
                 peer: None,
                 abbruch: abbruch.clone(),
@@ -1764,6 +2160,33 @@ fn stoppe_in(innen: &Arc<Innen>, id: &EintragId) {
     if let Some(laeufer) = laeufer {
         laeufer.abbruch.abbrechen();
     }
+}
+
+/// Alte Fassungen eines Programms löschen, sobald ihr Prozess sie freigibt.
+/// Was nach zehn Sekunden noch liegt, nimmt der nächste Start mit.
+fn alte_fassungen_nachholen(innen: &Arc<Innen>, name: String) {
+    let hier = innen.clone();
+    let aufgabe = tokio::spawn(async move {
+        for _ in 0..20 {
+            tokio::select! {
+                _ = hier.ende.warten() => return,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+            }
+            // Nicht neben einem laufenden Laden, und immer nach dem Soll von
+            // jetzt.
+            let _wache = hier.programm_wache.lock().await;
+            let sha = hier.stand().soll.programm(&name).map(|p| p.sha256.clone());
+            match sha {
+                Some(sha) if !hier.ablage.alte_fassungen(&name, &sha) => {}
+                _ => return,
+            }
+        }
+    });
+    innen
+        .aufgaben
+        .lock()
+        .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+        .push(aufgabe);
 }
 
 /// Die Aufsicht eines Eintrags: starten, Werkzeuge holen, warten, neu starten.
@@ -1806,6 +2229,27 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
         // Die Zugänge gehören in die Umgebung, nicht in die Felder: das Tool
         // liest sie beim Start (Aufgabe 14).
         let laufzeit = mit_zugaengen(&innen, &id, laufzeit);
+        // Aufgabe 37: das verteilte Programm einsetzen – geprüft, notfalls
+        // nachgeladen.
+        let laufzeit = match innen.laufzeit_mit_programm(&id, laufzeit).await {
+            Ok(laufzeit) => laufzeit,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                fehler_setzen(&innen, &id, generation, text).await;
+                // „Für dieses System gibt es das Tool nicht.“ ist eine
+                // Auskunft: ein neuer Versuch ändert nichts.
+                if fehler
+                    .downcast_ref::<werkzeuge::StartFehler>()
+                    .is_some_and(|fehler| matches!(fehler, werkzeuge::StartFehler::NichtFuerSystem))
+                {
+                    return;
+                }
+                if !warten_auf_neustart(&abbruch, &mut backoff).await {
+                    return;
+                }
+                continue;
+            }
+        };
 
         innen.aendern(&id, generation, |laeufer| {
             laeufer.stand.zustand = EintragZustand::Startet;
@@ -1820,7 +2264,7 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
             _ = abbruch.warten() => return,
             ergebnis = tokio::time::timeout(
                 laufzeit::AUFBAU_TIMEOUT,
-                laufzeit::verbinden(id.als_str(), &laufzeit, &innen.protokoll),
+                laufzeit::verbinden(&id, &laufzeit, &innen.protokoll),
             ) => ergebnis,
         };
         let mut verbindung = match verbunden {
@@ -1881,6 +2325,18 @@ async fn eintrag_lauf(innen: Arc<Innen>, id: EintragId, generation: u64, abbruch
         innen.liste_geaendert().await;
         innen.melde().await;
         backoff = 1;
+        // Nach dem ersten erfolgreichen Start fallen die alten Fassungen weg
+        // (Aufgabe 37): erst wenn das neue Programm läuft, ist das alte
+        // entbehrlich.
+        if let Some(name) = tools::verteilt_name(&eintrag.eintrag.laufzeit) {
+            if let Some(sha) = innen.stand().soll.programm(&name).map(|p| p.sha256.clone()) {
+                // Ein gestoppter Prozess gibt seine Datei unter Windows erst
+                // einen Augenblick später frei: der Rest läuft nebenher.
+                if !innen.ablage.alte_fassungen(&name, &sha) {
+                    alte_fassungen_nachholen(&innen, name);
+                }
+            }
+        }
 
         // Jetzt läuft es. Ende entweder durch uns (Abbruch), von selbst -
         // oder weil eine Meldung des Tools die Größengrenze überschritt
@@ -2008,13 +2464,16 @@ pub(crate) fn ueberholt(
             .eintraege
             .iter()
             .find(|eintrag| &eintrag.eintrag.id == id)
-            .is_some_and(|eintrag| ist.get(id) == Some(&eintrag.fingerabdruck())),
+            .is_some_and(|eintrag| ist.get(id) == Some(&soll.fingerabdruck(eintrag))),
     }
 }
 
 /// Den Soll-Zustand anwenden: vergleichen und die passenden Aktionen ausführen.
 pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
     innen.geheim_laden(&soll).await;
+    // Erst die Programme: was fehlt oder eine andere Prüfsumme hat, wird
+    // geladen, bevor etwas startet (Aufgabe 37).
+    let geholt = programme_abgleichen(innen, &soll).await;
     let ist = innen.fingerabdruecke();
     let aktionen = quiver_domain::abgleichen(&soll, &ist);
     {
@@ -2036,6 +2495,12 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
         });
         stand.soll = soll.clone();
     }
+    if aktionen
+        .iter()
+        .any(|aktion| !matches!(aktion, quiver_domain::Aktion::Stoppen(_)))
+    {
+        innen.fortschritt_setzen(Fortschritt::Startet);
+    }
     for aktion in aktionen {
         if ueberholt(&aktion, &innen.fingerabdruecke(), &soll) {
             continue;
@@ -2043,16 +2508,240 @@ pub(crate) async fn anwenden(innen: &Arc<Innen>, soll: Soll) {
         match aktion {
             quiver_domain::Aktion::Stoppen(id) => stoppe_in(innen, &id),
             quiver_domain::Aktion::Neustarten(id) => {
+                // Nur das Programm ist anders: laufende Aufrufe zu Ende
+                // bringen, bevor getauscht wird.
+                let nur_programm = soll
+                    .eintraege
+                    .iter()
+                    .find(|eintrag| eintrag.eintrag.id == id)
+                    .zip(ist.get(&id))
+                    .is_some_and(|(eintrag, fa)| fa.starts_with(&eintrag.fingerabdruck()));
+                if nur_programm {
+                    innen.tausch_abwarten(&id).await;
+                }
                 stoppe_in(innen, &id);
                 starte_aus_soll(innen, &soll, &id).await;
             }
             quiver_domain::Aktion::Starten(id) => starte_aus_soll(innen, &soll, &id).await,
         }
     }
+    // Erst schreiben, dann zeigen: wer im Modell sieht, dass ein Eintrag weg
+    // ist, findet ihn auch nicht mehr im Profil.
+    innen.speichern();
     innen.modell_schicken();
     innen.liste_geaendert().await;
-    innen.speichern();
     innen.melde().await;
+    // Am Ende: kurz „Alles aktuell“ (oder wie viele Programme kamen). Beim
+    // Lauf im Hintergrund ohne Anlass bleibt die Anzeige still.
+    let zeigen = geholt > 0
+        || innen
+            .fertig_zeigen
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        || innen
+            .erster_abgleich
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+    innen.fortschritt_setzen(if zeigen {
+        Fortschritt::Fertig {
+            geaendert: u32::try_from(geholt).unwrap_or(u32::MAX),
+        }
+    } else {
+        Fortschritt::Ruhe
+    });
+}
+
+/// Die Programme vom Server mit dem Soll abgleichen (Aufgabe 37).
+///
+/// - Was fehlt oder eine andere Prüfsumme hat, wird geladen; die Karte zeigt
+///   dabei „Wird vom Server geladen …“ oder „Aktualisiert“.
+/// - Was nicht mehr zugewiesen ist, wird gelöscht (die Konfiguration bleibt).
+/// - Ist der Server weg, laufen die bereits geladenen Programme weiter.
+///
+/// **Je Programm einmal:** mehrere Einträge dürfen dasselbe Programm starten.
+/// Dann wird das Programm **einmal** geladen, **alle** diese Einträge werden
+/// gestoppt (und ihre laufenden Aufrufe abgewartet), das Programm wird
+/// ersetzt, und der Abgleich startet alle wieder. Vorher wurde nur der eine
+/// Eintrag aus der Liste gestoppt – der andere lief mit der alten Datei weiter
+/// und hielt sie unter Windows fest.
+///
+/// Ein zweiter Abgleich zugleich wartet auf [`Innen::programm_wache`]. Das Soll
+/// wird hier noch **nicht** übernommen – der Vergleich der Fingerabdrücke
+/// kommt gleich danach.
+async fn programme_abgleichen(innen: &Arc<Innen>, soll: &Soll) -> usize {
+    let _wache = innen.programm_wache.lock().await;
+    // Je Programm: alle Einträge, die es starten.
+    let mut je_programm: BTreeMap<String, Vec<EintragId>> = BTreeMap::new();
+    for eintrag in &soll.eintraege {
+        let Some(name) = tools::verteilt_name(&eintrag.eintrag.laufzeit) else {
+            continue;
+        };
+        if soll.programm(&name).is_none() {
+            continue;
+        }
+        je_programm
+            .entry(name)
+            .or_default()
+            .push(eintrag.eintrag.id.clone());
+    }
+    let behalten: BTreeSet<String> = je_programm.keys().cloned().collect();
+
+    // Nicht mehr zugewiesene Programme: die betroffenen Einträge stoppen und
+    // die Datei löschen. Die Konfiguration bleibt und gilt wieder, sobald der
+    // Eintrag zurückkommt. Das Löschen wartet auf das Ende der Prozesse – sonst
+    // bliebe die Datei unter Windows liegen (Aufgabe 37).
+    let bisher: Vec<quiver_domain::Programm> = innen.stand().soll.programme.clone();
+    for programm in bisher {
+        if behalten.contains(&programm.name) {
+            continue;
+        }
+        let ids = eintraege_mit_programm(&innen.stand(), &programm.name);
+        for id in ids {
+            innen.tausch_abwarten(&id).await;
+            stoppe_in(innen, &id);
+        }
+        innen.ablage.loeschen(&programm.name).await;
+    }
+    // Auch, was auf der Platte liegt und in keinem Soll mehr steht (etwa nach
+    // einem Wechsel zwischen zwei Servern) – und was beim letzten Mal noch
+    // gesperrt war. Jeder Abgleich versucht es erneut.
+    innen.ablage.aufraeumen(&behalten).await;
+
+    let (server, token) = innen.zugang();
+    let (Some(server), Some(token)) = (server, token) else {
+        return 0;
+    };
+    // Was fehlt oder eine andere Prüfsumme trägt, kommt in die Liste – je
+    // Programm einmal, nicht je Eintrag.
+    let mut laden: Vec<(String, quiver_domain::Programm)> = Vec::new();
+    for name in &behalten {
+        let Some(programm) = soll.programm(name) else {
+            continue;
+        };
+        if innen.ablage.vorhanden(programm).is_some() {
+            continue;
+        }
+        laden.push((name.clone(), programm.clone()));
+    }
+
+    let gesamt = u32::try_from(laden.len()).unwrap_or(u32::MAX);
+    let mut geholt = 0usize;
+    for (nummer, (name, programm)) in laden.into_iter().enumerate() {
+        let fertig = u32::try_from(nummer).unwrap_or(u32::MAX);
+        if gesamt > 0 {
+            innen.fortschritt_setzen(Fortschritt::Laedt { fertig, gesamt });
+        }
+        let ids = je_programm.get(&name).cloned().unwrap_or_default();
+        // Eine andere Fassung als bisher: **alle** Einträge, die dieses
+        // Programm starten, werden erst gestoppt, dann ersetzt.
+        let ersetzt = innen
+            .stand()
+            .soll
+            .programm(&name)
+            .map(|alt| alt.sha256 != programm.sha256)
+            .unwrap_or(false);
+        if ersetzt {
+            // Laufende Aufrufe zu Ende gehen lassen, bevor das Programm
+            // getauscht wird (Nachtrag zu Aufgabe 37).
+            for id in &ids {
+                innen.tausch_abwarten(id).await;
+                stoppe_in(innen, id);
+            }
+        }
+        let zustand = if ersetzt {
+            EintragZustand::Aktualisiert
+        } else {
+            EintragZustand::WirdGeladen
+        };
+        for id in &ids {
+            innen.ladezustand_setzen(id, Some(zustand.clone()));
+        }
+        let mut zuletzt = 0u8;
+        let ergebnis = {
+            let innen_laden = innen.clone();
+            let ids_laden = ids.clone();
+            let groesse = programm.groesse;
+            innen
+                .ablage
+                .holen_mit(&innen.http, &server, &token, &programm, |geladen| {
+                    // Nur melden, wenn sich der Anteil ändert: hundert Bilder
+                    // je Programm reichen, eines je Stück wäre Verschwendung.
+                    let anteil = anteil_von(geladen, groesse);
+                    if anteil != zuletzt {
+                        zuletzt = anteil;
+                        for id in &ids_laden {
+                            innen_laden.ladeanteil_setzen(id, anteil);
+                        }
+                    }
+                })
+                .await
+        };
+        match ergebnis {
+            Ok(_) => {
+                geholt += 1;
+                tracing::info!(programm = %name, "Programm geladen");
+            }
+            Err(fehler) => {
+                // Der Startversuch sagt es gleich noch einmal genau; hier steht
+                // der Grund im Protokoll des Eintrags.
+                let text = format!("{fehler:#}");
+                tracing::warn!(programm = %name, "Programm nicht geladen: {text}");
+                for id in &ids {
+                    innen.protokoll.zeile_schreiben(id, &text);
+                }
+            }
+        }
+        for id in &ids {
+            innen.ladezustand_setzen(id, None);
+        }
+        {
+            let mut stand = innen.stand();
+            for id in &ids {
+                stand.ladeanteil.remove(id);
+            }
+        }
+        let fertig = fertig.saturating_add(1);
+        if gesamt > 0 {
+            innen.fortschritt_setzen(Fortschritt::Laedt { fertig, gesamt });
+        }
+    }
+    geholt
+}
+
+/// Die Einträge eines Solls, die dieses Programm starten.
+fn eintraege_mit_programm(stand: &Stand, name: &str) -> Vec<EintragId> {
+    stand
+        .soll
+        .eintraege
+        .iter()
+        .filter(|eintrag| tools::verteilt_name(&eintrag.eintrag.laufzeit).as_deref() == Some(name))
+        .map(|eintrag| eintrag.eintrag.id.clone())
+        .collect()
+}
+
+impl Innen {
+    /// Vor einem Programmtausch: laufende Aufrufe abwarten (höchstens
+    /// [`TAUSCH_FRIST`]) und sagen, wenn es nicht gereicht hat.
+    async fn tausch_abwarten(&self, id: &EintragId) {
+        if self.aufrufe_abwarten(id, TAUSCH_FRIST).await {
+            return;
+        }
+        let text = format!(
+            "Ein laufender Aufruf wurde nicht fertig ({} s) – das Programm wird trotzdem ersetzt.",
+            TAUSCH_FRIST.as_secs()
+        );
+        tracing::warn!(eintrag = %id, "{text}");
+        self.protokoll.zeile_schreiben(id, &text);
+    }
+}
+
+/// So lange warten laufende Aufrufe auf einen Programmtausch.
+const TAUSCH_FRIST: Duration = Duration::from_secs(10);
+
+/// Der Anteil in Prozent; `0`, solange die Größe unbekannt (0) ist.
+fn anteil_von(geladen: u64, groesse: u64) -> u8 {
+    if groesse == 0 {
+        return 0;
+    }
+    u8::try_from(geladen.saturating_mul(100) / groesse).unwrap_or(100)
 }
 
 /// Einen Eintrag des Solls starten, wenn es ihn dort gibt.
@@ -2218,6 +2907,9 @@ impl Kern {
                 .clone()
                 .unwrap_or_else(|| Soll::neu(Vec::new())),
             laeufer: BTreeMap::new(),
+            ladezustand: BTreeMap::new(),
+            ladeanteil: BTreeMap::new(),
+            fortschritt: Fortschritt::Ruhe,
             anmeldung: BTreeMap::new(),
             einrichtung: BTreeMap::new(),
             einrichtung_laufend: BTreeSet::new(),
@@ -2240,6 +2932,7 @@ impl Kern {
             verbindung,
             endpunkt: endpunkt.clone(),
             update: UpdateLage::Unbekannt,
+            update_abgelehnt: None,
         };
         let (sender, _) = watch::channel(stand.modell(&BTreeSet::new()));
         let innen = Arc::new(Innen {
@@ -2262,12 +2955,30 @@ impl Kern {
             auslastung: Mutex::new(Auslastung::default()),
             liste_zuletzt: Mutex::new(None),
             liste_geplant: AtomicBool::new(false),
+            ablage: werkzeuge::Ablage::neu(&konfig.profil),
+            system: quiver_domain::System::dieses(),
+            programm_wache: tokio::sync::Mutex::new(()),
+            erster_abgleich: AtomicBool::new(true),
+            fertig_zeigen: AtomicBool::new(false),
+            aufstellung: konfig.aufstellung.clone(),
         });
 
         // Geheimnisse wieder aufnehmen. Der gespeicherte Soll-Zustand läuft
         // **nicht** an: kein Tool startet, bevor der Server das Gerät in diesem
         // Lauf angenommen hat (erster erfolgreicher Abgleich).
         let soll = innen.stand().soll.clone();
+
+        // Aufgabe 37: was beim letzten Mal nicht gelöscht werden konnte (der
+        // Prozess hielt die Datei noch), wird jetzt erneut versucht – sonst
+        // bliebe eine alte Fassung für immer liegen. Behalten wird, was im
+        // gespeicherten Soll steht.
+        let behalten: BTreeSet<String> = soll
+            .eintraege
+            .iter()
+            .filter_map(|eintrag| tools::verteilt_name(&eintrag.eintrag.laufzeit))
+            .collect();
+        innen.ablage.aufraeumen(&behalten).await;
+
         innen.geheim_laden(&soll).await;
         innen.protokoll.geheimnisse_setzen(innen.geheimnisse());
         innen.modell_schicken();
@@ -2544,6 +3255,35 @@ impl Kern {
         self.anmelden_uebernehmen(&server, antwort)
     }
 
+    /// „Tools aktualisieren“ (Nachtrag zu Aufgabe 37): sofort beim Server
+    /// nachfragen. Der Abgleich läuft im Hintergrund; die Anzeige am Kopf der
+    /// Werkzeugseite zeigt, was er tut, und meldet danach „Alles aktuell“ oder
+    /// wie viele Programme kamen.
+    pub fn tools_aktualisieren(&self) -> anyhow::Result<()> {
+        if self.innen.zugang().0.is_none() {
+            anyhow::bail!(
+                "Der Client ist mit keinem Server verbunden – es gibt nichts zu aktualisieren."
+            );
+        }
+        self.innen
+            .fertig_zeigen
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.innen.fortschritt_setzen(Fortschritt::Verbindet);
+        self.innen.erneut.notify_one();
+        Ok(())
+    }
+
+    /// „Erneut versuchen“ auf einer Karte (Nachtrag zu Aufgabe 37): den
+    /// Eintrag neu starten. Ein Programm, das nicht geladen werden konnte,
+    /// wird dabei erneut geprüft und geholt.
+    pub async fn eintrag_neu_starten(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        if self.innen.soll_eintrag(eintrag).is_none() {
+            anyhow::bail!("Eintrag {eintrag} ist diesem Gerät nicht zugewiesen");
+        }
+        self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
     /// Gerät abmelden: das Gerät wird **auch am Server** gelöscht, dann sind
     /// Token und Gerät weg; die Server-Adresse und alle Angaben bleiben.
     /// Ist der Server nicht erreichbar, sagt der Client das — lokal ist das
@@ -2602,6 +3342,26 @@ impl Kern {
             .await?;
         status_pruefen(&self.innen, eintrag).await;
         self.innen.neu_starten(eintrag).await;
+        Ok(())
+    }
+
+    /// Die Anmeldung eines Eintrags erneut prüfen („Erneut prüfen“ auf der
+    /// Karte, Aufgabe 35, §5).
+    ///
+    /// Das ist **nicht** das Anmelden: es wird nur der Status-Befehl erneut
+    /// ausgeführt, ohne Browser und ohne Ablauf. Der Knopf steht nach einer
+    /// fehlgeschlagenen Prüfung; steht danach „nicht angemeldet“, ist
+    /// „Anmelden“ der nächste Schritt, sonst läuft der Eintrag wieder.
+    pub async fn anmeldung_pruefen(&self, eintrag: &EintragId) -> anyhow::Result<()> {
+        let zustand = status_pruefen(&self.innen, eintrag).await;
+        if zustand.is_some_and(|zustand| {
+            matches!(
+                zustand,
+                AnmeldeZustand::Angemeldet { .. } | AnmeldeZustand::LaeuftAb { .. }
+            )
+        }) {
+            self.innen.neu_starten(eintrag).await;
+        }
         Ok(())
     }
 
@@ -2679,7 +3439,8 @@ impl Kern {
     ) -> anyhow::Result<anmeldung::Ausgang> {
         let (lokal, geheim) = self.innen.werte(eintrag);
         let befehl = einrichtung::befehl_bauen(soll, &lokal, &geheim)?;
-        einrichtung::laufen(eintrag, &befehl, Some(abbruch)).await
+        let befehl = self.innen.befehl_mit_programm(eintrag, befehl).await?;
+        einrichtung::laufen(eintrag, &befehl, Some(abbruch), &self.innen.protokoll).await
     }
 
     /// Eine laufende Einrichtung abbrechen (Knopf „Abbrechen“). Der Prozess
@@ -2728,18 +3489,20 @@ impl Kern {
         })?;
         let (lokal, geheim) = self.innen.werte(eintrag);
         let befehl = anmeldung::befehl_bauen(&soll, art, &lokal, &geheim)?;
-        let ausgang = match anmeldung::laufen(eintrag, &befehl, art.frist()).await {
-            Ok(ausgang) => ausgang,
-            Err(fehler) => {
-                self.innen.anmeldung_setzen(
-                    eintrag,
-                    AnmeldeZustand::Fehler {
-                        text: format!("{fehler:#}"),
-                    },
-                );
-                return Err(fehler);
-            }
-        };
+        let befehl = self.innen.befehl_mit_programm(eintrag, befehl).await?;
+        let ausgang =
+            match anmeldung::laufen(eintrag, &befehl, art.frist(), &self.innen.protokoll).await {
+                Ok(ausgang) => ausgang,
+                Err(fehler) => {
+                    self.innen.anmeldung_setzen(
+                        eintrag,
+                        AnmeldeZustand::Fehler {
+                            text: format!("{fehler:#}"),
+                        },
+                    );
+                    return Err(fehler);
+                }
+            };
         let text = match ausgang.code {
             Some(0) => return Ok(()),
             Some(code) => format!("Der Befehl „{}“ endet mit Code {code}", art.name()),
@@ -3305,17 +4068,159 @@ impl Kern {
         update::pruefen(&self.innen).await
     }
 
+    /// „Später“: der Hinweis verschwindet für diese Version bis zum nächsten
+    /// Start. Gefragt wird weiter – nur eben nicht mehr angeboten.
+    pub fn update_spaeter(&self) {
+        let lage = self.innen.stand().update.clone();
+        if let UpdateLage::Verfuegbar { version, .. } = lage {
+            let mut stand = self.innen.stand();
+            stand.update_abgelehnt = Some(version);
+            drop(stand);
+            self.innen.modell_schicken();
+        }
+    }
+
+    /// „Jetzt aktualisieren“: laden, prüfen, Selbsttest, tauschen (Aufgabe 39).
+    ///
+    /// Läuft **nicht** im Fenster: das Paket kann groß sein und der Tausch
+    /// schreibt Dateien. Die Anzeige folgt aus dem Modell
+    /// ([`UpdateLage::Arbeit`]), damit das Fenster weiter zeichnet.
+    ///
+    /// Was hier nicht passiert: das Profil anfassen. Getauscht wird nur das
+    /// Programm; Tresor, Geräte-Token, Angaben, Zugänge und Anmeldungen bleiben
+    /// unberührt.
+    pub async fn update_installieren(&self) -> anyhow::Result<()> {
+        let (version, paket) = match self.innen.stand().update.clone() {
+            UpdateLage::Verfuegbar {
+                version,
+                angebot: update::Angebot::Bereit { paket },
+                ..
+            } => (version, paket),
+            _ => anyhow::bail!("es steht kein Update zum Tauschen bereit"),
+        };
+        let (Some(server), Some(token)) = self.innen.zugang() else {
+            anyhow::bail!("ohne Verbindung zum Server gibt es kein Paket");
+        };
+        let profil = self.innen.konfig.profil.clone();
+        let system = self.innen.system.clone();
+        let aufstellung = self.innen.aufstellung.clone();
+        if !aufstellung.art.tauschbar() || !aufstellung.schreibbar {
+            anyhow::bail!("diese Installation tauscht sich nicht selbst aus");
+        }
+        // 1. Laufende Werkzeuge sauber beenden – kein Tausch mitten im Aufruf.
+        Innen::alle_tools_stoppen(&self.innen).await;
+        self.innen.update_setzen(UpdateLage::Arbeit {
+            schritt: update::UpdateSchritt::Laedt,
+            anteil: Some(0),
+        });
+
+        // 2. Das Paket holen und dabei Größe und Prüfsumme prüfen.
+        let ordner = profil.join("updates").join(version_sicher(&version));
+        let innen = self.innen.clone();
+        let holen = update::paket_holen(
+            &self.innen.http,
+            &server,
+            &token,
+            &system,
+            &paket,
+            &ordner,
+            move |anteil| {
+                innen.update_setzen(UpdateLage::Arbeit {
+                    schritt: update::UpdateSchritt::Laedt,
+                    anteil,
+                });
+            },
+        )
+        .await;
+        let paket_pfad = match holen {
+            Ok(pfad) => pfad,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen.update_setzen(UpdateLage::Fehler { text });
+                return Err(fehler);
+            }
+        };
+
+        // 3. Prüfen und tauschen – im Hintergrundfaden, weil hier Dateien
+        //    geschrieben und Prozesse gestartet werden.
+        self.innen.update_setzen(UpdateLage::Arbeit {
+            schritt: update::UpdateSchritt::Prueft,
+            anteil: None,
+        });
+        let arbeitsordner = ordner.join("entpackt");
+        let art = aufstellung.art;
+        let programm = aufstellung.programm.clone();
+        // 3a. Entpacken und den Selbsttest der neuen Fassung.
+        let vorbereitet = {
+            let paket_pfad = paket_pfad.clone();
+            let arbeitsordner = arbeitsordner.clone();
+            tokio::task::spawn_blocking(move || {
+                update::tausch::vorbereiten(art, &paket_pfad, &arbeitsordner, update::selbsttest)
+            })
+            .await
+            .map_err(|fehler| anyhow::anyhow!("die Prüfung ist abgebrochen: {fehler}"))
+            .and_then(|ergebnis| ergebnis)
+        };
+        let vorbereitet = match vorbereitet {
+            Ok(vorbereitet) => vorbereitet,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen.update_setzen(UpdateLage::Fehler { text });
+                return Err(fehler);
+            }
+        };
+        // 3b. Tauschen.
+        self.innen.update_setzen(UpdateLage::Arbeit {
+            schritt: update::UpdateSchritt::Tauscht,
+            anteil: None,
+        });
+        let profil_fuer_tausch = profil.clone();
+        let programm_fuer_tausch = programm.clone();
+        let ergebnis = tokio::task::spawn_blocking(move || {
+            let ergebnis =
+                update::tausch::anwenden(art, &programm_fuer_tausch, &paket_pfad, vorbereitet)?;
+            match &ergebnis {
+                update::tausch::Ergebnis::Getauscht {
+                    programm,
+                    sicherung,
+                } => {
+                    update::tausch::marke_schreiben(&profil_fuer_tausch, programm, sicherung)?;
+                }
+                update::tausch::Ergebnis::Installer { .. } => {}
+            }
+            Ok::<_, anyhow::Error>(ergebnis)
+        })
+        .await
+        .map_err(|fehler| anyhow::anyhow!("der Tausch ist abgebrochen: {fehler}"))
+        .and_then(|ergebnis| ergebnis);
+        let ergebnis = match ergebnis {
+            Ok(ergebnis) => ergebnis,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen.update_setzen(UpdateLage::Fehler { text });
+                return Err(fehler);
+            }
+        };
+
+        // 4. Neustart vormerken. Das Fenster liest die Bitte, wenn es das
+        //    Profil freigegeben hat (`main`), und startet die neue Fassung.
+        self.innen.update_setzen(UpdateLage::Getauscht {
+            version: version.clone(),
+        });
+        match ergebnis {
+            update::tausch::Ergebnis::Getauscht { programm, .. } => {
+                update::tausch::neustart_vormerken(&profil, &programm)?;
+            }
+            update::tausch::Ergebnis::Installer { paket, .. } => {
+                update::tausch::installer_starten(&paket)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Alles anhalten (Fenster zu, Strg+C).
     pub async fn beenden(&self) {
         self.innen.ende.abbrechen();
-        // Die Profil-Sperre fällt mit dem Beenden: ein neuer Kern auf
-        // demselben Profil (ein Neustart) darf starten, ein **gleichzeitig**
-        // laufender nicht (Paket 3).
-        self.innen
-            ._profil_sperre
-            .lock()
-            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
-            .take();
         // Laufende Einrichtungen brechen ab, damit kein Kindprozess stehen
         // bleibt (Paket 3).
         let abbrueche: Vec<Abbruch> = self
@@ -3343,6 +4248,15 @@ impl Kern {
         for aufgabe in aufgaben {
             let _ = tokio::time::timeout(Duration::from_secs(3), aufgabe).await;
         }
+        // Die Profil-Sperre fällt **erst jetzt**: erst wenn alle Aufgaben
+        // wirklich vorbei sind, ist dieses Profil frei. Ein neuer Kern auf
+        // demselben Profil (ein Neustart) darf danach starten, nicht davor –
+        // sonst liefen zwei Kerne für einen Augenblick auf denselben Dateien.
+        self.innen
+            ._profil_sperre
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+            .take();
     }
 }
 

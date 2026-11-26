@@ -40,6 +40,8 @@ pub const MELDUNG_EINTRAEGE_MAX: usize = 200;
 pub const MELDUNG_TEXT_MAX: usize = 500;
 /// Länge der Client-Fassung in einer Meldung.
 pub const MELDUNG_VERSION_MAX: usize = 64;
+/// So viele Programme darf ein Gerät in einer Meldung nennen (Aufgabe 37).
+pub const PROGRAMME_MAX: usize = 200;
 /// So viele Sätze darf eine Gruppe nennen.
 pub const SAETZE_MAX: usize = 200;
 /// So viele Einträge darf ein Satz nennen.
@@ -240,6 +242,8 @@ pub fn meldung_kuerzen(meldung: &mut Meldung) {
     version.retain(|zeichen| !zeichen.is_control());
     meldung.client_version = version;
     meldung.eintraege.truncate(MELDUNG_EINTRAEGE_MAX);
+    // Die Programmliste kommt vom Gerät: auch sie hat eine Obergrenze.
+    meldung.programme.truncate(PROGRAMME_MAX);
     for (_, zustand) in &mut meldung.eintraege {
         if let quiver_protocol::EintragZustand::Fehler { text } = zustand {
             let mut gekuerzt: String = text.chars().take(MELDUNG_TEXT_MAX).collect();
@@ -363,6 +367,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            programme: Vec::new(),
         };
         meldung_kuerzen(&mut meldung);
         assert_eq!(meldung.client_version.chars().count(), MELDUNG_VERSION_MAX);

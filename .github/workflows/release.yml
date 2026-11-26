@@ -26,6 +26,10 @@
 #   verteilung/linux/paket.sh      .tar.gz, .deb, .rpm, AppImage
 #   verteilung/windows/paket.ps1   .msi (je Benutzer) + portables .zip
 #
+# Die Werkzeuge stecken **nicht** in den Paketen: der Client lädt sie vom
+# Server (Aufgabe 37). Was der Server bereithält, baut das Release von
+# `patimweb-labs/quiver-tools` (Aufgabe 38).
+#
 # **Unsigniert ist der Normalfall** (kein Apple-Konto, kein
 # Windows-Zertifikat): macOS wird ad hoc signiert, Gatekeeper und SmartScreen
 # fragen beim ersten Start. Sind die macOS-Geheimnisse gesetzt, wird signiert
@@ -351,6 +355,17 @@ jobs:
           set -euo pipefail
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+          # Die Größe jeder Datei für den Release-Text (Aufgabe 35: „Paket-
+          # größe nennen“). Bewusst **außerhalb** von `release/`: sonst läge
+          # die Tabelle als weiteres Release-Anhängsel ohne Prüfsumme daneben.
+          {
+            echo "| Datei | Größe |"
+            echo "| --- | --- |"
+            for datei in *; do
+              printf "| %s | %s |\n" "$datei" "$(du -h --apparent-size "$datei" | cut -f1)"
+            done
+          } > ../groessen.md
+          cat ../groessen.md
 
       # Herkunft: bescheinigt, dass diese Dateien in diesem Lauf aus diesem
       # Commit entstanden sind. Prüfen mit
@@ -392,22 +407,38 @@ jobs:
           | Linux x86_64 | `.deb`, `.rpm`, AppImage, `.tar.gz` |
           | Linux aarch64 | `.deb`, `.rpm`, AppImage, `.tar.gz` |
 
+          ### Werkzeuge
+
+          Die Pakete enthalten **keine** Werkzeuge mehr: der Client lädt sie
+          bei der Anmeldung vom Server, prüft die Prüfsumme und hält sie im
+          Profil auf dem Stand des Servers (Aufgabe 37). Was der Server
+          bereithält, steht im Release von
+          [`patimweb-labs/quiver-tools`](https://github.com/patimweb-labs/quiver-tools).
+
           ### Signiert
 
           macOS: **@MACOS@**. Windows: **unsigniert**.
           TEXT
 
-          if [ "$macos" = unsigniert ] || [ "$macos" = unbekannt ]; then
-            cat >> release-text.md <<'TEXT'
+          # Ab hier ein einziger Anhang: viele kleine `cat >>` auf dieselbe
+          # Datei wären unübersichtlich.
+          {
+            if [ "$macos" = unsigniert ] || [ "$macos" = unbekannt ]; then
+              cat <<'TEXT'
 
           Unsigniert heißt: Gatekeeper und SmartScreen fragen beim ersten Start
           nach einer Bestätigung. macOS: Rechtsklick → *Öffnen* oder
           *Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“*.
           Windows: *Weitere Informationen → Trotzdem ausführen*.
           TEXT
-          fi
+            fi
 
-          cat >> release-text.md <<'TEXT'
+            echo
+            echo "### Größen"
+            echo
+            cat groessen.md
+
+            cat <<'TEXT'
 
           ### Prüfen
 
@@ -416,6 +447,7 @@ jobs:
           gh attestation verify <datei> --repo @REPOSITORY@
           ```
           TEXT
+          } >> release-text.md
 
           sed -i \
             -e "s|@VERSION@|$VERSION|g" \

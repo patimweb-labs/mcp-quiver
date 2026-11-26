@@ -65,7 +65,22 @@ fn lokales<'a>(
         zugaenge,
         zugang_geheim,
         am_geraet_aus: laufend_aus(),
+        ladezustand: laufend_leer(),
+        ladeanteil: laufend_kein_anteil(),
     }
+}
+
+/// Kein Programm wird gerade geladen (Aufgabe 37).
+fn laufend_kein_anteil() -> &'static BTreeMap<EintragId, u8> {
+    static LEER: std::sync::OnceLock<BTreeMap<EintragId, u8>> = std::sync::OnceLock::new();
+    LEER.get_or_init(BTreeMap::new)
+}
+
+/// Kein Programm wird gerade geladen (Aufgabe 37).
+fn laufend_leer() -> &'static BTreeMap<EintragId, quiver_protocol::EintragZustand> {
+    static LEER: std::sync::OnceLock<BTreeMap<EintragId, quiver_protocol::EintragZustand>> =
+        std::sync::OnceLock::new();
+    LEER.get_or_init(BTreeMap::new)
 }
 
 /// Keine Einträge sind auf dem Gerät abgeschaltet.
@@ -676,6 +691,8 @@ fn ein_abgeschalteter_eintrag_zeigt_abgeschaltet() {
             zugaenge: &BTreeMap::new(),
             zugang_geheim: &BTreeMap::new(),
             am_geraet_aus: &aus,
+            ladezustand: laufend_leer(),
+            ladeanteil: laufend_kein_anteil(),
         },
         &laeufer,
         &BTreeMap::new(),
@@ -711,6 +728,9 @@ fn die_sicherung_nimmt_die_abschaltung_mit() {
         agenten: Vec::new(),
         soll: Soll::neu(Vec::new()),
         laeufer: BTreeMap::new(),
+        ladezustand: BTreeMap::new(),
+        ladeanteil: BTreeMap::new(),
+        fortschritt: Fortschritt::Ruhe,
         anmeldung: BTreeMap::new(),
         einrichtung: BTreeMap::new(),
         einrichtung_laufend: BTreeSet::new(),
@@ -724,6 +744,7 @@ fn die_sicherung_nimmt_die_abschaltung_mit() {
         verbindung: Verbindung::NichtEingebunden,
         endpunkt: String::new(),
         update: UpdateLage::Unbekannt,
+        update_abgelehnt: None,
     };
     let (eintraege, geheim) = export_daten(&stand, false);
     assert!(geheim.is_none());
@@ -805,6 +826,8 @@ fn eine_unbrauchbare_kennung_steht_mit_grund_in_der_sicht() {
             zugaenge: &zugaenge,
             zugang_geheim: &zugaenge,
             am_geraet_aus: &leer,
+            ladezustand: laufend_leer(),
+            ladeanteil: laufend_kein_anteil(),
         },
         &BTreeMap::new(),
         &BTreeMap::new(),
@@ -845,6 +868,9 @@ fn stand_mit(soll: &Soll, aus: &BTreeSet<EintragId>) -> Stand {
         agenten: Vec::new(),
         soll: soll.clone(),
         laeufer: BTreeMap::new(),
+        ladezustand: BTreeMap::new(),
+        ladeanteil: BTreeMap::new(),
+        fortschritt: Fortschritt::Ruhe,
         anmeldung: BTreeMap::new(),
         einrichtung: BTreeMap::new(),
         einrichtung_laufend: BTreeSet::new(),
@@ -858,6 +884,7 @@ fn stand_mit(soll: &Soll, aus: &BTreeSet<EintragId>) -> Stand {
         verbindung: Verbindung::NichtEingebunden,
         endpunkt: String::new(),
         update: UpdateLage::Unbekannt,
+        update_abgelehnt: None,
     }
 }
 
@@ -979,4 +1006,208 @@ fn ein_laufender_aufruf_haelt_den_tausch_auf() {
     assert!(!auslastung.ist_muessig());
     auslastung.freigeben(&id);
     assert!(auslastung.ist_muessig());
+}
+
+// ------------------------------------------- Werkzeuge (Aufgabe 37)
+
+/// Ein Eintrag mit einem fremden Programm, das hier nicht liegt, steht mit
+/// `nicht_installiert` in der Sicht — die Karte sagt das dann einmal und bietet
+/// keine Anmeldung an. Ein fester Pfad, den es gibt, ist kein solcher Fall.
+#[test]
+fn ein_fehlendes_programm_steht_in_der_sicht() {
+    let mut fehlt = eintrag("fehlt");
+    fehlt.laufzeit = Laufzeit::Stdio {
+        befehl: "gibtsnicht-4711".into(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    let mut fest = eintrag("fest");
+    fest.laufzeit = Laufzeit::Stdio {
+        befehl: std::env::current_exe()
+            .expect("eigenes Programm")
+            .to_string_lossy()
+            .to_string(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    // Ein entfernter Eintrag startet nichts: kein Programm, kein Befund.
+    let mut entfernt = eintrag("entfernt");
+    entfernt.laufzeit = Laufzeit::Remote {
+        url: "https://example.org/mcp".into(),
+        kopfzeilen: Werte::new(),
+    };
+
+    let soll = Soll::neu(vec![
+        SollEintrag {
+            eintrag: fehlt,
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: fest,
+            werte: Werte::new(),
+        },
+        SollEintrag {
+            eintrag: entfernt,
+            werte: Werte::new(),
+        },
+    ]);
+    let werte = BTreeMap::new();
+    let geheim = BTreeMap::new();
+    let zugaenge = BTreeMap::new();
+    let leer = BTreeSet::new();
+    let sicht = eintraege_sicht(
+        &soll,
+        &Lokales {
+            werte: &werte,
+            geheim_gesetzt: &geheim,
+            zugaenge: &zugaenge,
+            zugang_geheim: &zugaenge,
+            am_geraet_aus: &leer,
+            ladezustand: laufend_leer(),
+            ladeanteil: laufend_kein_anteil(),
+        },
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let finde = |id: &str| {
+        sicht
+            .iter()
+            .find(|eintrag| eintrag.id == EintragId::neu(id))
+            .expect("der Eintrag steht in der Sicht")
+            .clone()
+    };
+    assert_eq!(
+        finde("fehlt").nicht_installiert.as_deref(),
+        Some("gibtsnicht-4711"),
+        "der Programmname steht im Befund – kein Pfad"
+    );
+    assert!(!finde("fehlt").nicht_fuer_system);
+    assert_eq!(finde("fest").nicht_installiert, None);
+    assert_eq!(finde("entfernt").nicht_installiert, None);
+    assert!(!finde("entfernt").nicht_fuer_system);
+}
+
+/// Ein verteiltes Programm, das der Server für dieses System **nicht** hat,
+/// ist kein Fehler: die Karte sagt „Für dieses System gibt es das Tool nicht.“
+/// (Aufgabe 37). Hat der Server es, ist die Karte still.
+#[test]
+fn ein_verteiltes_programm_haengt_am_system() {
+    let mut verteilt = eintrag("verteilt");
+    verteilt.laufzeit = Laufzeit::Stdio {
+        befehl: "quiver-devops".into(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    let eintrag = SollEintrag {
+        eintrag: verteilt,
+        werte: Werte::new(),
+    };
+    let ohne = Soll::neu(vec![eintrag.clone()]);
+    let mit = ohne.clone().mit_programmen(vec![quiver_domain::Programm {
+        name: "quiver-devops".into(),
+        version: "1.0.0".into(),
+        groesse: 10,
+        sha256: "a".repeat(64),
+        system: "linux".into(),
+        arch: "x64".into(),
+    }]);
+    let werte: BTreeMap<EintragId, Werte> = BTreeMap::new();
+    let geheim: BTreeMap<EintragId, BTreeSet<String>> = BTreeMap::new();
+    let zugaenge = BTreeMap::new();
+    let leer = BTreeSet::new();
+    let sicht = |soll: &Soll| {
+        eintraege_sicht(
+            soll,
+            &Lokales {
+                werte: &werte,
+                geheim_gesetzt: &geheim,
+                zugaenge: &zugaenge,
+                zugang_geheim: &zugaenge,
+                am_geraet_aus: &leer,
+                ladezustand: laufend_leer(),
+                ladeanteil: laufend_kein_anteil(),
+            },
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .remove(0)
+    };
+    let fehlt = sicht(&ohne);
+    assert!(fehlt.nicht_fuer_system, "ohne Programm für dieses System");
+    assert_eq!(fehlt.nicht_installiert, None);
+    let da = sicht(&mit);
+    assert!(!da.nicht_fuer_system);
+    assert_eq!(da.nicht_installiert, None);
+}
+
+/// Der Kartenzustand „Wird vom Server geladen …“ hat Vorrang vor dem, was der
+/// Läufer zuletzt sagte (Aufgabe 37).
+#[test]
+fn der_ladezustand_steht_vor_dem_laeufer() {
+    let mut eintrag = eintrag("echo");
+    eintrag.laufzeit = Laufzeit::Stdio {
+        befehl: "quiver-devops".into(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag: eintrag.clone(),
+        werte: Werte::new(),
+    }]);
+    let id = eintrag.id.clone();
+    let mut laeufer = BTreeMap::new();
+    laeufer.insert(
+        id.clone(),
+        Laeufer {
+            generation: 1,
+            fingerabdruck: String::new(),
+            stand: LaeuferStand {
+                zustand: EintragZustand::Laeuft { tools: 1 },
+                fehlende: Vec::new(),
+                tools: vec![werkzeug("echo")],
+            },
+            peer: None,
+            abbruch: Abbruch::neu(),
+        },
+    );
+    let ladezustand = BTreeMap::from([(id.clone(), EintragZustand::Aktualisiert)]);
+    let werte: BTreeMap<EintragId, Werte> = BTreeMap::new();
+    let geheim: BTreeMap<EintragId, BTreeSet<String>> = BTreeMap::new();
+    let zugaenge = BTreeMap::new();
+    let leer = BTreeSet::new();
+    let sicht = eintraege_sicht(
+        &soll,
+        &Lokales {
+            werte: &werte,
+            geheim_gesetzt: &geheim,
+            zugaenge: &zugaenge,
+            zugang_geheim: &zugaenge,
+            am_geraet_aus: &leer,
+            ladezustand: &ladezustand,
+            ladeanteil: laufend_kein_anteil(),
+        },
+        &laeufer,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    assert_eq!(sicht[0].zustand, EintragZustand::Aktualisiert);
+    // Ohne Ladezustand gilt wieder der Läufer.
+    let ohne = eintraege_sicht(
+        &soll,
+        &Lokales {
+            werte: &werte,
+            geheim_gesetzt: &geheim,
+            zugaenge: &zugaenge,
+            zugang_geheim: &zugaenge,
+            am_geraet_aus: &leer,
+            ladezustand: laufend_leer(),
+            ladeanteil: laufend_kein_anteil(),
+        },
+        &laeufer,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    assert_eq!(ohne[0].zustand, EintragZustand::Laeuft { tools: 1 });
 }

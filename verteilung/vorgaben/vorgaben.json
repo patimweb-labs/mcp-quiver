@@ -1,5 +1,6 @@
 {
   "ServerUrl": "https://quiver.example.test",
   "Autostart": true,
-  "UpdateHinweis": "Version {version} kommt über die Geräteverwaltung"
+  "UpdateHinweis": "Version {version} kommt über die Geräteverwaltung",
+  "UpdateAngebot": false
 }

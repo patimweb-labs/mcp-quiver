@@ -40,7 +40,9 @@ are built from the same tokens.
   off without being deleted.
 - **Assignment by group.** An admin bundles entries into a set and assigns
   sets to groups — local groups or Microsoft Entra ID groups. A device gets the
-  union of its user's sets, installed, updated and removed automatically.
+  union of its user's sets: the client downloads the programs from the
+  server, keeps them at its version, verifies them and removes them again when
+  an entry is no longer assigned.
   Conflicts between pre-filled values are resolved by the set's priority.
 - **Configuration in layers.** The server knows endpoints, tenant and defaults.
   The client fills in what only the device knows: local paths, personal values
@@ -132,8 +134,8 @@ English.
    one-time code. The server returns a device token.
 2. **The server computes the target.** Groups of the user → sets → entries and
    pre-filled values.
-3. **The client syncs.** Desired state against actual state: install, update,
-   remove.
+3. **The client syncs.** Desired state against actual state: download programs
+   from the server, update, remove.
 4. **The client completes.** It asks only for fields that are missing on this
    device and stores secrets in the vault.
 5. **The client serves.** One MCP endpoint with all allowed tools.
@@ -211,13 +213,24 @@ call and can build locally: `docker compose up -d --build`.
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.AppImage` | `chmod +x`, run it |
 | any Linux | `quiver-<version>-linux-<x86_64\|aarch64>.tar.gz` | unpack, run `bin/quiver` |
 
+Every package carries the tools from
+[quiver-tools](https://github.com/patimweb-labs/quiver-tools) — the same ones on
+all three systems. An entry in the library therefore normally names just the
+program (`quiver-devops`), and the client finds it next to its own program; a
+fixed path still works but only on machines with exactly that path. Which tools
+are included, and from which commit, is named in the release notes and in
+[docs/client.md](docs/client.md#where-the-programs-come-from).
+
 The packages are **unsigned** unless the maintainer signs them: Gatekeeper and
 SmartScreen ask once on the first start. What that means and how to get past it:
-[docs/release.md](docs/release.md#what-unsigned-means). quiver does not install
-itself: updates are rolled out by device management (Intune) or by hand from the
-packages in the release — [docs/intune.md](docs/intune.md), and the version
-hint the client shows is described in [docs/updates.md](docs/updates.md). Every
-release also carries `SHA256SUMS` and a build provenance you can verify:
+[docs/release.md](docs/release.md#what-unsigned-means). Updates are offered by
+the client itself: it learns the new version from its own server and, if a
+package for its installation exists, offers **Update now** — download from the
+server, check against `SHA256SUMS`, self-test, swap, restart; the profile stays
+untouched ([docs/updates.md](docs/updates.md)). Device management (Intune) or a
+manual install from the release does the same job, and an operator can switch
+the offer off — [docs/intune.md](docs/intune.md). Every release also carries
+`SHA256SUMS` and a build provenance you can verify:
 
 ```bash
 sha256sum -c SHA256SUMS
@@ -290,13 +303,15 @@ protocol: [docs/client.md](docs/client.md).
   `Host` header must match the base URL, CSP without inline, HSTS on https,
   body and time limits, throttled sign-in, an audit trail that keeps 180 days.
   Every value is in [docs/haertung.md](docs/haertung.md) (German).
-- **A version hint, nothing more.** The client asks only its own server, never
-  the internet, and it installs nothing. The server asks the GitHub releases at
-  most every six hours, with jitter, without an identifier and without payload;
-  `QUIVER_UPDATES=aus` switches that off. What the client shows is a quiet hint
-  with the operator's text and a link to the changes. Installation and updates
-  are done by device management (Intune) or by hand:
-  [docs/intune.md](docs/intune.md). No analytics, no call home.
+- **The client asks only its own server.** It never talks to the internet: the
+  server asks the GitHub releases at most every six hours, with jitter, without
+  an identifier and without payload, and `QUIVER_UPDATES=aus` switches that off.
+  The client shows a quiet hint with the operator's text and a link to the
+  changes — and, when a package for its installation exists, offers to install
+  it: from the server, checked against `SHA256SUMS`, self-tested, swapped, with
+  the profile untouched. Device management (Intune) can take that over, and
+  `UpdateAngebot=false` leaves only the hint — [docs/intune.md](docs/intune.md).
+  No analytics, no call home.
 - **The server still talks to Microsoft only when Entra is configured.**
 
 ## Operation

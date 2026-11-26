@@ -265,6 +265,9 @@ fn eintrag(
         zugaenge: None,
         am_geraet_aus: false,
         unzulaessig: None,
+        nicht_installiert: None,
+        nicht_fuer_system: false,
+        ladeanteil: None,
     }
 }
 
@@ -415,7 +418,8 @@ fn anmelde_eintrag(id: &str, titel: &str, anmeldung: AnmeldeZustand) -> EintragS
     eintrag
 }
 
-/// Vier Einträge, vier Anmeldezustände – wie sie die Karte unterscheiden muss.
+/// Fünf Einträge, fünf Anmeldezustände – wie sie die Karte unterscheiden muss:
+/// nicht angemeldet, im Browser, angemeldet, läuft ab, fehlgeschlagen.
 fn anmelde_zustaende() -> Vec<EintragSicht> {
     vec![
         anmelde_eintrag("postfach", "Postfach", AnmeldeZustand::Abgemeldet),
@@ -428,6 +432,13 @@ fn anmelde_zustaende() -> Vec<EintragSicht> {
             },
         ),
         anmelde_eintrag(
+            "notizen",
+            "Notizen",
+            AnmeldeZustand::LaeuftAb {
+                konto: Some("test@beispiel.de".into()),
+            },
+        ),
+        anmelde_eintrag(
             "freigaben",
             "Freigaben",
             AnmeldeZustand::Fehler {
@@ -435,6 +446,21 @@ fn anmelde_zustaende() -> Vec<EintragSicht> {
             },
         ),
     ]
+}
+
+/// Ein Eintrag, dessen Programm auf diesem Gerät nicht liegt (Aufgabe 35, §5):
+/// die Bibliothek nennt `quiver-m365`, das Paket bringt es hier nicht mit.
+fn fehlendes_programm() -> EintragSicht {
+    let mut eintrag = anmelde_eintrag(
+        "m365",
+        "Microsoft 365",
+        AnmeldeZustand::Fehler {
+            text: "»quiver-m365« wurde nicht gefunden – weder mitgeliefert noch im PATH".into(),
+        },
+    );
+    eintrag.nicht_installiert = Some("quiver-m365".into());
+    eintrag.einrichtung = Some(EinrichtZustand::Bereit);
+    eintrag
 }
 
 /// Ein Eintrag mit Einrichtung, in einem bestimmten Zustand (Aufgabe 11).
@@ -486,6 +512,7 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         profil_hinweis: None,
         update: quiver_client::UpdateLage::Unbekannt,
         vorgaben: quiver_client::Vorgaben::default(),
+        fortschritt: quiver_client::Fortschritt::Ruhe,
     }
 }
 
@@ -950,7 +977,7 @@ fn viele_felder_scrollen_und_speichern_bleibt_sichtbar() {
         (breite, hoehe),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
         .click();
     h.run();
     if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
@@ -983,7 +1010,7 @@ fn braucht_angaben_oeffnet_die_eingaben() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
         .click();
     h.run();
     match &h.state().0.sicht.dialog {
@@ -1058,8 +1085,7 @@ fn ein_schalter_ist_eine_checkbox_mit_hand_cursor() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
-        .click();
+    h.get_by_role_and_label(Role::Button, "Bearbeiten").click();
     h.run();
 
     // Der Standard `an` ist vorgehakt.
@@ -1118,8 +1144,7 @@ fn ein_ordner_wird_ueber_den_dialog_gewaehlt() {
             groesse,
         );
         h.run();
-        h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
-            .click();
+        h.get_by_role_and_label(Role::Button, "Bearbeiten").click();
         h.run();
         let knopf = h.get_by_role_and_label(Role::Button, "Ordner wählen");
         let feld = h.get_by_role_and_label(Role::TextInput, "Arbeitsordner");
@@ -1186,8 +1211,7 @@ fn eine_auswahl_hat_hand_cursor_und_setzt_den_wert() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
-        .click();
+    h.get_by_role_and_label(Role::Button, "Bearbeiten").click();
     h.run();
 
     h.get_by_role_and_label(Role::ComboBox, "Farbe").hover();
@@ -1243,8 +1267,7 @@ fn eine_auswahl_im_dialog_liegt_darueber_und_verschiebt_ihn_nicht() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Angaben bearbeiten")
-        .click();
+    h.get_by_role_and_label(Role::Button, "Bearbeiten").click();
     h.run();
 
     // Der Speichern-Knopf ist der Bezugspunkt: er darf sich nicht bewegen.
@@ -1306,7 +1329,7 @@ fn fehlende_pflichtfelder_stehen_neben_speichern() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
         .click();
     h.run();
 
@@ -1359,7 +1382,7 @@ fn die_feldliste_hat_eine_sichtbare_scrollleiste() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
         .click();
     h.run();
     if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
@@ -1389,7 +1412,7 @@ fn angaben_zeigen_den_hilfe_link() {
         gross(),
     );
     h.run();
-    h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
         .click();
     h.run();
     assert!(matches!(h.state().0.sicht.dialog, Dialog::Werte { .. }));
@@ -1456,7 +1479,7 @@ fn bildschirmfoto_der_angaben() {
                 groesse.masse,
             );
             zur_ruhe(&mut h);
-            h.get_by_role_and_label(Role::Button, "Braucht Angaben")
+            h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
                 .click();
             zur_ruhe(&mut h);
             // Mit Adresse: der Link steht aktiv neben dem Token-Feld.
@@ -2082,7 +2105,9 @@ fn foto_in(
     // Der Zeiger steht nach einem Klick über einem Knopf; fürs Bild wandert er
     // aus dem Fenster, damit er nichts verdeckt.
     h.event(egui::Event::PointerMoved(egui::pos2(-100.0, -100.0)));
-    h.run();
+    // `run_ok` statt `run`: ein Drehsymbol (laufende Prüfung) kommt nie zur
+    // Ruhe, und `run` bräche dann ab (Aufgabe 35, §5).
+    h.run_ok();
     let sprache = match sprache {
         quiver_fenster::texte::Sprache::De => "",
         quiver_fenster::texte::Sprache::En => "-en",
@@ -2326,30 +2351,44 @@ fn bildschirmfoto_des_koppelns() {
     }
 }
 
-/// Die Anmeldung auf der Tools-Karte: alle vier Zustände in einem Bild
-/// (`fenster-<thema>-anmeldung-<breite>.png`).
+/// Die Anmeldung auf der Tools-Karte: alle Zustände in einem Bild
+/// (`fenster-<thema>-anmeldung-<breite>.png`). Ein Eintrag steht auf „wird
+/// geprüft“ – das Drehsymbol kommt nie zur Ruhe, deshalb feste Schritte statt
+/// `zur_ruhe`.
 #[test]
 fn bildschirmfoto_der_anmeldung() {
     let Some(ziel) = bilder_ordner() else {
         return;
     };
     std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    // Die beiden Fälle des Nachtrags stehen oben: bei 560 px ist nach zwei
+    // Karten Schluss, und geprüft wird, was zu sehen ist.
+    let mut liste = vec![
+        anmelde_eintrag("aufgaben", "Aufgaben", AnmeldeZustand::Pruefe),
+        fehlendes_programm(),
+    ];
+    liste.extend(anmelde_zustaende());
     for thema in BILDER_THEMEN {
         for groesse in GROESSEN {
             let mut h = fenster(
-                modell(verbunden(), anmelde_zustaende()),
+                modell(verbunden(), liste.clone()),
                 Some(Seite::Tools),
                 thema,
                 groesse.masse,
             );
-            zur_ruhe(&mut h);
-            // Jeder Zustand ist zu sehen, bevor das Bild entsteht.
-            assert!(h.query_by_label("Anmeldung nötig").is_some());
-            assert!(h.query_by_label("Anmeldung im Browser läuft …").is_some());
-            assert!(h
-                .query_by_label("Angemeldet als test@beispiel.de")
-                .is_some());
-            assert!(h.query_by_label("Der Status endet mit Code 3").is_some());
+            h.run_steps(3);
+            // Die beiden Zustände des Nachtrags sind zu sehen, bevor das Bild
+            // entsteht (die übrigen stehen auf der Seite darunter).
+            assert!(h.query_by_label("Prüfe Anmeldung …").is_some());
+            assert_eq!(
+                h.query_all(
+                    By::new()
+                        .role(Role::Label)
+                        .label("Dieses Tool ist auf diesem Gerät nicht installiert.")
+                )
+                .count(),
+                1
+            );
             nichts_ragt_heraus(&h, groesse.masse.0, "anmeldung");
             foto(&mut h, &ziel, "anmeldung", thema, groesse.px);
         }
@@ -2373,7 +2412,7 @@ fn abgemeldet_zeigt_hinweis_und_anmelden() {
     );
     h.run();
     assert!(
-        h.query_by_label("Anmeldung nötig").is_some(),
+        h.query_by_label("Nicht angemeldet").is_some(),
         "der Hinweis fehlt"
     );
     // Hand-Cursor auf dem Knopf, der die Anmeldung auslöst (AGENTS.md §2.12).
@@ -2413,7 +2452,7 @@ fn abgemeldet_zeigt_hinweis_und_anmelden() {
         gross(),
     );
     h.run();
-    assert!(h.query_by_label("Anmeldung nötig").is_some());
+    assert!(h.query_by_label("Nicht angemeldet").is_some());
     assert!(h
         .query_by_role_and_label(Role::Button, "Anmelden")
         .is_some());
@@ -2436,7 +2475,7 @@ fn laufende_anmeldung_hat_keinen_knopf() {
     );
     h.run();
     assert!(h.query_by_label("Anmeldung im Browser läuft …").is_some());
-    for knopf in ["Anmelden", "Abmelden", "Erneut versuchen"] {
+    for knopf in ["Anmelden", "Abmelden", "Erneut prüfen"] {
         assert!(
             h.query_by_role_and_label(Role::Button, knopf).is_none(),
             "„{knopf}“ darf während der Anmeldung nicht da sein"
@@ -2528,7 +2567,8 @@ fn anmeldefehler_zeigt_text_und_erneut_versuchen() {
     );
     h.run();
     assert!(h.query_by_label("Der Status endet mit Code 3").is_some());
-    h.get_by_role_and_label(Role::Button, "Erneut versuchen")
+    // „Erneut prüfen“ prüft – es meldet nicht neu an (Aufgabe 35, §5).
+    h.get_by_role_and_label(Role::Button, "Erneut prüfen")
         .click();
     h.run();
     assert!(h
@@ -2536,7 +2576,7 @@ fn anmeldefehler_zeigt_text_und_erneut_versuchen() {
         .1
         .aktionen
         .borrow()
-        .contains(&Aktion::EintragAnmelden {
+        .contains(&Aktion::AnmeldungPruefen {
             eintrag: EintragId::neu("freigaben")
         }));
 }
@@ -2642,7 +2682,7 @@ fn laufende_einrichtung_laesst_sich_abbrechen() {
     assert!(h
         .query_by_label("Einrichtung im Browser geöffnet …")
         .is_some());
-    for knopf in ["Einrichten", "Erneut versuchen"] {
+    for knopf in ["Einrichten", "Erneut prüfen"] {
         assert!(
             h.query_by_role_and_label(Role::Button, knopf).is_none(),
             "„{knopf}“ darf während der Einrichtung nicht da sein"
@@ -3957,4 +3997,845 @@ fn ein_kaputter_tresor_bietet_neu_beginnen_an() {
         "{:?}",
         h.state().1.aktionen.borrow()
     );
+}
+
+// ---------------------------------------------------------------- Aufgabe 35
+
+/// Alle Rechtecke von Knoten, deren Text (Name eines Knopfes oder Wert einer
+/// Zeile — ein `Label` trägt seinen Text in `value`, nicht in `label`) länger
+/// als `zeichen` Zeichen ist.
+#[track_caller]
+fn lange_texte(h: &Harness<'static, Stand>, zeichen: usize) -> Vec<egui::Rect> {
+    h.root()
+        .children_recursive()
+        .filter(|knoten| {
+            let node = knoten.accesskit_node();
+            if node.raw_bounds().is_none() {
+                return false;
+            }
+            [node.label(), node.value()]
+                .into_iter()
+                .flatten()
+                .any(|text| text.chars().count() > zeichen)
+        })
+        .map(|knoten| knoten.rect())
+        .collect()
+}
+
+/// Ein sehr langer Text auf der Tool-Karte (Aufgabe 35): er bricht um oder
+/// wird gekürzt, statt die Karte breiter zu machen oder unter die Knöpfe zu
+/// laufen. Alle Karten bleiben gleich breit.
+///
+/// Vier Fälle, wie sie ein Tool meldet: ein Name ohne ein einziges
+/// Leerzeichen, ein tiefer Pfad, ein langer Satz und ein Zustand, der alle
+/// fehlenden Felder aufzählt.
+#[test]
+fn lange_texte_machen_die_karten_nicht_breiter() {
+    let ohne_leerzeichen = "quiver-devops".repeat(40);
+    let pfad = format!("/niemand/hat/hier/{}", "werkzeuge/".repeat(30));
+    let satz = "Das Programm meldet einen Fehler, der nicht kürzer wird. ".repeat(15);
+    let felder: Vec<String> = (0..14)
+        .map(|i| format!("SEHR_LANGER_FELDNAME_{i}"))
+        .collect();
+
+    let faelle: [(&str, Vec<EintragSicht>); 4] = [
+        (
+            "Fehler ohne Leerzeichen",
+            fehler_eintraege(&ohne_leerzeichen),
+        ),
+        ("Fehler mit Pfad", fehler_eintraege(&pfad)),
+        ("Fehler als Satz", fehler_eintraege(&satz)),
+        (
+            "fehlende Felder",
+            eintraege()
+                .into_iter()
+                .map(|eintrag| EintragSicht {
+                    zustand: EintragZustand::WartetAufWerte {
+                        felder: felder.clone(),
+                    },
+                    ..eintrag
+                })
+                .collect(),
+        ),
+    ];
+
+    for (fall, liste) in faelle {
+        for (breite, hoehe) in [(560.0, 460.0), (800.0, 600.0), (1200.0, 820.0)] {
+            let mut h = fenster(
+                modell(verbunden(), liste.clone()),
+                Some(Seite::Tools),
+                Thema::Dunkel,
+                (breite, hoehe),
+            );
+            zur_ruhe(&mut h);
+            nichts_ragt_heraus(&h, breite, fall);
+
+            // Alle Karten sind gleich breit: das Häkchen „Auf diesem Gerät
+            // aktiv“ sitzt auf jeder Karte ganz rechts an derselben Stelle.
+            let haken: Vec<f32> = h
+                .query_all_by_role_and_label(Role::CheckBox, "Auf diesem Gerät aktiv")
+                .map(|knopf| knopf.rect().right())
+                .collect();
+            assert_eq!(haken.len(), 3, "{fall}: drei Karten, drei Häkchen");
+            for rechts in &haken {
+                assert!(
+                    (rechts - haken[0]).abs() < 0.5,
+                    "{fall}: die Karten sind bei {breite} px verschieden breit: {haken:?}"
+                );
+            }
+
+            // Kein Text läuft unter einen Knopf und keiner aus dem Fenster.
+            let knoepfe: Vec<egui::Rect> = h
+                .query_all_by_role(Role::Button)
+                .map(|knopf| knopf.rect())
+                .collect();
+            for rechteck in lange_texte(&h, 40) {
+                assert!(
+                    rechteck.right() <= breite,
+                    "{fall}: ein Text läuft bei {breite} px hinaus: {rechteck:?}"
+                );
+                for knopf in &knoepfe {
+                    assert!(
+                        !rechteck.intersects(*knopf),
+                        "{fall}: bei {breite} px liegt der Text {rechteck:?} unter dem Knopf {knopf:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Drei Karten, alle mit demselben Fehlertext.
+fn fehler_eintraege(text: &str) -> Vec<EintragSicht> {
+    eintraege()
+        .into_iter()
+        .map(|eintrag| EintragSicht {
+            zustand: EintragZustand::Fehler {
+                text: text.to_string(),
+            },
+            ..eintrag
+        })
+        .collect()
+}
+
+// ------------------------------------------------------------ Aufgabe 35, §5
+
+/// Ein Eintrag, den niemand anfassen kann: das Programm fehlt auf diesem Gerät.
+/// Die Karte sagt das **einmal**, in einem Satz, und bietet keine Anmeldung
+/// und keine Einrichtung an — es gäbe nichts zu starten. Der technische Text
+/// des Startfehlers bleibt im Protokoll.
+#[test]
+fn fehlendes_programm_steht_einmal_und_ohne_knopf() {
+    let mut h = fenster(
+        modell(verbunden(), vec![fehlendes_programm()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+
+    let satz = "Dieses Tool ist auf diesem Gerät nicht installiert.";
+    assert_eq!(
+        h.query_all(By::new().role(Role::Label).label(satz)).count(),
+        1,
+        "der Satz steht genau einmal auf der Karte"
+    );
+    // Der technische Fehler des Startversuchs steht nicht zusätzlich da.
+    assert!(
+        h.query_all(By::new().label_contains("weder mitgeliefert"))
+            .count()
+            == 0,
+        "der technische Fehler steht auf der Karte: {:?}",
+        h.query_all(By::new().label_contains("weder mitgeliefert"))
+            .map(|k| k.accesskit_node().label())
+            .collect::<Vec<_>>()
+    );
+    // Und nichts, was man drücken könnte: keine Anmeldung, keine Einrichtung.
+    for knopf in [
+        "Anmelden",
+        "Abmelden",
+        "Erneut prüfen",
+        "Einrichten",
+        "Erneut versuchen",
+    ] {
+        assert!(
+            h.query_by_role_and_label(Role::Button, knopf).is_none(),
+            "„{knopf}“ darf ohne Programm nicht da sein"
+        );
+    }
+}
+
+/// Eine Prüfung der Anmeldung läuft: Drehsymbol und Text, kein Knopf. Der
+/// Zustand kommt nie zur Ruhe (der Ring dreht sich), deshalb feste Schritte
+/// statt `h.run()`.
+#[test]
+fn die_pruefung_der_anmeldung_dreht_sich_ohne_knopf() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "kalender",
+                "Kalender",
+                AnmeldeZustand::Pruefe,
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run_steps(2);
+    assert!(h.query_by_label("Prüfe Anmeldung …").is_some());
+    assert!(
+        h.query_all(By::new().role(Role::ProgressIndicator)).count() >= 1,
+        "das Drehsymbol fehlt"
+    );
+    for knopf in ["Anmelden", "Abmelden", "Erneut prüfen"] {
+        assert!(
+            h.query_by_role_and_label(Role::Button, knopf).is_none(),
+            "„{knopf}“ darf während der Prüfung nicht da sein"
+        );
+    }
+}
+
+/// Läuft die Anmeldung ab, ist „Anmelden“ der nächste Schritt — nicht
+/// „Abmelden“ (Aufgabe 35, §5).
+#[test]
+fn ablaufende_anmeldung_bietet_anmelden_an() {
+    let mut h = fenster(
+        modell(
+            verbunden(),
+            vec![anmelde_eintrag(
+                "notizen",
+                "Notizen",
+                AnmeldeZustand::LaeuftAb {
+                    konto: Some("test@beispiel.de".into()),
+                },
+            )],
+        ),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(h
+        .query_by_label("Angemeldet als test@beispiel.de – die Anmeldung läuft bald ab")
+        .is_some());
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Anmelden")
+        .is_some());
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Abmelden")
+        .is_none());
+}
+
+/// Eine Karte hat **einen** Knopf für die Angaben, nie zwei: fehlen
+/// Pflichtangaben, gibt es nur „Angaben ergänzen“; ist alles da, nur den
+/// Stift. Und was fehlt, steht in einer Zeile (dem Abzeichen), nicht zusätzlich
+/// darunter (Aufgabe 35, §5).
+#[test]
+fn eine_karte_hat_einen_knopf_fuer_die_angaben() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+
+    // „Dateien“ braucht Angaben: ein Knopf, kein Stift daneben.
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::Button, "Angaben ergänzen")
+            .count(),
+        1,
+        "der Knopf für fehlende Angaben fehlt oder steht doppelt"
+    );
+    assert_eq!(
+        h.query_all_by_role_and_label(Role::Button, "Bearbeiten")
+            .count(),
+        0,
+        "der Stift darf neben „Angaben ergänzen“ nicht stehen"
+    );
+    // Eine zweite Zeile „Fehlt: …“ gibt es nicht mehr.
+    assert_eq!(
+        h.query_all(By::new().label_contains("Fehlt:")).count(),
+        0,
+        "was fehlt, steht nur noch im Abzeichen"
+    );
+    assert!(h.query_by_label("Braucht Angaben: PFAD").is_some());
+}
+
+/// Ein Eintrag mit Zugangsliste und ohne eigene Felder: der Stift entfällt,
+/// „Verbindung hinzufügen“ führt zur Liste (Aufgabe 35, §5).
+#[test]
+fn zugang_hinzufuegen_fuehrt_zur_liste_und_der_stift_entfaellt() {
+    let mut h = fenster(
+        modell(verbunden(), vec![zwei_zugaenge()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Bearbeiten")
+            .is_none(),
+        "ohne eigene Felder gibt es keinen Stift"
+    );
+    assert!(h.query_by_label("web-01").is_none(), "die Liste ist zu");
+
+    h.get_by_role_and_label(Role::Button, "Verbindung hinzufügen")
+        .click();
+    h.run();
+    // Die Liste ist offen und der Dialog für den neuen Zugang steht davor.
+    assert!(h.query_by_label("web-01").is_some(), "die Liste bleibt zu");
+    assert!(matches!(
+        h.state().0.sicht.dialog,
+        Dialog::Zugang { neu: true, .. }
+    ));
+}
+
+/// Der Server hat ein Programm für dieses System nicht (Aufgabe 37): die Karte
+/// sagt das einmal, ohne Fehler und ohne Anmelde-Knopf.
+#[test]
+fn programm_nicht_fuer_dieses_system() {
+    let mut eintrag = fehlendes_programm();
+    eintrag.nicht_installiert = None;
+    eintrag.nicht_fuer_system = true;
+    let mut h = fenster(
+        modell(verbunden(), vec![eintrag]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    let satz = "Für dieses System gibt es das Tool nicht.";
+    assert_eq!(
+        h.query_all(By::new().role(Role::Label).label(satz)).count(),
+        1,
+        "der Satz steht genau einmal auf der Karte"
+    );
+    assert_eq!(
+        h.query_all(By::new().label_contains("nicht installiert"))
+            .count(),
+        0,
+        "die andere Meldung steht nicht daneben"
+    );
+}
+
+/// Kein Knopf besteht je nur aus einem Zeichen — auch nicht im schmalen
+/// Fenster (Aufgabe 35, §5). Der Stift ist ein Zeichen, heißt aber
+/// „Bearbeiten“; ein Knopf mit „…“ gibt es nicht.
+#[test]
+fn kein_knopf_besteht_nur_aus_einem_zeichen() {
+    let mut liste = anmelde_zustaende();
+    liste.push(fehlendes_programm());
+    liste.push(pflicht_eintrag());
+    let mut h = fenster(
+        modell(verbunden(), liste),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        (560.0, 1600.0),
+    );
+    h.run_steps(2);
+
+    let mut gesehen = 0;
+    for knopf in h.query_all(By::new().role(Role::Button)) {
+        let name = knopf
+            .accesskit_node()
+            .label()
+            .unwrap_or_else(|| "(ohne Namen)".to_string());
+        let buchstaben = name
+            .chars()
+            .filter(|zeichen| zeichen.is_alphabetic())
+            .count();
+        assert!(
+            buchstaben >= 3,
+            "Knopf „{name}“ trägt keinen Text – ein Knopf braucht einen benannten Zweck"
+        );
+        gesehen += 1;
+    }
+    assert!(gesehen >= 6, "nur {gesehen} Knöpfe gefunden");
+}
+
+// ------------------------------------ Laden vom Server (Nachtrag zu Aufgabe 37)
+
+/// Die Anzeige am Kopf der Werkzeugseite: „Verbinde mit dem Server …",
+/// „Tools werden geladen (3 von 12)", „Wird gestartet …" und am Ende kurz
+/// „Alles aktuell". Was unter 300 ms dauert, erscheint nicht (kein Flackern).
+#[test]
+fn fortschritt_steht_am_kopf_und_verschwindet() {
+    use quiver_client::Fortschritt;
+    use std::time::{Duration, Instant};
+
+    let faelle = [
+        (Fortschritt::Verbindet, "Verbinde mit dem Server …", true),
+        (
+            Fortschritt::Laedt {
+                fertig: 3,
+                gesamt: 12,
+            },
+            "Tools werden geladen (3 von 12)",
+            true,
+        ),
+        (Fortschritt::Startet, "Wird gestartet …", true),
+        (Fortschritt::Fertig { geaendert: 0 }, "Alles aktuell", true),
+        (
+            Fortschritt::Fertig { geaendert: 2 },
+            "2 Tools aktualisiert",
+            true,
+        ),
+    ];
+    for (fortschritt, text, sichtbar) in faelle {
+        let mut m = modell(verbunden(), eintraege());
+        m.fortschritt = fortschritt.clone();
+        let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+        // Die Uhr der Anzeige steht schon eine Sekunde: so wäre sie im Betrieb
+        // längst sichtbar (unter 300 ms zeigt sie absichtlich nichts).
+        h.state_mut().0.sicht.fortschritt_seit =
+            Some((fortschritt, Instant::now() - Duration::from_secs(1)));
+        h.run();
+        assert_eq!(
+            h.query_all(By::new().label_contains(text)).count() > 0,
+            sichtbar,
+            "{text}"
+        );
+    }
+
+    // Ruhe: keine Zeile über den Karten.
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    for text in [
+        "Verbinde mit dem Server",
+        "Tools werden geladen",
+        "Wird gestartet",
+        "Alles aktuell",
+    ] {
+        assert_eq!(
+            h.query_all(By::new().label_contains(text)).count(),
+            0,
+            "{text} steht ohne Anlass da"
+        );
+    }
+
+    // Unter 300 ms steht nichts da.
+    let mut m = modell(verbunden(), eintraege());
+    m.fortschritt = Fortschritt::Verbindet;
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().label_contains("Verbinde mit dem Server"))
+            .count(),
+        0,
+        "kein Flackern unter 300 ms"
+    );
+
+    // „Alles aktuell“ ist nach vier Sekunden weg.
+    let mut m = modell(verbunden(), eintraege());
+    m.fortschritt = Fortschritt::Fertig { geaendert: 0 };
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.state_mut().0.sicht.fortschritt_seit = Some((
+        Fortschritt::Fertig { geaendert: 0 },
+        Instant::now() - Duration::from_secs(5),
+    ));
+    h.run();
+    assert_eq!(
+        h.query_all(By::new().label_contains("Alles aktuell"))
+            .count(),
+        0
+    );
+}
+
+/// Auf der Karte: Ring und Text beim Laden, mit Anteil, wenn die Größe bekannt
+/// ist; ein Fehler bietet „Erneut versuchen" an, und der Knopf schickt die
+/// Aktion (Nachtrag zu Aufgabe 37).
+#[test]
+fn die_karte_dreht_und_bietet_erneut_versuchen() {
+    let mut laedt = eintrag(
+        "laden",
+        "Laden",
+        "Kommt gerade vom Server.",
+        EintragZustand::WirdGeladen,
+        Vec::new(),
+    );
+    laedt.ladeanteil = Some(42);
+    let mut aktualisiert = eintrag(
+        "neu",
+        "Aktualisieren",
+        "Wird ersetzt.",
+        EintragZustand::Aktualisiert,
+        Vec::new(),
+    );
+    aktualisiert.ladeanteil = Some(7);
+    let kaputt = eintrag(
+        "kaputt",
+        "Kaputt",
+        "Das Programm ließ sich nicht laden.",
+        EintragZustand::Fehler {
+            text: "Die Prüfsumme des geladenen Programms stimmt nicht".into(),
+        },
+        Vec::new(),
+    );
+    let mut h = fenster(
+        modell(verbunden(), vec![laedt, aktualisiert, kaputt]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run_steps(2);
+    assert!(
+        h.query_by_label("Wird geladen … 42 %").is_some(),
+        "der Anteil fehlt: {:?}",
+        h.query_all(By::new().label_contains("Wird geladen"))
+            .map(|k| k.accesskit_node().label())
+            .collect::<Vec<_>>()
+    );
+    assert!(h.query_by_label("Aktualisiert").is_some());
+    h.get_by_role_and_label(Role::Button, "Erneut versuchen")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::EintragNeuVersuchen {
+                eintrag: EintragId::neu("kaputt"),
+            }),
+        "der Knopf schickt keine Aktion: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+}
+
+/// „Tools aktualisieren" steht auf der Seite und schickt die Aktion; solange
+/// etwas läuft, ist der Knopf gesperrt (Nachtrag zu Aufgabe 37).
+#[test]
+fn tools_aktualisieren_ist_ein_knopf_der_seite() {
+    let mut h = fenster(
+        modell(verbunden(), eintraege()),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    zur_ruhe(&mut h);
+    h.get_by_role_and_label(Role::Button, "Tools aktualisieren")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ToolsAktualisieren),
+        "der Knopf schickt keine Aktion: {:?}",
+        h.state().1.aktionen.borrow()
+    );
+
+    // Läuft schon etwas, ist der Knopf nicht bedienbar.
+    let mut m = modell(verbunden(), eintraege());
+    m.fortschritt = quiver_client::Fortschritt::Laedt {
+        fertig: 1,
+        gesamt: 4,
+    };
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    let knopf = h.get_by_role_and_label(Role::Button, "Tools aktualisieren");
+    assert!(
+        knopf.accesskit_node().is_disabled(),
+        "der Knopf ist während des Ladens gesperrt"
+    );
+    // Und ein Klick auf den gesperrten Knopf tut nichts.
+    knopf.click();
+    h.run();
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ToolsAktualisieren),
+        "ein gesperrter Knopf schickt trotzdem eine Aktion"
+    );
+}
+
+/// Ohne Verbindung sagt „Tools aktualisieren“ einen klaren Satz und schickt
+/// keine Anfrage ins Leere (Nachtrag zu Aufgabe 37).
+#[test]
+fn tools_aktualisieren_ohne_verbindung_sagt_warum() {
+    let mut m = modell(
+        Verbindung::Getrennt {
+            server: "http://quiver.example:8080".into(),
+            fehler: "Zeitüberschreitung".into(),
+        },
+        eintraege(),
+    );
+    m.fortschritt = quiver_client::Fortschritt::Ruhe;
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    zur_ruhe(&mut h);
+    h.get_by_role_and_label(Role::Button, "Tools aktualisieren")
+        .click();
+    h.run();
+    assert!(
+        !h.state()
+            .1
+            .aktionen
+            .borrow()
+            .contains(&Aktion::ToolsAktualisieren),
+        "ohne Verbindung geht keine Anfrage hinaus"
+    );
+    assert!(
+        h.query_all(By::new().label_contains("Keine Verbindung zum Server"))
+            .count()
+            > 0,
+        "der Hinweis fehlt: {:?}",
+        h.query_all(By::new().label_contains("Verbindung"))
+            .map(|k| k.accesskit_node().label())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Das Bild zum Nachtrag: Ladefortschritt am Kopf und auf den Karten, in
+/// beiden Themen (Nachtrag zu Aufgabe 37).
+#[test]
+fn bildschirmfoto_des_ladens() {
+    use quiver_client::Fortschritt;
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    let mut laedt = eintrag(
+        "laden",
+        "DevOps",
+        "Arbeitselemente lesen.",
+        EintragZustand::WirdGeladen,
+        Vec::new(),
+    );
+    laedt.ladeanteil = Some(42);
+    let kaputt = eintrag(
+        "kaputt",
+        "Microsoft 365",
+        "Mail und Kalender.",
+        EintragZustand::Fehler {
+            text: "Das Programm »quiver-m365« lässt sich nicht laden".into(),
+        },
+        Vec::new(),
+    );
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut m = modell(verbunden(), vec![laedt.clone(), kaputt.clone()]);
+            m.fortschritt = Fortschritt::Laedt {
+                fertig: 1,
+                gesamt: 3,
+            };
+            let mut h = fenster(m, Some(Seite::Tools), thema, groesse.masse);
+            h.state_mut().0.sicht.fortschritt_seit = Some((
+                Fortschritt::Laedt {
+                    fertig: 1,
+                    gesamt: 3,
+                },
+                std::time::Instant::now() - std::time::Duration::from_secs(1),
+            ));
+            h.run_steps(3);
+            nichts_ragt_heraus(&h, groesse.masse.0, "laden");
+            foto(&mut h, &ziel, "laden", thema, groesse.px);
+        }
+    }
+}
+
+// ------------------------------------ Update anbieten und einspielen (Aufgabe 39)
+
+fn update_paket() -> quiver_protocol::UpdatePaket {
+    quiver_protocol::UpdatePaket {
+        name: String::from("quiver-0.5.0-linux-x86_64.zip"),
+        groesse: 6,
+        // Nur eine Form: die Ansicht prüft keine Prüfsumme.
+        sha256: String::from("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+        art: String::from("zip"),
+    }
+}
+
+fn update_verfuegbar(angebot: quiver_client::update::Angebot) -> quiver_client::UpdateLage {
+    quiver_client::UpdateLage::Verfuegbar {
+        version: String::from("0.5.0"),
+        hinweis: String::from("Version 0.5.0 ist verfügbar"),
+        aenderungen: Some(String::from("https://example.test/releases/tag/v0.5.0")),
+        angebot,
+    }
+}
+
+/// Der Hinweis mit einem passenden Paket: „Jetzt aktualisieren“ und „Später“
+/// stehen da und schicken ihre Aktion (Aufgabe 39).
+#[test]
+fn der_update_hinweis_bietet_jetzt_und_spaeter_an() {
+    let mut m = modell(verbunden(), eintraege());
+    m.update = update_verfuegbar(quiver_client::update::Angebot::Bereit {
+        paket: update_paket(),
+    });
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    zur_ruhe(&mut h);
+    assert!(
+        h.query_all(By::new().label_contains("Version 0.5.0 ist verfügbar"))
+            .count()
+            > 0,
+        "der Hinweis fehlt"
+    );
+    assert!(
+        h.query_all(By::new().label_contains("Änderungen ansehen"))
+            .count()
+            > 0,
+        "der Link auf die Änderungen fehlt"
+    );
+    h.get_by_role_and_label(Role::Button, "Jetzt aktualisieren")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .iter()
+            .any(|aktion| matches!(aktion, Aktion::UpdateInstallieren)),
+        "der Knopf schickt nicht die Aktion"
+    );
+    h.get_by_role_and_label(Role::Button, "Später").click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .iter()
+        .any(|aktion| matches!(aktion, Aktion::UpdateSpaeter)));
+}
+
+/// Ohne Angebot bleibt es beim Hinweis – mit dem Grund, aber ohne Knopf
+/// (Vorgabe der Firma, fehlendes Recht, root nötig).
+#[test]
+fn ohne_angebot_gibt_es_keinen_knopf_sondern_einen_grund() {
+    let faelle = [
+        (
+            quiver_client::update::AngebotGrund::Vorgabe,
+            "Updates sind von deiner Firma abgeschaltet.",
+        ),
+        (
+            quiver_client::update::AngebotGrund::KeinSchreibrecht,
+            "Der Programmordner gehört dem System",
+        ),
+        (
+            quiver_client::update::AngebotGrund::BrauchtRechte,
+            "Diese Installation braucht Administratorrechte",
+        ),
+    ];
+    for (grund, text) in faelle {
+        let mut m = modell(verbunden(), eintraege());
+        m.update = update_verfuegbar(quiver_client::update::Angebot::Keins { grund });
+        let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+        h.run();
+        assert!(
+            h.query_all(By::new().label_contains(text)).count() > 0,
+            "der Grund fehlt: {text}"
+        );
+        assert!(
+            h.query_by_label_contains("Jetzt aktualisieren").is_none(),
+            "der Knopf darf hier nicht stehen"
+        );
+        assert_eq!(
+            h.query_all(By::new().label_contains("Version 0.5.0 ist verfügbar"))
+                .count(),
+            1,
+            "der Hinweis bleibt"
+        );
+    }
+}
+
+/// Während des Tauschs steht derselbe Fortschritt wie beim Laden der
+/// Programme: Text und – wenn die Größe bekannt ist – der Anteil.
+#[test]
+fn der_update_fortschritt_steht_im_hinweis() {
+    use quiver_client::update::{UpdateLage, UpdateSchritt};
+    let faelle = [
+        (
+            UpdateLage::Arbeit {
+                schritt: UpdateSchritt::Laedt,
+                anteil: Some(42),
+            },
+            "Update wird geladen … 42 %",
+        ),
+        (
+            UpdateLage::Arbeit {
+                schritt: UpdateSchritt::Prueft,
+                anteil: None,
+            },
+            "Update wird geprüft …",
+        ),
+        (
+            UpdateLage::Arbeit {
+                schritt: UpdateSchritt::Tauscht,
+                anteil: None,
+            },
+            "Update wird eingespielt …",
+        ),
+        (
+            UpdateLage::Getauscht {
+                version: String::from("0.5.0"),
+            },
+            "Neue Version 0.5.0 ist eingespielt",
+        ),
+    ];
+    for (lage, text) in faelle {
+        let mut m = modell(verbunden(), eintraege());
+        m.update = lage;
+        let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+        h.run_ok();
+        assert!(
+            h.query_all(By::new().label_contains(text)).count() > 0,
+            "{text} fehlt"
+        );
+        assert!(
+            h.query_by_label_contains("Jetzt aktualisieren").is_none(),
+            "während des Tauschs gibt es keinen zweiten Knopf"
+        );
+    }
+}
+
+/// Ein gescheiterter Tausch steht als Fehler da und ändert nichts.
+#[test]
+fn ein_gescheitertes_update_steht_als_fehler_da() {
+    let mut m = modell(verbunden(), eintraege());
+    m.update = quiver_client::UpdateLage::Fehler {
+        text: String::from("die Prüfsumme des Pakets stimmt nicht"),
+    };
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    assert!(
+        h.query_all(By::new().label_contains("Prüfsumme des Pakets"))
+            .count()
+            > 0,
+        "der Fehler fehlt"
+    );
+    // Fragen darf man immer wieder.
+    assert!(h.query_by_label_contains("Erneut prüfen").is_some());
+}
+
+/// Die Bilder zum Angebot, in beiden Themen (Aufgabe 39).
+#[test]
+fn bildschirmfoto_des_updates() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut m = modell(verbunden(), eintraege());
+            m.update = update_verfuegbar(quiver_client::update::Angebot::Bereit {
+                paket: update_paket(),
+            });
+            let mut h = fenster(m, Some(Seite::Tools), thema, groesse.masse);
+            h.run_steps(3);
+            nichts_ragt_heraus(&h, groesse.masse.0, "update");
+            foto(&mut h, &ziel, "update", thema, groesse.px);
+        }
+    }
 }

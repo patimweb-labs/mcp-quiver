@@ -50,6 +50,8 @@ pub(crate) struct Zustand {
     graph_log: Mutex<Option<OffsetDateTime>>,
     pub(crate) schluessel: Schluessel,
     pub(crate) drossel: Drossel,
+    /// Die Programme, die der Server an die Geräte verteilt (Aufgabe 37).
+    pub(crate) programme: Arc<crate::programme::Ablage>,
     /// Argon2-Hash für unbekannte E-Mails, beim Start erzeugt (Aufgabe 26.4).
     pub(crate) dummy: String,
     /// Der Stand der Ersteinrichtung (Aufgabe 25).
@@ -61,6 +63,9 @@ pub(crate) struct Zustand {
     pub(crate) uhr: crate::config::Uhr,
     /// Die zuletzt gelesene Veröffentlichung (Aufgabe 34).
     pub(crate) updates: Mutex<crate::updates::Lage>,
+    /// Nur ein Abruf der Veröffentlichung zur Zeit (Aufgabe 39): ein Paket,
+    /// ein Weg nach draußen.
+    pub(crate) update_wache: AsyncMutex<()>,
 }
 
 impl Zustand {
@@ -76,6 +81,7 @@ impl Zustand {
         let (ende, _) = broadcast::channel(1);
         let uhr = konfig.uhr.clone();
         let einrichtung = Einrichtung::neu(&konfig.oeffentlich, konfig.einrichtung_mit_code());
+        let programme = Arc::new(crate::programme::Ablage::neu(konfig.programme.clone()));
         Self {
             db: Mutex::new(conn),
             geaendert,
@@ -89,12 +95,14 @@ impl Zustand {
             graph_log: Mutex::new(None),
             schluessel,
             drossel: Drossel::neu(),
+            programme,
             dummy,
             einrichtung,
             argon: Semaphore::new(ARGON2_GLEICHZEITIG),
             refresh: Mutex::new(HashMap::new()),
             uhr,
             updates: Mutex::new(crate::updates::Lage::neu()),
+            update_wache: AsyncMutex::new(()),
         }
     }
 

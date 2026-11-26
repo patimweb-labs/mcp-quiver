@@ -315,7 +315,51 @@ Server übernehmen, und genau das ist gewollt (Aufgabe 25).
 | `npx` / `uvx` / `oci` | fremde MCP-Server | Freigabe durch Admin, Node/Python/Container nötig |
 | `remote` | entfernte MCP-Server über HTTP | Client fügt Zugangsdaten ein |
 
-Gepushte Artefakte sind signiert. Der Client prüft jede Signatur vor dem Start.
+Die Programme der eigenen Werkzeuge (`quiver-*`) kommen **vom Server**
+(Aufgabe 37): Ablage im Profil `tools/<name>/<sha256>/<programm>`, 0700, geladen
+in eine Zwischendatei mit `fsync` und Umbenennen, geprüft gegen Größe und
+SHA-256 des Solls – vor jedem Start erneut. Nicht mehr zugewiesene Programme
+werden gelöscht, die Konfiguration bleibt. Fremde Läufer (`npx`, `uvx`,
+`docker`) und feste Pfade laufen wie bisher auf dem Gerät. Der Server liefert
+nur, was im Soll des Geräts steht, und nur für dessen System.
+
+*Preis:* Ohne erreichbaren Server bekommt ein Gerät kein **neues** Programm
+(die bereits geladenen laufen weiter). Wer den Server übernimmt, bestimmt die
+Programme – deshalb TLS überall und die Prüfsumme im Soll, nicht im Programm.
+
+### Updates (Aufgabe 34, 39)
+
+Der **Server** fragt höchstens alle sechs Stunden die Veröffentlichung ab
+(`QUIVER_UPDATES=an|aus`, ohne Kennung, ohne Nutzdaten) und zeigt in der
+Verwaltung: neuere Server-Version, neueste Client-Version, Geräte mit älterem
+Client. Der **Client** fragt nur seinen Server – nie das Internet – und zeigt
+bei einer neueren Fassung einen Hinweis mit dem Text der Firma und einem Link
+auf die Änderungen. Nur neuere Versionen, keine Vorabfassungen, nie zurück.
+
+Gibt es ein Paket für **seine** Installation, bietet der Client **Jetzt
+aktualisieren** und **Später** an (ADR 0005). Der Server holt das Paket des
+Releases über `https`, prüft es gegen `SHA256SUMS`, legt es unter
+`<daten>/updates/<version>/` ab und liefert es mit dem Geräte-Token aus
+(gestreamt, Größe, `ETag`, Drossel). Der Client prüft Größe und SHA-256 aus der
+Antwort vor jedem Schritt, beendet die laufenden Werkzeuge, startet die neue
+Fassung als `quiver --selbsttest` (Exit 0, ohne Fenster, ohne Profil) und
+tauscht erst dann – je Art der Installation, die er selbst erkennt: ZIP und MSI
+(je Benutzer) unter Windows, `.app` aus dem `.dmg` unter macOS, AppImage und
+`tar.gz` unter Linux; `.deb`/`.rpm` und Ordner ohne Schreibrecht bekommen nur
+einen Hinweis. Die alte Fassung bleibt als `<name>.alt` liegen, eine Marke im
+Profil holt sie beim zweiten Start ohne Beweis zurück.
+
+Das **Profil wird nicht angefasst**: Einstellungen, Tresor, Geräte-Token,
+Angaben, Zugänge, Anmeldungen der Werkzeuge, Autostart und die geladenen
+Programme bleiben. Die Firma schaltet das Angebot per Vorgabe `UpdateAngebot`
+ab (Standard: an); dann bleibt es beim Hinweis, und die Geräteverwaltung spielt
+ein.
+
+*Preis:* Der Server legt Pakete auf die Platte (bis 512 MiB, alte Fassungen
+bleiben liegen). Der Tausch eines laufenden Programms ist der heikelste Teil
+und je Art einzeln geprüft; für das MSI macht es Windows selbst. Kein
+Signaturschlüssel, kein fremdes Werkzeug, kein root – dafür bekommen
+`deb`/`rpm`-Installationen das Update weiter von Hand.
 
 ### Grenzen im Client (Paket 3)
 
@@ -336,6 +380,8 @@ bekommt im Client feste Grenzen; sie stehen an einer Stelle und sind getestet:
 | Netz | Verbinden 10 s, Antwort 30 s, Strom 60 s ohne Byte, Antwort ≤ 4 MB (Soll 8 MB), Ereigniszeile ≤ 64 KB, keine Weiterleitungen |
 | Sitzungen am Endpunkt | höchstens 64, ohne Nutzung nach 10 Minuten abgelaufen („verbunden“ folgt daraus) |
 | Herkunft am Endpunkt | mit `Origin` nur von Loopback, `Host` nur der eigene Port, ohne `Origin` erlaubt (CLI-Agent) |
+| Programm vom Server | Größe und SHA-256 wie angekündigt, kein Byte mehr; Ablage `0700`, Datei `0700`; vor jedem Start geprüft, kein Verweis; alte Fassungen nach dem ersten erfolgreichen Start weg |
+| Programm-Abruf | nur mit Geräte-Token, nur aus dem Soll des Geräts (sonst 403), nur der Name nach strenger Prüfung, Drossel je Gerät, `ETag`/`If-None-Match`, höchstens 128 MiB |
 | Umgebung eines Werkzeugs | Whitelist (PATH, HOME, USER, LANG, LC_*, TZ, TMPDIR, Proxy, Plattform-nötiges) plus die Werte des Eintrags |
 | Soll-Abgleich | direkt nach dem Öffnen und am Ende des Ereignis-Stroms, zusätzlich alle 5 Minuten ± Streuung — unabhängig davon, ob ein Ereignis ankommt |
 | Tresor | ein Lesezugriff je Abgleich, in `spawn_blocking`, Sperre mit Frist; fehlt der Schlüssel, wird **kein** neuer erzeugt; ein kaputter Tresor verhindert den Start nicht (`Neu beginnen` mit Rückfrage, alte Dateien bleiben als `.kaputt-<zeit>`) |
@@ -410,6 +456,27 @@ signierte Pakete und die Freigabe durch den Admin (Abschnitt 4).
   Verwaltung müssen beide lesen (unbekannte Zustände gelten als neutral). Wer
   einen Eintrag auf vielen Geräten abschalten will, muss es auf jedem Gerät tun;
   der Admin-Schalter (*Aktiv*) bleibt die einzige zentrale Steuerung.
+
+- **Festlegung: die Ladeanzeige steht nur, wenn es etwas zu tun gibt**
+  (Nachtrag zu Aufgabe 37). Solange abgeglichen, geladen oder gestartet wird,
+  steht am Kopf der Werkzeugseite ein Satz mit Drehsymbol („Verbinde mit dem
+  Server …“, „Tools werden geladen (3 von 12)“, „Wird gestartet …“); am Ende
+  kurz „Alles aktuell“ oder „2 Tools aktualisiert“, dann weg. Je Karte
+  „Wird geladen … 42 %“ (Anteil, sobald die Größe bekannt ist) oder
+  „Aktualisiert“, ebenfalls mit Drehsymbol. Was unter 300 ms dauert, erscheint
+  nicht; „Alles aktuell“ steht vier Sekunden. Solange kein Ring dreht und keine
+  Frist läuft, zeichnet das Fenster **nicht** neu (`request_repaint_after` nur
+  bei laufender Anzeige). Der Knopf **Tools aktualisieren** (Seite und Tray)
+  stößt einen Abgleich an, ist währenddessen gesperrt und sagt ohne Verbindung
+  einen klaren Satz statt ins Leere zu fragen. Ein Fehler steht je Karte mit
+  **Erneut versuchen**; ein Programm, das nicht lädt, hält die anderen nicht
+  auf. Vor einem Programmtausch werden laufende Aufrufe bis zu 10 s zu Ende
+  geführt.
+
+  *Preis:* Die Fristen (300 ms, 4 s, 10 s) sind fest und nicht einstellbar;
+  „weniger Bewegung“ ist über egui genähert (`animation_time` = 0), nicht über
+  eine Plattform-Anfrage. Der Fortschritt lebt nur im Modell und überlebt einen
+  Neustart nicht — nach einem Absturz beginnt die Anzeige von vorn.
 
 ## 10. Protokoll und Datenschutz
 

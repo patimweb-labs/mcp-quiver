@@ -16,7 +16,7 @@ use crate::profil::Einstellungen;
 use crate::thema::{self, Thema};
 use crate::tray::{self, Befehl, Tray};
 use eframe::egui;
-use quiver_client::Modell;
+use quiver_client::{Modell, UpdateLage};
 use quiver_domain::{EintragId, Werte};
 
 /// Wie der Autostart geschaltet wird — im Betrieb [`crate::autostart::setzen`],
@@ -56,6 +56,11 @@ pub trait KernZugang {
     fn protokoll_stand(&self) -> u64 {
         0
     }
+    /// „Tools aktualisieren“ aus dem Tray (Nachtrag zu Aufgabe 37). Standard:
+    /// nichts — der Weg über die Seite geht als [`Aktion::ToolsAktualisieren`].
+    fn tools_aktualisieren(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Eine Anweisung des Fensters an den Kern.
@@ -89,6 +94,10 @@ pub enum Aktion {
     AgentEntfernen { id: String },
     /// Die Anmeldung eines Eintrags im Browser starten (nie ein Agent).
     EintragAnmelden { eintrag: EintragId },
+    /// Die Anmeldung eines Eintrags **erneut prüfen** („Erneut prüfen“,
+    /// Aufgabe 35, §5): derselbe Status-Befehl wie beim Nachsehen im
+    /// Hintergrund, ohne Browser und ohne Ablauf.
+    AnmeldungPruefen { eintrag: EintragId },
     /// Die Anmeldung eines Eintrags beenden (nach der Rückfrage im Dialog).
     EintragAbmelden { eintrag: EintragId },
     /// Die Einrichtung eines Eintrags im Browser starten (Aufgabe 11): das
@@ -128,6 +137,14 @@ pub enum Aktion {
         pfad: PathBuf,
         passwort: Option<String>,
     },
+    /// Sofort beim Server nachfragen, ob es neue Programme gibt (Nachtrag zu
+    /// Aufgabe 37). Die Anzeige am Kopf der Werkzeugseite zeigt den Fortschritt
+    /// und danach „Alles aktuell“ oder wie viele Programme kamen.
+    ToolsAktualisieren,
+    /// „Erneut versuchen“ auf einer Karte (Nachtrag zu Aufgabe 37): den
+    /// Eintrag neu starten; ein Programm, das nicht geladen werden konnte,
+    /// wird dabei erneut geholt.
+    EintragNeuVersuchen { eintrag: EintragId },
     /// Einen Eintrag auf **diesem** Gerät abschalten oder wieder einschalten
     /// (Aufgabe 19). Aus beendet den Prozess, an startet ihn sofort.
     EintragSchalten { eintrag: EintragId, an: bool },
@@ -144,6 +161,10 @@ pub enum Aktion {
     EinrichtungAbbrechen { eintrag: EintragId },
     /// Beim Server nach einer neuen Version fragen (Aufgabe 34).
     UpdatePruefen,
+    /// Das angebotene Update laden, prüfen und einspielen (Aufgabe 39).
+    UpdateInstallieren,
+    /// „Später“: der Hinweis verschwindet für diese Version (Aufgabe 39).
+    UpdateSpaeter,
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -195,6 +216,10 @@ pub struct Fenster<K: KernZugang> {
     ende_gemeldet: bool,
     /// Was zuletzt in die Zwischenablage ging – und seit wann (Paket 3).
     zwischenablage: Zwischenablage,
+    /// Seit wann der Tausch durch ist (Aufgabe 39): der Hinweis „Neustart“
+    /// steht einen Augenblick, dann schließt das Fenster und die neue Fassung
+    /// startet.
+    getauscht_seit: Option<std::time::Instant>,
 }
 
 /// Leert die Zwischenablage nach kurzer Zeit, wenn noch unser Wert darin
@@ -291,6 +316,7 @@ impl<K: KernZugang> Fenster<K> {
             ende: None,
             ende_gemeldet: false,
             zwischenablage: Zwischenablage::default(),
+            getauscht_seit: None,
         }
     }
 
@@ -345,6 +371,22 @@ impl<K: KernZugang> Fenster<K> {
                         ));
                     } else {
                         self.sicht.autostart = !self.sicht.autostart;
+                    }
+                }
+                // Nachtrag zu Aufgabe 37: „Tools aktualisieren“ im Tray.
+                Befehl::ToolsAktualisieren => {
+                    if matches!(
+                        self.sicht.modell.verbindung,
+                        quiver_client::Verbindung::Verbunden { .. }
+                    ) {
+                        if let Err(fehler) = self.kern.tools_aktualisieren() {
+                            self.sicht.hinweis = Some(format!("{fehler:#}"));
+                        }
+                    } else {
+                        // Ohne Verbindung ein klarer Satz statt einer Anfrage,
+                        // die ins Leere ginge.
+                        self.sicht.hinweis =
+                            Some(crate::texte::t(self.sicht.sprache, "tools.ohne_verbindung"));
                     }
                 }
                 Befehl::Beenden => {
@@ -461,8 +503,37 @@ impl<K: KernZugang> Fenster<K> {
         }
         self.autostart_pflegen();
         self.zwischenablage.beobachten(ui.ctx(), zeit);
+        self.neustart_pflegen(ui.ctx(), zeit);
+    }
+
+    /// Nach dem Tausch: den Hinweis kurz stehen lassen, dann schließen.
+    ///
+    /// Das Schließen hält den Kern an (`on_exit`) und gibt das Profil frei;
+    /// erst danach startet [`crate::main`] die neue Fassung. Vorher wäre es
+    /// eine zweite Instanz, die sich sofort wieder beendet.
+    fn neustart_pflegen(&mut self, ctx: &egui::Context, zeit: f64) {
+        let getauscht = matches!(self.sicht.modell.update, UpdateLage::Getauscht { .. });
+        if !getauscht {
+            self.getauscht_seit = None;
+            return;
+        }
+        let seit = *self
+            .getauscht_seit
+            .get_or_insert_with(std::time::Instant::now);
+        if seit.elapsed() < NEUSTART_ANZEIGE {
+            ctx.request_repaint_after(NEUSTART_ANZEIGE - seit.elapsed());
+            return;
+        }
+        let _ = zeit;
+        if !self.beenden {
+            self.beenden = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 }
+
+/// So lange steht „Quiver startet neu“ da, bevor das Fenster schließt.
+pub const NEUSTART_ANZEIGE: std::time::Duration = std::time::Duration::from_millis(1200);
 
 impl<K: KernZugang> eframe::App for Fenster<K> {
     /// Läuft auch, wenn das Fenster weggelegt ist (Tray, zweite Instanz).

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use futures_util::StreamExt;
-use quiver_domain::Soll;
+use quiver_domain::{Soll, System};
 use quiver_protocol::{
     AnmeldeGrund, Anmelden, AnmeldenAntwort, Fehler, Meldung, EREIGNIS_SOLL, PRAEFIX,
 };
@@ -62,7 +62,8 @@ pub(crate) async fn lauf(innen: Arc<Innen>) {
         innen.verbindung_setzen(Verbindung::Verbindet {
             server: server.clone(),
         });
-        match soll_holen(&innen.http, &server, &token).await {
+        innen.fortschritt_setzen(crate::Fortschritt::Verbindet);
+        match soll_holen(&innen.http, &server, &token, &innen.system).await {
             Ok(soll) => {
                 // Zwischen Holen und Anwenden kann sich abgemeldet oder neu
                 // angemeldet worden sein — dann gehört dieses Ergebnis zu
@@ -174,7 +175,7 @@ async fn nach_ablehnung_warten(innen: &Arc<Innen>, server: &str, fehler: &anyhow
 /// angemeldet) – der Durchlauf ist überholt.
 async fn nachfragen(innen: &Arc<Innen>, server: &str, token: &str) -> anyhow::Result<bool> {
     let letzte = innen.stand().soll.revision.clone();
-    let soll = soll_holen(&innen.http, server, token).await?;
+    let soll = soll_holen(&innen.http, server, token, &innen.system).await?;
     if !gilt_noch(innen, token) {
         return Ok(false);
     }
@@ -194,6 +195,10 @@ async fn strom(innen: &Arc<Innen>, server: &str, token: &str) -> StromEnde {
     let anfrage = innen
         .http
         .get(format!("{server}{PRAEFIX}/geraet/ereignisse"))
+        .query(&[
+            ("system", innen.system.system.as_str()),
+            ("arch", innen.system.arch.as_str()),
+        ])
         .bearer_auth(token)
         .header(reqwest::header::ACCEPT, "text/event-stream");
     let antwort = match anfrage.send().await {
@@ -267,7 +272,7 @@ async fn strom(innen: &Arc<Innen>, server: &str, token: &str) -> StromEnde {
             if ereignis.daten == letzte {
                 continue;
             }
-            match soll_holen(&innen.http, server, token).await {
+            match soll_holen(&innen.http, server, token, &innen.system).await {
                 Ok(soll) if gilt_noch(innen, token) => anwenden(innen, soll).await,
                 Ok(_) => return StromEnde::NeuVerbinden,
                 Err(fehler) => return StromEnde::Fehler(fehler),
@@ -314,14 +319,22 @@ pub(crate) async fn anmelden(
 }
 
 /// Den Soll-Zustand des eigenen Geräts holen.
+///
+/// Das System und die Architektur gehen mit (Aufgabe 37): nur so nennt der
+/// Server die Programme, die es für **dieses** Gerät gibt.
 pub(crate) async fn soll_holen(
     client: &reqwest::Client,
     server: &str,
     token: &str,
+    system: &System,
 ) -> anyhow::Result<Soll> {
     let antwort = netz::frist(
         client
             .get(format!("{server}{PRAEFIX}/geraet/soll"))
+            .query(&[
+                ("system", system.system.as_str()),
+                ("arch", system.arch.as_str()),
+            ])
             .bearer_auth(token),
     )
     .send()

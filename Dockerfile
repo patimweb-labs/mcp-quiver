@@ -6,6 +6,10 @@
 # findet im Container kein Werkzeug, mit dem er weiterkommt; ein Angriff über
 # eine Shell ist ausgeschlossen, weil es keine gibt.
 #
+# Die Werkzeug-Programme je Plattform kommen aus dem Release von quiver-tools
+# (Aufgabe 37/38) und liegen unter /opt/quiver/tools/<system>/<arch>/. Fehlt das
+# Release, wird das Abbild **ohne** Programme gebaut und sagt es beim Bauen.
+#
 # Alle Basis-Images sind auf einen Digest festgelegt (nicht auf einen Tag, der
 # sich ändern kann). Erneuern: `docker buildx imagetools inspect <Bild>` und den
 # Digest hier ersetzen.
@@ -38,6 +42,35 @@ COPY assets assets
 RUN cargo build --release --locked -p quiver-server \
  && cp target/release/quiver-server /quiver-server
 
+# --- Programme ----------------------------------------------------------------
+# Die Programme, die der Server an die Geräte verteilt (Aufgabe 37): die
+# Archive des festgelegten Releases von quiver-tools (Aufgabe 38), je System
+# und Architektur eines, entpackt nach /programme/<system>/<arch>/.
+#
+# Die Fassung steht **hier im Repo**, nicht in einer GitHub-Variable: was ein
+# Abbild enthält, soll aus dem Commit hervorgehen. `QUIVER_TOOLS_VERSION` leer
+# (`--build-arg QUIVER_TOOLS_VERSION=`) baut weiter, nur ohne Programme – das
+# Abbild ist auch ohne sie nützlich (Bibliothek, Zuweisung, Anmeldung), die
+# Geräte laden dann nichts.
+#
+# Geprüft wird in `verteilung/programme.sh`: erst alle Prüfsummen gegen
+# `SHA256SUMS`, dann entpacken und gegen `LISTE.json`. Fehlt ein Archiv oder
+# stimmt etwas nicht, bricht der Bau ab – lieber kein Abbild als ein halbes.
+# Dasselbe Skript läuft lokal in einem Temp-Ordner (siehe Tests).
+FROM ${BASIS}/debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS programme
+COPY verteilung/programme.sh /usr/local/bin/programme
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && chmod 755 /usr/local/bin/programme
+# Die Fassung des Releases (ohne „v“). Leer = keine Programme.
+ARG QUIVER_TOOLS_VERSION=0.1.0
+ARG QUIVER_TOOLS_BASIS="https://github.com/patimweb-labs/quiver-tools/releases/download"
+ENV QUIVER_TOOLS_VERSION=$QUIVER_TOOLS_VERSION \
+    QUIVER_TOOLS_BASIS=$QUIVER_TOOLS_BASIS \
+    ZIEL=/programme
+RUN programme
+
 # --- Laufzeit vorbereiten -----------------------------------------------------
 # Zertifikate (für Entra und Graph) und Zeitzonen kommen aus Debian; das
 # distroless-Image bringt beides nicht mit.
@@ -56,7 +89,12 @@ COPY --from=laufzeit --chown=10001:999 /daten /daten
 COPY --from=laufzeit --chown=10001:999 /tmp /tmp
 COPY --from=server /quiver-server /usr/local/bin/quiver-server
 COPY --from=admin --chown=10001:999 /src/admin/dist /opt/quiver/admin
+# Die Programme je Plattform (Aufgabe 37). Was der Betreiber zusätzlich in
+# `<daten>/tools/<system>/` legt, geht vor – dort kommt niemand außer root
+# heran, und die Weboberfläche ändert daran nichts.
+COPY --from=programme --chown=10001:999 /programme /opt/quiver/tools
 ENV QUIVER_ADRESSE=0.0.0.0:8740 \
+    QUIVER_PROGRAMME=/opt/quiver/tools \
     QUIVER_DATEN=/daten \
     QUIVER_ADMIN_DIST=/opt/quiver/admin \
     RUST_LOG=info

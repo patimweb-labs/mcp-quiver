@@ -922,11 +922,12 @@ mod tests {
 
     #[test]
     fn ein_log_ohne_eintrag_ist_ein_fehler() {
-        let ordner = std::env::temp_dir().join(format!(
-            "quiver-endpunkt-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-        ));
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Prozessnummer und Zähler statt einer Zeitangabe: ein Name mit
+        // Doppelpunkt taugt unter Windows nicht als Pfad.
+        let ordner =
+            std::env::temp_dir().join(format!("quiver-endpunkt-{}-{nummer}", std::process::id()));
         let protokoll = Protokoll::neu(&ordner);
         let ergebnis = log_lesen(&protokoll, Some(&JsonObject::new()), true, Some("pi"));
         let text = antwort_text(&ergebnis);

@@ -1,6 +1,7 @@
 # 39 – Update des Clients anbieten
 
-**Stand:** 2026-11-25 · **Zurückgestellt**, kommt nach Aufgabe 37/38 (Tools vom Server).
+**Stand:** 2026-11-25 · **Erledigt** (nach Aufgabe 37) · Entwurf:
+[ADR 0005](../adr/0005-client-update.md)
 
 ## Vorgabe
 
@@ -22,3 +23,28 @@ Davon bleibt alles. ADR 0004 („anzeigen statt selbst installieren“) beschrei
 - Laufende Tools sauber beenden, Client tauschen, neu starten. Startet die neue Fassung nicht, kommt die alte zurück.
 - Das Profil wird nicht angefasst; vor einer Umstellung des Formats eine Kopie. Test: Angaben, Geheimnisse und Anmeldung vor und nach dem Update gleich.
 - Firmen mit Geräteverwaltung können das Angebot per Vorgabe abschalten, dann nur Hinweis.
+
+## Ergebnis
+
+- **Server:** `GET /api/v1/geraet/updates` nennt zu System und Architektur die
+  Pakete des Releases (Name, Größe, SHA-256 aus `SHA256SUMS`);
+  `GET /api/v1/geraet/updates/paket/{name}` liefert eines davon gestreamt, mit
+  `Content-Length`, `ETag` und Drossel. Der Server holt es über `https` von der
+  Veröffentlichung, prüft Größe und Prüfsumme und legt es unter
+  `<daten>/updates/<version>/` ab. Eine falsche Prüfsumme wird nie
+  ausgeliefert.
+- **Client:** Hinweis mit **Jetzt aktualisieren** und **Später**. Er prüft die
+  Antwort (Größe, SHA-256), beendet die laufenden Werkzeuge, entpackt (ZIP und
+  `tar.gz` mit `flate2`, `.dmg` mit `hdiutil`/`ditto`), startet die neue Fassung
+  als `quiver --selbsttest` und tauscht erst dann — je Art der Installation,
+  die er selbst erkennt. Die alte Fassung bleibt als `<name>.alt`; eine Marke
+  im Profil holt sie zurück. Das Profil wird nicht angefasst (Test: vorher und
+  nachher gleich).
+- **Vorgabe:** `UpdateAngebot` (an/aus, Standard an) in Registry, verwalteten
+  Einstellungen und `/etc/mcp-quiver/vorgaben.json`; Vorlagen mitgeliefert.
+- **Tests:** Server (Attrappe der Veröffentlichung: holen, prüfen, falsche
+  Prüfsumme, fremdes System, Ablage), Client (Angebot, Vorgabe aus, kein
+  Rückschritt, „Später“, Tausch mit Attrappe), Tausch im Testordner (ZIP,
+  `tar.gz`, AppImage, `.app` auf macOS), Oberfläche (Knöpfe, Fortschritt,
+  Fehler) und Bilder in `docs/bilder/fenster-*-update-*.png`.
+- **Offen:** siehe `docs/offen.md`, Abschnitt „Update durch den Client“.

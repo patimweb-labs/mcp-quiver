@@ -169,6 +169,11 @@ struct Lauscher {
 
 impl Lauscher {
     /// Starten; liefert die lokale Adresse und den Kanal für die eine Antwort.
+    ///
+    /// Gebunden wird **nur** an `127.0.0.1`, nie an `0.0.0.0`: der Rückweg aus
+    /// dem Browser ist kein Dienst im Netz. Auf Windows fragt die Firewall bei
+    /// einem Lauscher auf allen Adressen nach, bei Loopback nicht — und was
+    /// niemand von außen erreichen kann, muss auch niemand freigeben.
     async fn starten(
         zustand: String,
     ) -> anyhow::Result<(Self, SocketAddr, oneshot::Receiver<Antwort>)> {

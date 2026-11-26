@@ -264,9 +264,30 @@ pub struct Sicht {
     /// Hat der User in der Liste gescrollt? Dann bleiben die Zeilen stehen,
     /// statt unter ihm wegzurutschen.
     pub protokoll_gescrollt: bool,
+    /// Seit wann welcher Fortschritt gilt: „Alles aktuell“ verschwindet nach
+    /// kurzer Zeit, und was unter 300 ms dauert, flackert nicht (Nachtrag zu
+    /// Aufgabe 37).
+    pub fortschritt_seit: Option<(quiver_client::Fortschritt, std::time::Instant)>,
 }
 
 impl Sicht {
+    /// Der Fortschritt und wie lange er schon gilt.
+    ///
+    /// Die Uhr läuft hier, nicht im Kern: das Fenster entscheidet, wann etwas
+    /// zu zeigen ist. Wechselt der Fortschritt, beginnt die Zeit von vorn.
+    pub fn fortschritt_jetzt(&mut self) -> (quiver_client::Fortschritt, std::time::Duration) {
+        let jetzt = std::time::Instant::now();
+        let aktuell = self.modell.fortschritt.clone();
+        let seit = match &self.fortschritt_seit {
+            Some((phase, seit)) if *phase == aktuell => *seit,
+            _ => {
+                self.fortschritt_seit = Some((aktuell.clone(), jetzt));
+                jetzt
+            }
+        };
+        (aktuell, jetzt.saturating_duration_since(seit))
+    }
+
     pub fn neu(modell: Modell, einstellungen: &Einstellungen) -> Self {
         // Eine vorgegebene Server-Adresse (Aufgabe 34) gilt immer.
         let server = modell
@@ -316,6 +337,7 @@ impl Sicht {
             log_gefiltert: None,
             log_stand: u64::MAX,
             protokoll_gescrollt: false,
+            fortschritt_seit: None,
         }
     }
 
@@ -472,6 +494,12 @@ impl Sicht {
         }
     }
 
+    /// Die Zugangsliste eines Eintrags aufklappen, ohne sie zuzuklappen –
+    /// „… hinzufügen“ führt zur Liste (Aufgabe 35, §5).
+    pub fn zugaenge_oeffnen(&mut self, id: &EintragId) {
+        self.zugaenge_offen.insert(id.clone());
+    }
+
     /// Den Zugangs-Dialog öffnen: `name: None` legt einen neuen an, `Some`
     /// bearbeitet einen vorhandenen (der Name bleibt dann fest).
     pub fn zugang_dialog(&mut self, eintrag: &EintragSicht, name: Option<&str>) {
@@ -604,6 +632,7 @@ mod tests {
             profil_hinweis: None,
             update: quiver_client::UpdateLage::Unbekannt,
             vorgaben: quiver_client::Vorgaben::default(),
+            fortschritt: quiver_client::Fortschritt::Ruhe,
         }
     }
 
@@ -631,6 +660,33 @@ mod tests {
         neu.endpunkt = "http://127.0.0.1:9/mcp".into();
         sicht.modell_setzen(neu);
         assert_eq!(sicht.hinweis, None);
+    }
+
+    /// Die Uhr der Fortschrittsanzeige (Nachtrag zu Aufgabe 37): sie beginnt
+    /// beim ersten Hinsehen und beginnt von vorn, sobald ein anderer
+    /// Fortschritt gilt – sonst bliebe „Alles aktuell“ ewig stehen.
+    #[test]
+    fn die_uhr_des_fortschritts_beginnt_bei_jedem_wechsel_von_vorn() {
+        use quiver_client::Fortschritt;
+        use std::time::Duration;
+
+        let mut sicht = Sicht::neu(leeres_modell(), &Einstellungen::default());
+        let (fortschritt, alter) = sicht.fortschritt_jetzt();
+        assert_eq!(fortschritt, Fortschritt::Ruhe);
+        assert!(alter < Duration::from_secs(1));
+
+        // Derselbe Stand: die Uhr läuft weiter, statt neu zu beginnen.
+        let seit = sicht.fortschritt_seit.as_ref().expect("Uhr").1;
+        sicht.fortschritt_jetzt();
+        assert_eq!(sicht.fortschritt_seit.as_ref().expect("Uhr").1, seit);
+
+        // Ein anderer Stand: die Uhr beginnt von vorn.
+        let mut neu = leeres_modell();
+        neu.fortschritt = Fortschritt::Verbindet;
+        sicht.modell_setzen(neu);
+        let (fortschritt, alter) = sicht.fortschritt_jetzt();
+        assert_eq!(fortschritt, Fortschritt::Verbindet);
+        assert!(alter < Duration::from_secs(1));
     }
 
     #[test]

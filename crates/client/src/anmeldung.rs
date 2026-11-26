@@ -15,6 +15,7 @@
 //! den Server (kein Vertragswechsel, AGENTS.md §2.1).
 
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -23,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, BufReader};
 
 use crate::hilfen::Abbruch;
+use crate::protokoll::Protokoll;
 
 /// Wie es um die Anmeldung eines Eintrags steht. Nur für das Fenster; der
 /// Server bekommt sie nie zu sehen.
@@ -31,8 +33,17 @@ use crate::hilfen::Abbruch;
 pub enum AnmeldeZustand {
     /// Noch nicht geprüft.
     Unbekannt,
+    /// Der Status-Befehl läuft gerade. Das Fenster zeigt „Prüfe Anmeldung …“
+    /// mit Drehsymbol und keinen Knopf: die Prüfung hat eine Frist und endet
+    /// mit einem Satz (Aufgabe 35, §5).
+    Pruefe,
     /// Angemeldet; `konto` ist der Anzeigename aus der ersten Zeile von stdout.
     Angemeldet {
+        konto: Option<String>,
+    },
+    /// Angemeldet, aber die Anmeldung läuft bald ab: ein Werkzeug, das den
+    /// Ablauf kennt, meldet ihn mit Exit 3 ([`zustand_aus`]).
+    LaeuftAb {
         konto: Option<String>,
     },
     Abgemeldet,
@@ -43,8 +54,11 @@ pub enum AnmeldeZustand {
     },
 }
 
-/// Wie lange der Status-Befehl höchstens dauern darf.
-pub const STATUS_FRIST: Duration = Duration::from_secs(15);
+/// Wie lange der Status-Befehl höchstens dauern darf. Zehn Sekunden: eine
+/// Prüfung ist ein Blick in den Tresor, kein Browser-Ablauf. Antwortet das
+/// Werkzeug nicht, sagt die Karte das und bietet „Erneut prüfen“ an, statt
+/// dass ein Drehsymbol stehen bleibt (Aufgabe 35, §5).
+pub const STATUS_FRIST: Duration = Duration::from_secs(10);
 /// Die Anmeldung im Browser darf lange dauern (der User muss mitmachen).
 pub const ANMELDEN_FRIST: Duration = Duration::from_secs(5 * 60);
 /// Das Abmelden ist ein Aufräumschritt und braucht keine fünf Minuten.
@@ -277,8 +291,13 @@ pub struct Ausgang {
 
 /// Einen Anmelde-Befehl ausführen. stdout und stderr gehen ins Protokoll des
 /// Clients (wie bei den MCP-Prozessen), nie in eine Meldung an den Server.
-pub async fn laufen(id: &EintragId, befehl: &Befehl, frist: Duration) -> anyhow::Result<Ausgang> {
-    befehl_laufen(id, befehl, Some(frist), None).await
+pub async fn laufen(
+    id: &EintragId,
+    befehl: &Befehl,
+    frist: Duration,
+    protokoll: &Arc<Protokoll>,
+) -> anyhow::Result<Ausgang> {
+    befehl_laufen(id, befehl, Some(frist), None, protokoll).await
 }
 
 /// Einen Befehl ausführen und auf sein Ende warten.
@@ -295,20 +314,27 @@ pub async fn befehl_laufen(
     befehl: &Befehl,
     frist: Option<Duration>,
     abbruch: Option<Abbruch>,
+    protokoll: &Arc<Protokoll>,
 ) -> anyhow::Result<Ausgang> {
     tracing::info!(eintrag = %id, "Befehl: {}", maskieren(&befehl.zeile()));
-    let mut kommando = tokio::process::Command::new(&befehl.programm);
+    // Dieselbe Suche wie beim Start des Eintrags (Aufgabe 35).
+    let fund = crate::tools::fuer_eintrag(id, &befehl.programm, protokoll)?;
+    let mut kommando = tokio::process::Command::new(&fund.pfad);
     kommando
         .args(&befehl.argumente)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Kein Konsolenfenster (Windows): angemeldet wird im Browser, der
+    // Status-Befehl ist ein Hintergrundvorgang (Aufgabe 35, §5).
+    crate::hilfen::ohne_fenster(kommando.as_std_mut());
     // Dieselbe Whitelist wie bei den Werkzeugen (Paket 3).
     crate::laufzeit::umgebung_setzen(&mut kommando, &befehl.umgebung);
     let mut kind = kommando
         .spawn()
-        .with_context(|| format!("{} lässt sich nicht starten", befehl.programm))?;
+        // Nur der Programmname, nie der Pfad: die Meldung steht im Fenster.
+        .with_context(|| format!("{} lässt sich nicht starten", fund.name()))?;
 
     let aus_aufgabe = kind
         .stdout
@@ -340,7 +366,7 @@ pub async fn befehl_laufen(
                     let _ = kind.kill().await;
                     anyhow::bail!(
                         "{} antwortet nicht binnen {} s",
-                        befehl.programm,
+                        fund.name(),
                         frist.as_secs()
                     )
                 }
@@ -357,7 +383,7 @@ pub async fn befehl_laufen(
         }
         anyhow::bail!(
             "{} antwortet nicht binnen {} s",
-            befehl.programm,
+            fund.name(),
             frist.map(|frist| frist.as_secs()).unwrap_or_default()
         );
     };
@@ -416,13 +442,22 @@ fn kuerzen(zeile: &str) -> String {
 }
 
 /// Den Status-Befehl auswerten: Exit 0 = angemeldet, Exit 1 = abgemeldet,
-/// alles andere ist ein Fehler.
+/// Exit 3 = angemeldet, aber die Anmeldung läuft bald ab, alles andere ist ein
+/// Fehler.
+///
+/// Exit 3 ist eine **Zusage an das Werkzeug**, nicht an den Server: wer den
+/// Ablauf seines Tokens kennt, kann ihn melden, statt zu warten, bis der User
+/// mitten in der Arbeit abgemeldet wird. Ein Werkzeug, das ihn nicht kennt,
+/// meldet ihn nicht – dann bleibt es bei Exit 0.
 pub fn zustand_aus(ausgang: &Ausgang) -> AnmeldeZustand {
     match ausgang.code {
         Some(0) => AnmeldeZustand::Angemeldet {
             konto: erste_zeile(&ausgang.ausgabe),
         },
         Some(1) => AnmeldeZustand::Abgemeldet,
+        Some(3) => AnmeldeZustand::LaeuftAb {
+            konto: erste_zeile(&ausgang.ausgabe),
+        },
         Some(code) => AnmeldeZustand::Fehler {
             text: format!("Der Status endet mit Code {code}"),
         },
@@ -475,6 +510,13 @@ mod tests {
             AnmeldeZustand::Abgemeldet,
             "Exit 1 heißt abgemeldet, nicht Fehler"
         );
+        // Exit 3: angemeldet, läuft aber bald ab (Aufgabe 35, §5).
+        assert_eq!(
+            zustand_aus(&ausgang(Some(3), "test@beispiel.de\n")),
+            AnmeldeZustand::LaeuftAb {
+                konto: Some("test@beispiel.de".to_string())
+            }
+        );
         assert_eq!(
             zustand_aus(&ausgang(Some(7), "")),
             AnmeldeZustand::Fehler {
@@ -485,6 +527,14 @@ mod tests {
             zustand_aus(&ausgang(None, "")),
             AnmeldeZustand::Fehler { .. }
         ));
+    }
+
+    /// Die Prüfung der Anmeldung hat eine Frist von zehn Sekunden – kurz genug,
+    /// dass niemand auf ein Drehsymbol wartet (Aufgabe 35, §5).
+    #[test]
+    fn die_pruefung_hat_zehn_sekunden() {
+        assert_eq!(STATUS_FRIST, Duration::from_secs(10));
+        assert_eq!(Anmeldebefehl::Status.frist(), STATUS_FRIST);
     }
 
     fn feld(name: &str, quelle: quiver_domain::Quelle) -> quiver_domain::Feld {

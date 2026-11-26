@@ -12,6 +12,8 @@
       <string id="AutostartHelp">Starts mcp-quiver at sign-in in the background (tray). Takes precedence over the setting in the window.</string>
       <string id="UpdateHinweis">Update hint text</string>
       <string id="UpdateHinweisHelp">Text the client shows when a newer version is published. {version} is replaced by the version. Without it, “Version {version} is available via device management” applies.</string>
+      <string id="UpdateAngebot">Install updates itself</string>
+      <string id="UpdateAngebotHelp">Lets the client download and install an offered update itself. Off (0): only the notice; device management installs it. Without a value the default is on (task 39).</string>
     </stringTable>
     <presentationTable>
       <presentation id="ServerUrl">

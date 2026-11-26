@@ -201,6 +201,10 @@ checksums and the provenance still prove where the files came from.
   `%LOCALAPPDATA%\Programs\mcp-quiver`, with a start menu shortcut, an icon in
   *Apps & features* and an uninstall without administrator rights; plus the
   portable `.zip` with `quiver.exe` next to `LICENSE` and `README.md`.
+* **The packages carry no tools.** The client receives them from the server on
+  sign-in and keeps them up to date (task 37); the server ships the programs
+  per platform, built by the release of
+  [`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) (task 38).
 * Autostart is not part of any package: the client sets it up itself (launch
   agent, `HKCU\…\Run`, XDG autostart) when the user switches it on.
 

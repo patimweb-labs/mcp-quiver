@@ -123,7 +123,6 @@ for kante in 32 64 256; do
         "$baum/share/icons/hicolor/${kante}x${kante}/apps/de.weppelmann.mcp-quiver.png"
 done
 install -m644 LICENSE README.md "$baum/"
-
 tar -C "$dist" -czf "$dist/$name.tar.gz" "$name"
 
 # ---------------------------------------------------------------- .deb, .rpm
@@ -140,6 +139,8 @@ appimagetool_holen
 appdir="$dist/AppDir"
 rm -rf "$appdir"
 mkdir -p "$appdir/usr"
+# Nur, was der Baum wirklich hat: `bin` und `share`. Der Client bringt keine
+# Programme mehr mit (Aufgabe 37) – ein `lib` gibt es nicht.
 cp -R "$baum/bin" "$baum/share" "$appdir/usr/"
 # Der Text von `AppRun` soll genau so in der Datei stehen — deshalb einfache
 # Anführungszeichen: `$0`, `$@` und `$(…)` sind für die App gemeint, nicht für

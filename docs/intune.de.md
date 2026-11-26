@@ -90,6 +90,24 @@ meldet. Liegt eine Vorgabe vor, kommt der Text aus `UpdateHinweis` (Vorgabe:
 „Version X kommt über die Geräteverwaltung“). Die Verwaltung listet jedes Gerät,
 dessen Client älter ist — siehe [updates.de.md](updates.de.md).
 
+### Selbst-Update oder Geräteverwaltung
+
+Gibt es ein Paket für die Installation, bietet der Client zusätzlich **Jetzt
+aktualisieren** an: Er lädt das Paket von seinem eigenen Server, prüft Größe und
+SHA-256, startet die neue Fassung als `quiver --selbsttest` und tauscht erst
+dann. Das Profil (Einstellungen, Tresor, Geräte-Token, Anmeldungen der
+Werkzeuge) bleibt unberührt; laufende Werkzeuge werden vorher beendet, und der
+Client startet sich selbst neu.
+
+Für verwaltete Flotten ist das meist **nicht** gewünscht — die Version soll
+Intune gehören. Dafür *Update selbst einspielen* auf **aus** stellen
+(`UpdateAngebot=false`): Der Client zeigt dann nur den Hinweis, keinen Knopf.
+Die Vorgabe ist an.
+
+Das `.pkg` und das MSI passen zu beiden Wegen: Intune kann sie einspielen, und
+der Client nimmt dieselben Pakete (MSI je Benutzer, `.dmg` mit dem `.app`),
+wenn er es darf.
+
 ## Die Pakete vor dem Ausrollen prüfen
 
 ```bash

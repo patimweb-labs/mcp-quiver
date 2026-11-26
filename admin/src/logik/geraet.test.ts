@@ -53,6 +53,9 @@ describe("Eintrag-Zustand", () => {
         "Braucht Angaben",
       ],
       [{ zustand: "startet" }, "leise", "Startet …"],
+      // Nachtrag zu Aufgabe 37: dieselben Wörter wie auf der Karte im Client.
+      [{ zustand: "wird-geladen" }, "leise", "Wird vom Server geladen …"],
+      [{ zustand: "aktualisiert" }, "leise", "Aktualisiert"],
       [{ zustand: "fehler", text: "kaputt" }, "fehler", "Fehler: kaputt"],
     ];
     for (const [zustand, ton, text] of faelle) {

@@ -139,6 +139,35 @@ fn eine_plist_wird_gelesen() {
     );
 }
 
+/// Das Angebot (Aufgabe 39) ist ein eigener Schalter – in allen drei Formen.
+#[test]
+fn das_update_angebot_wird_gelesen() {
+    let json = aus_json(r#"{"UpdateAngebot":false}"#).bereinigen();
+    assert_eq!(json.update_angebot, Some(false));
+    assert!(json.verwaltet(), "ein Schalter ist eine Vorgabe");
+    // In JSON und plist ist es ein echter Schalter (true/false); Text wie
+    // „aus“ gilt nur in der Registry.
+    assert_eq!(aus_json(r#"{"UpdateAngebot":"aus"}"#).update_angebot, None);
+    // Unsinn wird verworfen und ändert nichts.
+    assert_eq!(
+        aus_json(r#"{"UpdateAngebot":"vielleicht"}"#).update_angebot,
+        None
+    );
+
+    let plist = aus_plist("<key>UpdateAngebot</key><false/><key>Autostart</key><true/>");
+    assert_eq!(plist.update_angebot, Some(false));
+    assert_eq!(plist.autostart, Some(true));
+
+    let mut werte = BTreeMap::new();
+    werte.insert(String::from("UpdateAngebot"), String::from("0"));
+    let registry = aus_werten(&werte);
+    assert_eq!(registry.update_angebot, Some(false));
+    assert_eq!(registry.autostart, None);
+
+    // Ohne Angabe gilt: das Angebot ist an (Vorgabe des Clients).
+    assert_eq!(Vorgaben::default().update_angebot, None);
+}
+
 #[test]
 fn registry_werte_werden_gelesen() {
     let mut werte = BTreeMap::new();

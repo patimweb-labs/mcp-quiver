@@ -123,6 +123,10 @@ impl EchterKern {
 }
 
 impl KernZugang for EchterKern {
+    fn tools_aktualisieren(&self) -> anyhow::Result<()> {
+        self.kern.tools_aktualisieren()
+    }
+
     fn ausfuehren(&self, aktion: Aktion) {
         let kern = self.kern.clone();
         let meldungen = self.meldungen.clone();
@@ -173,6 +177,7 @@ impl KernZugang for EchterKern {
                 }
                 Aktion::AgentEntfernen { id } => kern.agent_entfernen(&id).await,
                 Aktion::EintragAnmelden { eintrag } => kern.anmelden(&eintrag).await,
+                Aktion::AnmeldungPruefen { eintrag } => kern.anmeldung_pruefen(&eintrag).await,
                 Aktion::EintragAbmelden { eintrag } => kern.abmelden_eintrag(&eintrag).await,
                 Aktion::EintragEinrichten { eintrag } => kern.einrichten(&eintrag).await,
                 Aktion::ZugangSpeichern {
@@ -233,6 +238,10 @@ impl KernZugang for EchterKern {
                     kern.protokoll_fuer_agenten_setzen(an).await;
                     Ok(())
                 }
+                // Sofort beim Server nachfragen (Nachtrag zu Aufgabe 37).
+                Aktion::ToolsAktualisieren => kern.tools_aktualisieren(),
+                // „Erneut versuchen“ auf einer Karte (Nachtrag zu Aufgabe 37).
+                Aktion::EintragNeuVersuchen { eintrag } => kern.eintrag_neu_starten(&eintrag).await,
                 // Am Gerät abschalten (Aufgabe 19): speichert vor dem Schalten;
                 // scheitert das Speichern, bleibt alles, wie es war.
                 Aktion::EintragSchalten { eintrag, an } => {
@@ -248,6 +257,12 @@ impl KernZugang for EchterKern {
                 }
                 // Updates (Aufgabe 34): nur fragen und anzeigen.
                 Aktion::UpdatePruefen => kern.update_pruefen().await,
+                // Update anbieten und einspielen (Aufgabe 39).
+                Aktion::UpdateInstallieren => kern.update_installieren().await,
+                Aktion::UpdateSpaeter => {
+                    kern.update_spaeter();
+                    Ok(())
+                }
             };
             if let Err(fehler) = ergebnis {
                 meldungen

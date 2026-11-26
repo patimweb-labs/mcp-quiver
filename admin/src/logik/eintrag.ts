@@ -301,6 +301,31 @@ export function laufzeit_text(laufzeit: Laufzeit): string {
     : "Remote";
 }
 
+/**
+ * Ist der Befehl ein fester Pfad? Ein Name wie `quiver-devops` kommt vom
+ * Server und gilt auf jedem Gerät; `/usr/local/bin/x` oder
+ * `C:\Programme\x.exe` gibt es nur dort, wo genau dieser Pfad steht
+ * (Aufgabe 35/37).
+ */
+export function ist_fester_pfad(befehl: string): boolean {
+  const wert = befehl.trim();
+  // `/…` (macOS, Linux), `C:\…` und `C:/…` (Windows), `\\server\…` (UNC).
+  return /^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\])/.test(wert);
+}
+
+/**
+ * Die Warnung zum Befehl, sonst `null`. Sie hält niemanden auf — ein fester
+ * Pfad bleibt erlaubt —, sie sagt nur, für wie viele Geräte er gilt.
+ */
+export function pfad_warnung(befehl: string): string | null {
+  if (!ist_fester_pfad(befehl)) return null;
+  return (
+    "Fest eingetragener Pfad: Dieses Programm läuft nur auf Geräten, auf " +
+    "denen es genau dort liegt. Ein Name wie quiver-devops kommt vom Server " +
+    "und gilt auf jedem Gerät."
+  );
+}
+
 /** Eine Feldart für den Versand vorbereiten: Optionen ohne Ränder, leere weg. */
 function feldart_saeubern(art: FeldArt): FeldArt {
   if (typeof art === "string") return art;

@@ -40,10 +40,12 @@ Intune → **Devices** → **Configuration** → **Create** → **Custom** (Wind
     in the window,
   * *Start at sign-in*: on or off,
   * *Update hint text*: e.g. `Version {version} is available via device
-    management`.
+    management`,
+  * *Install updates itself*: off, if the client must **not** offer the update
+    (then only the hint; Intune installs it).
 
 The values land in `HKLM\Software\Policies\mcp-quiver`; quiver only reads them.
-No ADMX? A single registry template with the same three values does the same.
+No ADMX? A single registry template with the same four values does the same.
 
 ## macOS
 
@@ -86,6 +88,22 @@ The client shows a quiet hint when the server reports a newer version. With a
 policy in place the text comes from `UpdateHinweis` (default: "Version X comes
 via device management"). The administration lists every device whose client is
 older — see [updates.md](updates.md).
+
+### Self-update or device management
+
+If a package for the installation is available, the client also offers **Update
+now**: it downloads the package from its own server, checks size and SHA-256,
+starts the new version as `quiver --selbsttest` and only then swaps it. The
+profile (settings, vault, device token, tool sign-ins) stays untouched; the
+running tools are stopped first, and the client restarts itself.
+
+For managed fleets that is usually **not** wanted — Intune should own the
+version. Set *Install updates itself* to **off** (`UpdateAngebot=false`): the
+client then shows the hint only, no button. The default is on.
+
+The `.pkg` and the MSI fit both ways: Intune can install them, and the client
+uses the same packages (MSI per user, `.dmg` with the `.app`) when it is allowed
+to.
 
 ## Checking the packages before rollout
 

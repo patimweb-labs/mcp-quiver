@@ -11,6 +11,7 @@
 //! | `ServerUrl` | `HKLM\Software\Policies\mcp-quiver` | verwaltete Einstellungen `de.weppelmann.mcp-quiver` | `/etc/mcp-quiver/vorgaben.json` |
 //! | `Autostart` | dito (DWORD 1/0) | dito | dito |
 //! | `UpdateHinweis` | dito | dito | dito |
+//! | `UpdateAngebot` (an/aus, standard an) | dito | dito | dito |
 //!
 //! Gelesen wird **nur** der verwaltete Bereich: unter macOS ausschließlich
 //! `/Library/Managed Preferences/…` (nicht die Einstellungen des Benutzers),
@@ -56,12 +57,24 @@ pub struct Vorgaben {
         skip_serializing_if = "Option::is_none"
     )]
     pub update_hinweis: Option<String>,
+    /// Darf der Client das Update **anbieten** (Knopf „Jetzt aktualisieren“)?
+    /// `Some(false)` heißt: nur der Hinweis, kein Tausch (Aufgabe 39).
+    /// Standard: an.
+    #[serde(
+        rename = "UpdateAngebot",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub update_angebot: Option<bool>,
 }
 
 impl Vorgaben {
     /// Ist nichts vorgegeben?
     pub fn ist_leer(&self) -> bool {
-        self.server_url.is_none() && self.autostart.is_none() && self.update_hinweis.is_none()
+        self.server_url.is_none()
+            && self.autostart.is_none()
+            && self.update_hinweis.is_none()
+            && self.update_angebot.is_none()
     }
 
     /// Wird dieses Gerät über die Geräteverwaltung versorgt?
@@ -162,6 +175,7 @@ pub fn aus_plist(text: &str) -> Vorgaben {
         server_url: wert("ServerUrl"),
         autostart: wert("Autostart").and_then(|wert| bool_lesen(&wert)),
         update_hinweis: wert("UpdateHinweis"),
+        update_angebot: wert("UpdateAngebot").and_then(|wert| bool_lesen(&wert)),
     }
 }
 
@@ -174,6 +188,7 @@ pub fn aus_werten(werte: &BTreeMap<String, String>) -> Vorgaben {
         server_url: werte.get("ServerUrl").cloned(),
         autostart: werte.get("Autostart").and_then(|wert| bool_lesen(wert)),
         update_hinweis: werte.get("UpdateHinweis").cloned(),
+        update_angebot: werte.get("UpdateAngebot").and_then(|wert| bool_lesen(wert)),
     }
 }
 

@@ -8,10 +8,12 @@
   Bereich (`/Library/Managed Preferences/de.weppelmann.mcp-quiver.plist`),
   nie die Einstellungen des Benutzers.
 
-  Die drei Felder:
+  Die Felder:
     ServerUrl      feste Server-Adresse (im Fenster nicht änderbar)
     Autostart      beim Anmelden starten (true/false)
     UpdateHinweis  Text des Update-Hinweises; {version} wird ersetzt
+    UpdateAngebot  darf der Client das Update selbst einspielen? (false =
+                   nur Hinweis; Aufgabe 39)
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -44,6 +46,8 @@
 								<true/>
 								<key>UpdateHinweis</key>
 								<string>Version {version} kommt über die Geräteverwaltung</string>
+								<key>UpdateAngebot</key>
+								<false/>
 							</dict>
 						</dict>
 					</array>
@@ -62,7 +66,7 @@
 	<key>PayloadDisplayName</key>
 	<string>mcp-quiver – Vorgaben</string>
 	<key>PayloadDescription</key>
-	<string>Feste Server-Adresse, Autostart und Update-Hinweis für mcp-quiver.</string>
+	<string>Feste Server-Adresse, Autostart, Update-Hinweis und Update-Angebot für mcp-quiver.</string>
 	<key>PayloadOrganization</key>
 	<string>Beispielfirma</string>
 	<key>PayloadScope</key>

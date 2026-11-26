@@ -181,6 +181,41 @@ fn abgleich_reihenfolge() {
     assert_eq!(abgleichen(&soll, &ist), [Aktion::Neustarten(mail)]);
 }
 
+/// Kommt ein Programm dazu, ändert es sich oder fällt es weg, startet der
+/// Eintrag neu – auch wenn seine Konfiguration gleich bleibt.
+#[test]
+fn ein_anderes_programm_ist_ein_neustart() {
+    let (g, gr, s, e) = welt(vec![satz("a", 0, &[("tenant", "x")])]);
+    let mut soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    soll.eintraege[0].eintrag.laufzeit = Laufzeit::Stdio {
+        befehl: "quiver-mail".into(),
+        argumente: Vec::new(),
+        umgebung: Werte::new(),
+    };
+    let id = soll.eintraege[0].eintrag.id.clone();
+    let mit = |sha: &str| {
+        soll.clone().mit_programmen(vec![Programm {
+            name: "quiver-mail".into(),
+            version: "1".into(),
+            groesse: 1,
+            sha256: sha.repeat(64),
+            system: "linux".into(),
+            arch: "x64".into(),
+        }])
+    };
+    let laeuft =
+        |soll: &Soll| BTreeMap::from([(id.clone(), soll.fingerabdruck(&soll.eintraege[0]))]);
+    let neu = [Aktion::Neustarten(id.clone())];
+    assert_eq!(abgleichen(&mit("a"), &laeuft(&soll)), neu, "kommt dazu");
+    assert_eq!(
+        abgleichen(&mit("b"), &laeuft(&mit("a"))),
+        neu,
+        "ändert sich"
+    );
+    assert_eq!(abgleichen(&soll, &laeuft(&mit("a"))), neu, "fällt weg");
+    assert_eq!(abgleichen(&mit("a"), &laeuft(&mit("a"))), []);
+}
+
 #[test]
 fn revision_ist_stabil_und_aendert_sich() {
     let (g, gr, s, e) = welt(vec![satz("a", 0, &[("tenant", "x")])]);
@@ -331,4 +366,144 @@ fn kennungen_sind_eng_und_reserviert() {
     assert!(kennung_fehler("mit__trenner")
         .unwrap_or_default()
         .contains("__"));
+}
+
+/// Aufgabe 37: Nur die eigenen Programme werden verteilt – fremde Läufer
+/// (`npx`, `uvx`, `docker`) und Pfade laufen auf dem Gerät wie bisher.
+#[test]
+fn nur_eigene_namen_werden_verteilt() {
+    for verteilt in ["quiver-devops", "quiver-m365", "quiver-ssh_x"] {
+        assert!(ist_verteilt(verteilt), "{verteilt}");
+    }
+    for fremd in [
+        "npx",
+        "uvx",
+        "docker",
+        "quiver.devops",
+        "/usr/lib/mcp-quiver/tools/quiver-devops",
+        "C:\\Programme\\quiver-devops.exe",
+        "quiver-",
+        "",
+    ] {
+        assert!(!ist_verteilt(fremd), "{fremd}");
+    }
+}
+
+/// Aufgabe 37: Der **Name** eines verteilten Programms kommt aus dem Befehl –
+/// als bloßer Name oder als Dateiname eines Pfades, ohne `.exe`. So bekommt
+/// auch ein Altbestand mit festem Pfad sein Programm, und Server und Client
+/// urteilen gleich.
+#[test]
+fn der_programmname_kommt_aus_dem_befehl() {
+    for (befehl, name) in [
+        ("quiver-devops", "quiver-devops"),
+        ("  quiver-devops  ", "quiver-devops"),
+        ("quiver-devops.exe", "quiver-devops"),
+        ("/pfad/auf/anderem/rechner/quiver-devops", "quiver-devops"),
+        ("/usr/lib/mcp-quiver/tools/quiver-m365", "quiver-m365"),
+        (r"C:\Programme\mcp-quiver\quiver-m365.exe", "quiver-m365"),
+        ("relativ/quiver-ssh", "quiver-ssh"),
+    ] {
+        assert_eq!(
+            verteiltes_programm(befehl).as_deref(),
+            Some(name),
+            "{befehl}"
+        );
+    }
+    // Fremde Programme bleiben fremd – auch als Pfad.
+    for fremd in [
+        "npx",
+        "uvx",
+        "docker",
+        "/opt/eigenes-programm",
+        "/pfad/zu/quiver-tools/npx",
+        "quiver-",
+        "",
+        "   ",
+        // Ein Name mit Leerzeichen am Rand ist **kein** Programmname (er wird
+        // Teil eines Ordners). Im Befehl eines Eintrags sind Leerzeichen
+        // dagegen harmlos und werden abgeschnitten.
+    ] {
+        assert_eq!(verteiltes_programm(fremd), None, "{fremd}");
+    }
+    for mit_rand in ["quiver-devops ", " quiver-devops"] {
+        assert!(!ist_verteilt(mit_rand), "{mit_rand}");
+    }
+}
+
+/// Aufgabe 37: Ein Programm gehört in die Revision. Ändert sich seine
+/// Prüfsumme, ist das eine neue Revision – sonst fragte kein Client nach.
+#[test]
+fn programme_aendern_die_revision() {
+    let geraet = Geraet {
+        id: GeraetId::neu("d1"),
+        name: "Rechner".into(),
+        gruppen: vec![GruppeId::neu("team")],
+        gesperrt: false,
+    };
+    let e = eintrag("echo");
+    let gruppen = vec![Gruppe {
+        id: GruppeId::neu("team"),
+        titel: "Team".into(),
+        saetze: vec![SatzId::neu("basis")],
+        entra: Vec::new(),
+    }];
+    let saetze = vec![Satz {
+        id: SatzId::neu("basis"),
+        titel: "Basis".into(),
+        prioritaet: 0,
+        eintraege: vec![SatzEintrag {
+            eintrag: e.id.clone(),
+            werte: [("tenant".to_string(), "acme".to_string())].into(),
+        }],
+    }];
+    let soll = soll_berechnen(&geraet, &gruppen, &saetze, &[e]).expect("Soll");
+    let programm = |sha: &str| Programm {
+        name: "quiver-devops".into(),
+        version: "1.0.0".into(),
+        groesse: 10,
+        sha256: sha.into(),
+        system: "linux".into(),
+        arch: "x64".into(),
+    };
+    let ohne = soll.clone().mit_programmen(Vec::new());
+    let mit = soll.clone().mit_programmen(vec![programm("aa")]);
+    let anders = soll.clone().mit_programmen(vec![programm("bb")]);
+    assert_ne!(soll.revision, mit.revision);
+    assert_ne!(mit.revision, anders.revision);
+    assert_eq!(ohne.programme.len(), 0);
+    assert!(mit.programm("quiver-devops").is_some());
+    assert!(mit.programm("quiver-gibtsnicht").is_none());
+    // Ein Soll ohne Programme ist lesbar (älterer Server).
+    let alt: Soll = serde_json::from_str(r#"{"revision":"r","eintraege":[]}"#).unwrap();
+    assert!(alt.programme.is_empty());
+}
+
+/// Aufgabe 37: System und Architektur kommen geprüft aus der Abfrage – kein
+/// Wert aus dem Netz wird je ein Ordnername.
+#[test]
+fn system_und_architektur_sind_eng() {
+    let dieses = System::dieses();
+    assert!(!dieses.system.is_empty());
+    assert!(!dieses.arch.is_empty());
+    assert_eq!(
+        System::aus_teilen(" Linux ", "X64"),
+        Some(System {
+            system: "linux".into(),
+            arch: "x64".into()
+        })
+    );
+    assert_eq!(
+        System::aus_teilen("macos", "arm64").map(|s| s.arch),
+        Some("arm64".into())
+    );
+    for schlecht in [
+        ("linux", "x86"),
+        ("../../etc", "x64"),
+        ("linux/../..", "x64"),
+        ("", ""),
+        ("windows", "amd64"),
+    ] {
+        assert_eq!(System::aus_teilen(schlecht.0, schlecht.1), None);
+    }
 }

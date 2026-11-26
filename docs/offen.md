@@ -2,6 +2,13 @@
 
 Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 
+## Tests
+- [ ] `instanz::tests` (Fenster) hängt an zwei Zeitfenstern (500 ms Annahme,
+      2 s Verbindung). Unter schwerer Last des Rechners (viele Testprozesse
+      gleichzeitig) ist `zweite_instanz_weckt_die_erste` gelegentlich rot,
+      einzeln und in ruhigen Läufen grün. Ein fester Ablauf ohne Netz und Zeit
+      (Kanal statt Port) wäre die ehrliche Lösung.
+
 ## Server
 - [ ] Die Abschlussseite des Browser-Lauschers ist schlicht und nur deutsch;
       die Fenstertexte sind de/en. Die Seite verrät keinen Code, aber sie folgt
@@ -183,3 +190,71 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       CI-Lauf auf einem macOS-Läufer.
 - [ ] Die stille MSI-Installation und das Update sind nur im CI-Lauf auf einem
       Windows-Läufer geprüft, nicht auf einem echten verwalteten Rechner.
+
+## Update durch den Client (Aufgabe 39)
+- [ ] Der Tausch ist je Art im Testordner geprüft (ZIP, `tar.gz`, AppImage und
+      `.app`; macOS-Teil nur auf macOS). Auf einem **echten** Gerät ist er
+      nicht gelaufen: kein Windows-Rechner, kein Gerät mit MSI, kein
+      AppImage-Start. Der erste Lauf auf einem wirklichen Rechner steht aus.
+- [ ] Für das MSI gibt es **keinen Selbsttest** vor dem Tausch: es ist ein
+      Installationsprogramm. Windows prüft es selbst (`/qn`,
+      `MajorUpgrade`, Restart Manager); die neue Fassung macht ihren
+      `--selbsttest` erst beim nächsten Start.
+- [ ] Der Rückfall auf die alte Fassung greift beim **zweiten** Start ohne
+      Beweis (Marke im Profil). Kommt die neue Fassung über den Start des
+      Kerns hinaus und scheitert erst später, bleibt sie stehen; ein
+      überwachender Helferprozess fehlt bewusst (ADR 0005, „Verworfene Wege“).
+- [ ] Alte Pakete unter `<daten>/updates/<version>/` werden **nicht**
+      aufgeräumt. Das kostet Platz und braucht einen Lauf, den es noch nicht
+      gibt.
+- [ ] Der Selbsttest wird nur gegen eine echte Fassung geprüft, nicht gegen
+      eine, die absichtlich hängt. Die Frist (`SELBSTTEST_FRIST`, 60 s) ist
+      deshalb nur im Code belegt.
+- [ ] Die Client-Integration (`crates/client/tests/update.rs`) läuft nur unter
+      Unix: der Selbsttest startet die neue Fassung als eigenes Programm, und
+      die Attrappe dafür ist ein Shell-Skript. Unter Windows decken die
+      Einheitstests des Tauschs und der CI-Lauf den Weg ab.
+- [ ] Ist das Programm-Verzeichnis schreibbar, aber das Umbenennen scheitert
+      (etwa weil ein Virenscanner die Datei hält), bleibt die alte Fassung an
+      ihrem Platz und die Meldung nennt den Grund. Ein erneuter Versuch ist
+      Handarbeit.
+
+## Werkzeuge vom Server (Aufgabe 37)
+- [ ] End-to-End **nicht** geprüft: „Platte voll“ (ENOSPC beim Schreiben der
+      Zwischendatei).
+- [ ] `QUIVER_TOOLS_DIR` zeigt auf einen Entwicklungsordner mit flach
+      liegenden Programmen; ein ausgecheckter Stand wird nicht gegen eine
+      Prüfsumme geprüft (so gewollt, aber es steht nirgends im Fenster).
+- [ ] Die Verwaltung zeigt die Programme und die je Gerät laufenden Fassungen
+      im Überblick; ein Filter „welcher Eintrag braucht ein Programm, das
+      fehlt?“ fehlt.
+- [ ] „Weniger Bewegung“ ist über egui genähert: dreht die Animation nicht
+      (`animation_time` = 0), steht der Text ohne Ring. Eine Plattform-Anfrage
+      (macOS/Windows-Einstellung) liest der Client nicht.
+- [ ] Laufende Werkzeugaufrufe werden vor einem Programmtausch bis zu 10 s
+      abgewartet; danach wird getauscht und der Grund steht im Protokoll des
+      Eintrags. Ein Hinweis im Fenster („wartet auf 2 laufende Aufrufe“) fehlt,
+      und ein Test dafür gibt es nicht (er bräuchte einen hängenden Aufruf).
+
+## Release der Werkzeuge (Aufgabe 38, anderes Repo)
+- [ ] Die Fassung der Programme im Abbild steht im `Dockerfile`
+      (`QUIVER_TOOLS_VERSION`) und wird von Hand angehoben.
+
+## Anmeldung eines Tools (Aufgabe 35, §5)
+- [ ] Der Weg auf einem echten Windows-Gerät (Konsolenfenster, Standardbrowser,
+      Loopback hinter der Firewall, Tresor unter `%APPDATA%`) ist hier nicht
+      nachstellbar (macOS). Geprüft ist, was prüfbar ist: `CREATE_NO_WINDOW` für
+      jeden Kindprozess, Binden nur an `127.0.0.1`, und die Ablage der
+      Programme unter `%APPDATA%` (nur der Benutzer). Ein Lauf auf Windows
+      steht aus.
+- [ ] **Exit 3 („läuft bald ab“) kennt noch kein Werkzeug.** Der Client wertet
+      ihn aus und die Karte zeigt den Zustand; `quiver-m365` und `quiver-zep`
+      melden ihn bisher nicht. Bis dahin bleibt es bei „angemeldet“ und einem
+      Fehlschlag mitten in der Arbeit.
+- [ ] Die 10-Sekunden-Frist der Prüfung gilt auch auf einem sehr langsamen Gerät
+      (Netz im Status-Befehl). Wird sie zu knapp, ist sie eine Zahl in
+      `crates/client/src/anmeldung.rs` (`STATUS_FRIST`), kein Schalter.
+- [ ] Der Tresor wartet fair, aber weiter **innerhalb** eines Aufrufs: gibt ein
+      fremder Prozess die Sperre 10 s lang nicht frei, meldet der Client
+      „gerade gesperrt“. Ein Wiederholen von selbst gibt es nicht — der Benutzer
+      stößt es an.

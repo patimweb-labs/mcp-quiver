@@ -5,14 +5,15 @@
 //! welche Farbe ein Zustand hat, was in einem Feld steht, welche Schnipsel
 //! ein Agent bekommt. Ohne egui, mit Tests — die Ansichten rufen nur hier auf.
 
+use std::time::Duration;
+
 use quiver_client::protokoll::{Status, Zeitraum};
 use quiver_client::{
     protokoll, AnmeldeZustand, Aufruf, EinrichtZustand, EintragSicht, Modell, Verbindung,
     VorschauArt, VorschauEintrag, ZugaengeSicht, ZugangSicht, Zusammenfassung,
 };
 use quiver_domain::{
-    link_aufloesen, zugangsname_gueltig, EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, Quelle,
-    Werte,
+    link_aufloesen, zugangsname_gueltig, EintragId, Feld, FeldArt, FeldLink, Quelle, Werte,
 };
 use quiver_protocol::EintragZustand;
 
@@ -69,7 +70,9 @@ pub fn zustand_ton(zustand: &EintragZustand) -> Ton {
     match zustand {
         EintragZustand::Laeuft { .. } => Ton::Gut,
         EintragZustand::WartetAufWerte { .. } => Ton::Warnung,
-        EintragZustand::Startet => Ton::Leise,
+        EintragZustand::Startet | EintragZustand::WirdGeladen | EintragZustand::Aktualisiert => {
+            Ton::Leise
+        }
         EintragZustand::AmGeraetAus | EintragZustand::Unbekannt => Ton::Blass,
         EintragZustand::Fehler { .. } => Ton::Fehler,
     }
@@ -85,9 +88,109 @@ pub fn zustand_text(sprache: Sprache, zustand: &EintragZustand) -> String {
         }
         EintragZustand::WartetAufWerte { .. } => t(sprache, "tools.wartet"),
         EintragZustand::Startet => t(sprache, "tools.startet"),
+        EintragZustand::WirdGeladen => t(sprache, "tools.wird_geladen"),
+        EintragZustand::Aktualisiert => t(sprache, "tools.aktualisiert"),
         EintragZustand::AmGeraetAus => t(sprache, "tools.abgeschaltet"),
         EintragZustand::Unbekannt => t(sprache, "tools.unbekannt"),
         EintragZustand::Fehler { .. } => t(sprache, "tools.fehler"),
+    }
+}
+
+/// Der Text der Fortschrittsanzeige am Kopf der Werkzeugseite – `None`, wenn
+/// nichts zu zeigen ist (Nachtrag zu Aufgabe 37).
+///
+/// Was kürzer als [`FLACKER`] dauert, wird nicht gezeigt; „Alles aktuell“
+/// verschwindet nach [`KURZ`] von selbst.
+pub fn fortschritt_text(
+    sprache: Sprache,
+    fortschritt: &quiver_client::Fortschritt,
+    alter: Duration,
+) -> Option<String> {
+    use quiver_client::Fortschritt;
+    match fortschritt {
+        Fortschritt::Ruhe => None,
+        Fortschritt::Verbindet => {
+            (alter >= FLACKER).then(|| t(sprache, "tools.fortschritt_verbindet"))
+        }
+        Fortschritt::Laedt { fertig, gesamt } => {
+            (alter >= FLACKER).then(|| tf(sprache, "tools.fortschritt_laedt", &[fertig, gesamt]))
+        }
+        Fortschritt::Startet => (alter >= FLACKER).then(|| t(sprache, "tools.fortschritt_startet")),
+        Fortschritt::Fertig { geaendert: 0 } => {
+            (alter < KURZ).then(|| t(sprache, "tools.fortschritt_aktuell"))
+        }
+        Fortschritt::Fertig { geaendert } => {
+            (alter < KURZ).then(|| tf(sprache, "tools.fortschritt_geaendert", &[geaendert]))
+        }
+    }
+}
+
+/// Dreht sich dabei ein Ring? (Nein bei „Alles aktuell“ und bei Ruhe.)
+pub fn fortschritt_dreht(fortschritt: &quiver_client::Fortschritt) -> bool {
+    use quiver_client::Fortschritt;
+    matches!(
+        fortschritt,
+        Fortschritt::Verbindet | Fortschritt::Laedt { .. } | Fortschritt::Startet
+    )
+}
+
+// ------------------------------------------------- Update (Aufgabe 39)
+
+/// Was gerade beim Aktualisieren geschieht – mit Anteil, wenn es einen gibt.
+pub fn update_schritt_text(
+    sprache: Sprache,
+    schritt: quiver_client::update::UpdateSchritt,
+    anteil: Option<u8>,
+) -> String {
+    use quiver_client::update::UpdateSchritt;
+    match schritt {
+        UpdateSchritt::Laedt => match anteil {
+            Some(anteil) => tf(sprache, "update.laedt_anteil", &[&anteil]),
+            None => t(sprache, "update.laedt"),
+        },
+        UpdateSchritt::Prueft => t(sprache, "update.prueft"),
+        UpdateSchritt::Tauscht => t(sprache, "update.tauscht"),
+    }
+}
+
+/// „Neue Version X ist eingespielt – quiver startet neu.“
+pub fn update_getauscht_text(sprache: Sprache, version: &str) -> String {
+    tf(sprache, "update.getauscht", &[&version])
+}
+
+/// Warum es keinen Knopf gibt – als Satz.
+pub fn angebot_grund_text(sprache: Sprache, grund: quiver_client::update::AngebotGrund) -> String {
+    use quiver_client::update::AngebotGrund;
+    match grund {
+        AngebotGrund::Vorgabe => t(sprache, "update.grund.vorgabe"),
+        AngebotGrund::KeinSchreibrecht => t(sprache, "update.grund.kein_schreibrecht"),
+        AngebotGrund::BrauchtRechte => t(sprache, "update.grund.braucht_rechte"),
+        AngebotGrund::KeinPaket => t(sprache, "update.grund.kein_paket"),
+        AngebotGrund::Unbekannt => t(sprache, "update.grund.unbekannt"),
+    }
+}
+
+/// So kurz darf etwas dauern, ohne gezeigt zu werden (kein Flackern).
+pub const FLACKER: Duration = Duration::from_millis(300);
+/// So lange steht „Alles aktuell“ da.
+pub const KURZ: Duration = Duration::from_secs(4);
+
+/// Lädt oder aktualisiert dieser Eintrag gerade sein Programm? Dann dreht sich
+/// auf der Karte ein Ring (Nachtrag zu Aufgabe 37).
+pub fn karte_dreht(zustand: &EintragZustand) -> bool {
+    matches!(
+        zustand,
+        EintragZustand::WirdGeladen | EintragZustand::Aktualisiert
+    )
+}
+
+/// Der Text auf der Karte während des Ladens – mit Anteil, wenn er bekannt ist.
+pub fn laden_text(sprache: Sprache, zustand: &EintragZustand, anteil: Option<u8>) -> String {
+    match (zustand, anteil) {
+        (EintragZustand::WirdGeladen, Some(prozent)) => {
+            tf(sprache, "tools.wird_geladen_anteil", &[&prozent])
+        }
+        _ => zustand_text(sprache, zustand),
     }
 }
 
@@ -111,12 +214,13 @@ pub fn fehlertext(zustand: &EintragZustand) -> Option<&str> {
 /// Welcher Knopf zur Anmeldung gehört.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnmeldeKnopf {
-    /// Nichts zu tun – die Anmeldung läuft gerade.
+    /// Nichts zu tun – die Anmeldung läuft oder wird gerade geprüft.
     Keiner,
     /// „Anmelden“: der User löst sie im Fenster aus, nie ein Agent.
     Anmelden,
-    /// „Erneut versuchen“ nach einem Fehler.
-    Erneut,
+    /// „Erneut prüfen“ nach einer fehlgeschlagenen Prüfung: derselbe
+    /// Status-Befehl noch einmal, ohne Browser.
+    Pruefen,
     /// „Abmelden“ – mit Rückfrage.
     Abmelden,
 }
@@ -129,16 +233,26 @@ pub struct AnmeldeZeile {
     pub knopf: AnmeldeKnopf,
 }
 
-/// Die Anmeldezeile eines Eintrags (Aufgabe 10): abgemeldet und unbekannt
-/// warnen, „läuft“ ist leise, angemeldet ist gut, ein Fehler zeigt seinen Text.
+/// Die Anmeldezeile eines Eintrags (Aufgabe 10, 35 §5).
+///
+/// Fünf Zustände, fünf Sätze, und jeder Knopf hat **eine** benannte Wirkung:
+/// „nicht angemeldet“ → „Anmelden“, „Prüfung läuft“ → kein Knopf (mit
+/// Drehsymbol), „läuft ab“ → „Anmelden“, „angemeldet“ → „Abmelden“,
+/// „fehlgeschlagen“ mit dem Grund → „Erneut prüfen“.
 pub fn anmeldung_zeile(sprache: Sprache, zustand: &AnmeldeZustand) -> AnmeldeZeile {
-    let warnung = AnmeldeZeile {
-        ton: Ton::Warnung,
-        text: t(sprache, "anmeldung.noetig"),
-        knopf: AnmeldeKnopf::Anmelden,
-    };
     match zustand {
-        AnmeldeZustand::Unbekannt | AnmeldeZustand::Abgemeldet => warnung,
+        AnmeldeZustand::Unbekannt | AnmeldeZustand::Abgemeldet => AnmeldeZeile {
+            ton: Ton::Warnung,
+            text: t(sprache, "anmeldung.noetig"),
+            knopf: AnmeldeKnopf::Anmelden,
+        },
+        // Die Prüfung läuft: Drehsymbol, kein Knopf. Sie hat eine Frist
+        // (10 s), danach steht ein Satz und „Erneut prüfen“ da.
+        AnmeldeZustand::Pruefe => AnmeldeZeile {
+            ton: Ton::Leise,
+            text: t(sprache, "anmeldung.pruefe"),
+            knopf: AnmeldeKnopf::Keiner,
+        },
         AnmeldeZustand::Laeuft => AnmeldeZeile {
             ton: Ton::Leise,
             text: t(sprache, "anmeldung.laeuft"),
@@ -152,12 +266,55 @@ pub fn anmeldung_zeile(sprache: Sprache, zustand: &AnmeldeZustand) -> AnmeldeZei
             },
             knopf: AnmeldeKnopf::Abmelden,
         },
+        AnmeldeZustand::LaeuftAb { konto } => AnmeldeZeile {
+            ton: Ton::Warnung,
+            text: match konto {
+                Some(konto) => tf(sprache, "anmeldung.laeuft_ab_mit", &[konto]),
+                None => t(sprache, "anmeldung.laeuft_ab"),
+            },
+            knopf: AnmeldeKnopf::Anmelden,
+        },
         AnmeldeZustand::Fehler { text } => AnmeldeZeile {
             ton: Ton::Fehler,
             text: text.clone(),
-            knopf: AnmeldeKnopf::Erneut,
+            knopf: AnmeldeKnopf::Pruefen,
         },
     }
+}
+
+/// Ist das eine laufende Prüfung? Dann gehört ein Drehsymbol in die Zeile
+/// statt eines Punktes.
+pub fn dreht_sich(zustand: &AnmeldeZustand) -> bool {
+    matches!(zustand, AnmeldeZustand::Pruefe)
+}
+
+/// Welcher Knopf auf der Karte steht, um Angaben zu bearbeiten (Aufgabe 35,
+/// §5): **einer**, nie beide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kartenknopf {
+    /// Nichts zu bearbeiten: kein Knopf.
+    Keiner,
+    /// „Angaben ergänzen“ – Pflichtangaben fehlen; der Stift entfällt.
+    AngabenErgaenzen,
+    /// Der Stift, Hinweis „Bearbeiten“.
+    Bearbeiten,
+}
+
+/// Was die Karte anbietet, um Angaben zu ändern.
+///
+/// Fehlen Pflichtangaben, gibt es nur „Angaben ergänzen“; der Stift öffnete
+/// dasselbe und wäre der zweite Weg zum selben Ziel. Sind sie da, gibt es nur
+/// den Stift. Gibt es nichts einzutragen (etwa ein Eintrag, der nur eine
+/// Zugangsliste führt), gibt es auch keinen Stift: „… hinzufügen“ führt zur
+/// Liste.
+pub fn kartenknopf(eintrag: &EintragSicht) -> Kartenknopf {
+    if matches!(eintrag.zustand, EintragZustand::WartetAufWerte { .. }) {
+        return Kartenknopf::AngabenErgaenzen;
+    }
+    if eintrag.felder.is_empty() {
+        return Kartenknopf::Keiner;
+    }
+    Kartenknopf::Bearbeiten
 }
 
 /// Welcher Knopf zur Einrichtung gehört (Aufgabe 11).
@@ -214,6 +371,8 @@ pub enum TrayEintrag {
     Zustand(String),
     /// „Fenster öffnen".
     Zeigen(String),
+    /// „Tools aktualisieren" (Nachtrag zu Aufgabe 37).
+    Aktualisieren(String),
     /// „Beim Anmelden starten" mit Häkchen.
     Autostart {
         text: String,
@@ -258,14 +417,32 @@ pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
             } else {
                 tf(sprache, "tray.agenten", &[&agenten])
             };
-            format!(
+            let zusatz = tray_fortschritt(modell, sprache);
+            let bisher = format!(
                 "{} · {} · {agenten}",
                 t(sprache, "tray.verbunden"),
                 tf(sprache, "tray.tools", &[&tools])
-            )
+            );
+            match zusatz {
+                Some(zusatz) => format!("{bisher} · {zusatz}"),
+                None => bisher,
+            }
         }
     };
     format!("{update}{zustand}")
+}
+
+/// Der kurze Text im Tray, solange etwas läuft (Nachtrag zu Aufgabe 37):
+/// „Lädt 3 von 12", „Startet …", „Alles aktuell".
+pub fn tray_fortschritt(modell: &Modell, sprache: Sprache) -> Option<String> {
+    use quiver_client::Fortschritt;
+    match &modell.fortschritt {
+        Fortschritt::Ruhe | Fortschritt::Verbindet => None,
+        Fortschritt::Laedt { fertig, gesamt } => Some(tf(sprache, "tray.laedt", &[fertig, gesamt])),
+        Fortschritt::Startet => Some(t(sprache, "tray.startet")),
+        Fortschritt::Fertig { geaendert: 0 } => Some(t(sprache, "tray.aktuell")),
+        Fortschritt::Fertig { geaendert } => Some(tf(sprache, "tray.aktualisiert", &[geaendert])),
+    }
 }
 
 /// Das Tray-Menü als Daten — reine Funktion über dem Modell. Die Reihenfolge
@@ -278,6 +455,7 @@ pub fn tray_menu(modell: &Modell, autostart: bool, sprache: Sprache) -> Vec<Tray
     vec![
         TrayEintrag::Zustand(tray_zeile(modell, sprache)),
         TrayEintrag::Zeigen(t(sprache, "tray.fenster")),
+        TrayEintrag::Aktualisieren(t(sprache, "tools.aktualisieren")),
         TrayEintrag::Autostart {
             text: t(sprache, "tray.autostart"),
             an: autostart_an,
@@ -294,6 +472,9 @@ pub struct Argumente {
     pub hintergrund: bool,
     /// `--headless`: nur der Kern, ohne Fenster und ohne Tray.
     pub kopflos: bool,
+    /// `--selbsttest` (Aufgabe 39): nur prüfen, dass diese Fassung startet –
+    /// ohne Fenster, ohne Profil. Exit 0 heißt: in Ordnung.
+    pub selbsttest: bool,
 }
 
 /// Die Argumente lesen. Unbekanntes wird nicht bemängelt — eine Anwendung mit
@@ -304,6 +485,7 @@ pub fn argumente<S: AsRef<str>>(argumente: impl IntoIterator<Item = S>) -> Argum
         match argument.as_ref() {
             "--hintergrund" => werte.hintergrund = true,
             "--headless" => werte.kopflos = true,
+            "--selbsttest" => werte.selbsttest = true,
             _ => {}
         }
     }
@@ -346,22 +528,6 @@ pub fn grund_text(sprache: Sprache, grund: quiver_protocol::AnmeldeGrund) -> Str
         quiver_protocol::AnmeldeGrund::KeinZugriff => t(sprache, "verbindung.grund.kein_zugriff"),
         quiver_protocol::AnmeldeGrund::NeuAnmelden => t(sprache, "verbindung.grund.neu_anmelden"),
     }
-}
-
-/// Was einem Eintrag fehlt, als ein Satz: die Erklärung des Felds, sonst sein
-/// Name. (Der Name steht schon im Abzeichen.)
-pub fn fehlende_texte(fehlende: &[FehlendesFeld]) -> String {
-    fehlende
-        .iter()
-        .map(|feld| {
-            if feld.beschreibung.trim().is_empty() {
-                feld.name.clone()
-            } else {
-                feld.beschreibung.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" · ")
 }
 
 /// Die Beschriftung eines Felds: `titel`, sonst der Name (Aufgabe 16).
@@ -1317,6 +1483,7 @@ mod tests {
             profil_hinweis: None,
             update: quiver_client::UpdateLage::Unbekannt,
             vorgaben: quiver_client::Vorgaben::default(),
+            fortschritt: quiver_client::Fortschritt::Ruhe,
         }
     }
 
@@ -1364,6 +1531,9 @@ mod tests {
             zugaenge: None,
             am_geraet_aus: false,
             unzulaessig: None,
+            nicht_installiert: None,
+            nicht_fuer_system: false,
+            ladeanteil: None,
         }
     }
 
@@ -1493,13 +1663,13 @@ mod tests {
     }
 
     #[test]
-    fn anmeldung_hat_vier_zustaende_und_je_einen_knopf() {
+    fn anmeldung_hat_fuenf_zustaende_und_je_einen_knopf() {
         let sprache = Sprache::De;
-        // Abgemeldet und unbekannt: derselbe Hinweis, „Anmelden“.
+        // Abgemeldet und unbekannt: derselbe Satz, „Anmelden“.
         for zustand in [AnmeldeZustand::Abgemeldet, AnmeldeZustand::Unbekannt] {
             let zeile = anmeldung_zeile(sprache, &zustand);
             assert_eq!(zeile.ton, Ton::Warnung);
-            assert_eq!(zeile.text, "Anmeldung nötig");
+            assert_eq!(zeile.text, "Nicht angemeldet");
             assert_eq!(zeile.knopf, AnmeldeKnopf::Anmelden);
         }
         // Läuft: leise, kein Knopf.
@@ -1507,6 +1677,13 @@ mod tests {
         assert_eq!(laeuft.ton, Ton::Leise);
         assert_eq!(laeuft.text, "Anmeldung im Browser läuft …");
         assert_eq!(laeuft.knopf, AnmeldeKnopf::Keiner);
+        // Geprüft wird gerade: Drehsymbol, kein Knopf.
+        let pruefe = anmeldung_zeile(sprache, &AnmeldeZustand::Pruefe);
+        assert_eq!(pruefe.ton, Ton::Leise);
+        assert_eq!(pruefe.text, "Prüfe Anmeldung …");
+        assert_eq!(pruefe.knopf, AnmeldeKnopf::Keiner);
+        assert!(dreht_sich(&AnmeldeZustand::Pruefe));
+        assert!(!dreht_sich(&AnmeldeZustand::Laeuft));
         // Angemeldet: Konto und „Abmelden“; ohne Konto bleibt der Name weg.
         let angemeldet = anmeldung_zeile(
             sprache,
@@ -1519,20 +1696,41 @@ mod tests {
         assert_eq!(angemeldet.knopf, AnmeldeKnopf::Abmelden);
         let ohne = anmeldung_zeile(sprache, &AnmeldeZustand::Angemeldet { konto: None });
         assert_eq!(ohne.text, "Angemeldet");
-        // Fehler: der Text des Fehlers, „Erneut versuchen“.
+        // Läuft ab: Warnung, „Anmelden“ (nicht „Abmelden“).
+        let ab = anmeldung_zeile(
+            sprache,
+            &AnmeldeZustand::LaeuftAb {
+                konto: Some("test@beispiel.de".into()),
+            },
+        );
+        assert_eq!(ab.ton, Ton::Warnung);
+        assert_eq!(
+            ab.text,
+            "Angemeldet als test@beispiel.de – die Anmeldung läuft bald ab"
+        );
+        assert_eq!(ab.knopf, AnmeldeKnopf::Anmelden);
+        let ab = anmeldung_zeile(sprache, &AnmeldeZustand::LaeuftAb { konto: None });
+        assert_eq!(ab.text, "Die Anmeldung läuft bald ab");
+        // Fehler: der Text des Fehlers, „Erneut prüfen“.
         let fehler = anmeldung_zeile(
             sprache,
             &AnmeldeZustand::Fehler {
-                text: "Der Status endet mit Code 3".into(),
+                text: "Der Status endet mit Code 7".into(),
             },
         );
         assert_eq!(fehler.ton, Ton::Fehler);
-        assert_eq!(fehler.text, "Der Status endet mit Code 3");
-        assert_eq!(fehler.knopf, AnmeldeKnopf::Erneut);
+        assert_eq!(fehler.text, "Der Status endet mit Code 7");
+        assert_eq!(fehler.knopf, AnmeldeKnopf::Pruefen);
 
         // Englisch ist übersetzt, nicht kopiert.
         let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Abgemeldet);
-        assert_eq!(en.text, "Sign-in required");
+        assert_eq!(en.text, "Not signed in");
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Pruefe);
+        assert_eq!(en.text, "Checking sign-in …");
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::LaeuftAb { konto: None });
+        assert_eq!(en.text, "The sign-in expires soon");
+        let en = anmeldung_zeile(Sprache::En, &AnmeldeZustand::Fehler { text: "x".into() });
+        assert_eq!(en.knopf, AnmeldeKnopf::Pruefen);
         let en = anmeldung_zeile(
             Sprache::En,
             &AnmeldeZustand::Angemeldet {
@@ -1540,6 +1738,28 @@ mod tests {
             },
         );
         assert_eq!(en.text, "Signed in as test@beispiel.de");
+    }
+
+    /// Je Karte ein Knopf für die Angaben, nie zwei (Aufgabe 35, §5).
+    #[test]
+    fn eine_karte_hat_einen_knopf_fuer_die_angaben() {
+        // Fehlen Pflichtangaben, gibt es nur „Angaben ergänzen“.
+        let wartet = eintrag();
+        assert_eq!(
+            zustand_text(Sprache::De, &wartet.zustand),
+            "Braucht Angaben: PFAD"
+        );
+        assert_eq!(kartenknopf(&wartet), Kartenknopf::AngabenErgaenzen);
+
+        // Sind sie da, gibt es nur den Stift.
+        let mut fertig = wartet.clone();
+        fertig.zustand = EintragZustand::Laeuft { tools: 1 };
+        assert_eq!(kartenknopf(&fertig), Kartenknopf::Bearbeiten);
+
+        // Nichts einzutragen, keine Zugangsliste: kein Knopf.
+        let mut leer = fertig.clone();
+        leer.felder.clear();
+        assert_eq!(kartenknopf(&leer), Kartenknopf::Keiner);
     }
 
     #[test]
@@ -1608,25 +1828,6 @@ mod tests {
             ),
             "Signing in via browser …"
         );
-    }
-
-    #[test]
-    fn fehlendes_wird_erklaert() {
-        let feld = |name: &str, beschreibung: &str| FehlendesFeld {
-            name: name.into(),
-            beschreibung: beschreibung.into(),
-            quelle: Quelle::Client,
-        };
-        assert_eq!(
-            fehlende_texte(&[feld("PFAD", "Ordner, den das Tool lesen darf")]),
-            "Ordner, den das Tool lesen darf"
-        );
-        assert_eq!(fehlende_texte(&[feld("PFAD", "  ")]), "PFAD", "ohne Text");
-        assert_eq!(
-            fehlende_texte(&[feld("A", "eins"), feld("B", "zwei")]),
-            "eins · zwei"
-        );
-        assert_eq!(fehlende_texte(&[]), "");
     }
 
     #[test]
@@ -2471,23 +2672,144 @@ mod tests {
     #[test]
     fn tray_menu_hat_die_vereinbarte_reihenfolge() {
         let menu = tray_menu(&modell(verbunden()), true, Sprache::De);
-        assert_eq!(menu.len(), 5);
+        assert_eq!(menu.len(), 6);
         assert!(
             matches!(&menu[0], TrayEintrag::Zustand(text) if text == "Verbunden · 0 Tools · 1 Agent")
         );
         assert!(matches!(&menu[1], TrayEintrag::Zeigen(text) if text == "Fenster öffnen"));
+        // Nachtrag zu Aufgabe 37: ohne Fenster erreichbar.
+        assert!(
+            matches!(&menu[2], TrayEintrag::Aktualisieren(text) if text == "Tools aktualisieren")
+        );
         assert!(matches!(
-            &menu[2],
+            &menu[3],
             TrayEintrag::Autostart { text, an: true } if text == "Beim Anmelden starten"
         ));
-        assert_eq!(menu[3], TrayEintrag::Trenner);
-        assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Beenden"));
+        assert_eq!(menu[4], TrayEintrag::Trenner);
+        assert!(matches!(&menu[5], TrayEintrag::Beenden(text) if text == "Beenden"));
         // Englisch, Autostart aus.
         let menu = tray_menu(&modell(verbunden()), false, Sprache::En);
         assert!(
-            matches!(&menu[2], TrayEintrag::Autostart { text, an: false } if text == "Start at login")
+            matches!(&menu[3], TrayEintrag::Autostart { text, an: false } if text == "Start at login")
         );
-        assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Quit"));
+        assert!(matches!(&menu[5], TrayEintrag::Beenden(text) if text == "Quit"));
+    }
+
+    /// Der kurze Text im Tray sagt, was gerade läuft (Nachtrag zu Aufgabe 37).
+    #[test]
+    fn tray_zeigt_den_fortschritt_kurz() {
+        use quiver_client::Fortschritt;
+        let mut m = modell(verbunden());
+        assert_eq!(tray_fortschritt(&m, Sprache::De), None);
+        m.fortschritt = Fortschritt::Verbindet;
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::De),
+            None,
+            "die Verbindung steht schon da"
+        );
+        m.fortschritt = Fortschritt::Laedt {
+            fertig: 3,
+            gesamt: 12,
+        };
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::De).as_deref(),
+            Some("Lädt 3 von 12")
+        );
+        assert!(tray_zeile(&m, Sprache::De).ends_with("Lädt 3 von 12"));
+        m.fortschritt = Fortschritt::Startet;
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::En).as_deref(),
+            Some("Starting …")
+        );
+        m.fortschritt = Fortschritt::Fertig { geaendert: 0 };
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::De).as_deref(),
+            Some("Alles aktuell")
+        );
+        m.fortschritt = Fortschritt::Fertig { geaendert: 2 };
+        assert_eq!(
+            tray_fortschritt(&m, Sprache::En).as_deref(),
+            Some("2 updated")
+        );
+    }
+
+    /// Die Anzeige am Kopf: kein Flackern, „Alles aktuell“ nur kurz
+    /// (Nachtrag zu Aufgabe 37).
+    #[test]
+    fn fortschritt_verschwindet_wieder() {
+        use quiver_client::Fortschritt;
+        let sofort = std::time::Duration::ZERO;
+        let spaeter = FLACKER + std::time::Duration::from_millis(1);
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Ruhe, spaeter),
+            None
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Verbindet, sofort),
+            None,
+            "unter 300 ms wird nichts gezeigt"
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Verbindet, spaeter).as_deref(),
+            Some("Verbinde mit dem Server …")
+        );
+        assert_eq!(
+            fortschritt_text(
+                Sprache::De,
+                &Fortschritt::Laedt {
+                    fertig: 3,
+                    gesamt: 12
+                },
+                spaeter
+            )
+            .as_deref(),
+            Some("Tools werden geladen (3 von 12)")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::En, &Fortschritt::Startet, spaeter).as_deref(),
+            Some("Starting …")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Fertig { geaendert: 0 }, spaeter)
+                .as_deref(),
+            Some("Alles aktuell")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::En, &Fortschritt::Fertig { geaendert: 2 }, spaeter)
+                .as_deref(),
+            Some("2 tools updated")
+        );
+        assert_eq!(
+            fortschritt_text(Sprache::De, &Fortschritt::Fertig { geaendert: 0 }, KURZ),
+            None,
+            "„Alles aktuell“ steht nur kurz"
+        );
+        assert!(fortschritt_dreht(&Fortschritt::Laedt {
+            fertig: 0,
+            gesamt: 1
+        }));
+        assert!(!fortschritt_dreht(&Fortschritt::Fertig { geaendert: 0 }));
+    }
+
+    /// Die Karte sagt beim Laden „Wird geladen …“ und mit bekanntem Anteil den
+    /// Prozentsatz (Nachtrag zu Aufgabe 37).
+    #[test]
+    fn die_karte_nennt_den_anteil() {
+        assert!(karte_dreht(&EintragZustand::WirdGeladen));
+        assert!(karte_dreht(&EintragZustand::Aktualisiert));
+        assert!(!karte_dreht(&EintragZustand::Startet));
+        assert_eq!(
+            laden_text(Sprache::De, &EintragZustand::WirdGeladen, Some(42)),
+            "Wird geladen … 42 %"
+        );
+        assert_eq!(
+            laden_text(Sprache::De, &EintragZustand::WirdGeladen, None),
+            "Wird vom Server geladen …"
+        );
+        assert_eq!(
+            laden_text(Sprache::En, &EintragZustand::Aktualisiert, Some(10)),
+            "Updated"
+        );
     }
 
     /// Ein anstehendes Update steht vorn in der Tray-Zeile (Aufgabe 34) – der
@@ -2500,6 +2822,9 @@ mod tests {
             version: String::from("0.3.0"),
             hinweis: String::from("Version 0.3.0 ist verfügbar."),
             aenderungen: None,
+            angebot: quiver_client::update::Angebot::Keins {
+                grund: quiver_client::update::AngebotGrund::KeinPaket,
+            },
         };
         assert_eq!(
             tray_zeile(&m, Sprache::De),
@@ -2510,16 +2835,63 @@ mod tests {
         assert_eq!(tray_zeile(&m, Sprache::De), "Verbunden · 0 Tools · 1 Agent");
     }
 
+    /// Der Fortschritt und die Gründe des Angebots stehen in beiden Sprachen
+    /// bereit (Aufgabe 39).
+    #[test]
+    fn update_texte_stehen_in_beiden_sprachen() {
+        use quiver_client::update::{AngebotGrund, UpdateSchritt};
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Laedt, Some(42)),
+            "Update wird geladen … 42 %"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::En, UpdateSchritt::Laedt, Some(42)),
+            "Downloading the update … 42 %"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Laedt, None),
+            "Update wird geladen …"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Prueft, None),
+            "Update wird geprüft …"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Tauscht, None),
+            "Update wird eingespielt …"
+        );
+        assert_eq!(
+            update_getauscht_text(Sprache::De, "0.5.0"),
+            "Neue Version 0.5.0 ist eingespielt – quiver startet neu."
+        );
+        for (grund, de) in [
+            (AngebotGrund::Vorgabe, "abgeschaltet"),
+            (AngebotGrund::KeinSchreibrecht, "Programmordner"),
+            (AngebotGrund::BrauchtRechte, "Administratorrechte"),
+            (AngebotGrund::KeinPaket, "kein Paket"),
+            (AngebotGrund::Unbekannt, "nicht selbst"),
+        ] {
+            assert!(
+                angebot_grund_text(Sprache::De, grund).contains(de),
+                "{grund:?}"
+            );
+            // Auch die englische Fassung ist ein Satz und kein Schlüssel.
+            let englisch = angebot_grund_text(Sprache::En, grund);
+            assert!(!englisch.starts_with("update."), "{englisch}");
+            assert_ne!(englisch, angebot_grund_text(Sprache::De, grund));
+        }
+    }
+
     /// Ist der Autostart vorgegeben, zeigt das Tray die Vorgabe (Aufgabe 34).
     #[test]
     fn eine_autostart_vorgabe_steht_im_tray() {
         let mut m = modell(verbunden());
         let menu = tray_menu(&m, false, Sprache::De);
-        assert!(matches!(&menu[2], TrayEintrag::Autostart { an: false, .. }));
+        assert!(matches!(&menu[3], TrayEintrag::Autostart { an: false, .. }));
         m.vorgaben.autostart = Some(true);
         let menu = tray_menu(&m, false, Sprache::De);
         assert!(
-            matches!(&menu[2], TrayEintrag::Autostart { an: true, .. }),
+            matches!(&menu[3], TrayEintrag::Autostart { an: true, .. }),
             "die Vorgabe gewinnt"
         );
     }
@@ -2539,5 +2911,8 @@ mod tests {
         // Reihenfolge und Unbekanntes sind egal.
         let beide = argumente(["--unbekannt", "--hintergrund", "--headless"]);
         assert!(beide.hintergrund && beide.kopflos);
+        // Der Selbsttest (Aufgabe 39) ist ein eigener Schalter.
+        let pruefung = argumente(["--selbsttest"]);
+        assert!(pruefung.selbsttest && !pruefung.kopflos && !pruefung.hintergrund);
     }
 }

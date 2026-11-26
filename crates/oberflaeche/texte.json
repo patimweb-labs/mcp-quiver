@@ -200,12 +200,8 @@
     "en": "Hide tools"
   },
   "tools.bearbeiten": {
-    "de": "Angaben bearbeiten",
-    "en": "Edit settings"
-  },
-  "tools.fehlt": {
-    "de": "Fehlt: {}",
-    "en": "Missing: {}"
+    "de": "Bearbeiten",
+    "en": "Edit"
   },
   "tools.werte_sub": {
     "de": "Gesetzte Geheimnisse bleiben leer — dann ändern sie sich nicht.",
@@ -355,6 +351,22 @@
     "de": "Getrennt · läuft weiter",
     "en": "Disconnected · still running"
   },
+  "tray.laedt": {
+    "de": "Lädt {} von {}",
+    "en": "Loading {} of {}"
+  },
+  "tray.startet": {
+    "de": "Startet …",
+    "en": "Starting …"
+  },
+  "tray.aktuell": {
+    "de": "Alles aktuell",
+    "en": "Everything up to date"
+  },
+  "tray.aktualisiert": {
+    "de": "{} aktualisiert",
+    "en": "{} updated"
+  },
   "tray.fenster": {
     "de": "Fenster öffnen",
     "en": "Open window"
@@ -384,8 +396,8 @@
     "en": "The entry lives in the system; the checkmark shows what is there. “Quit” is in the tray menu."
   },
   "anmeldung.noetig": {
-    "de": "Anmeldung nötig",
-    "en": "Sign-in required"
+    "de": "Nicht angemeldet",
+    "en": "Not signed in"
   },
   "anmeldung.anmelden": {
     "de": "Anmelden",
@@ -408,8 +420,8 @@
     "en": "Sign out"
   },
   "anmeldung.erneut": {
-    "de": "Erneut versuchen",
-    "en": "Try again"
+    "de": "Erneut prüfen",
+    "en": "Check again"
   },
   "anmeldung.beenden_titel": {
     "de": "Anmeldung beenden",
@@ -1058,5 +1070,125 @@
   "vorgabe.autostart_fest": {
     "de": "Der Autostart ist von deiner Firma vorgegeben.",
     "en": "Autostart is set by your organisation."
+  },
+  "anmeldung.pruefe": {
+    "de": "Prüfe Anmeldung …",
+    "en": "Checking sign-in …"
+  },
+  "anmeldung.laeuft_ab": {
+    "de": "Die Anmeldung läuft bald ab",
+    "en": "The sign-in expires soon"
+  },
+  "anmeldung.laeuft_ab_mit": {
+    "de": "Angemeldet als {} – die Anmeldung läuft bald ab",
+    "en": "Signed in as {} – the sign-in expires soon"
+  },
+  "tools.nicht_installiert": {
+    "de": "Nicht installiert",
+    "en": "Not installed"
+  },
+  "tools.nicht_installiert_text": {
+    "de": "Dieses Tool ist auf diesem Gerät nicht installiert.",
+    "en": "This tool is not installed on this device."
+  },
+  "tools.nicht_fuer_system": {
+    "de": "Für dieses System gibt es das Tool nicht.",
+    "en": "This tool does not exist for this system."
+  },
+  "tools.wird_geladen": {
+    "de": "Wird vom Server geladen …",
+    "en": "Downloading from the server …"
+  },
+  "tools.wird_geladen_anteil": {
+    "de": "Wird geladen … {} %",
+    "en": "Downloading … {} %"
+  },
+  "tools.aktualisiert": {
+    "de": "Aktualisiert",
+    "en": "Updated"
+  },
+  "tools.fortschritt_verbindet": {
+    "de": "Verbinde mit dem Server …",
+    "en": "Connecting to the server …"
+  },
+  "tools.fortschritt_laedt": {
+    "de": "Tools werden geladen ({} von {})",
+    "en": "Downloading tools ({} of {})"
+  },
+  "tools.fortschritt_startet": {
+    "de": "Wird gestartet …",
+    "en": "Starting …"
+  },
+  "tools.fortschritt_aktuell": {
+    "de": "Alles aktuell",
+    "en": "Everything up to date"
+  },
+  "tools.fortschritt_geaendert": {
+    "de": "{} Tools aktualisiert",
+    "en": "{} tools updated"
+  },
+  "tools.aktualisieren": {
+    "de": "Tools aktualisieren",
+    "en": "Update tools"
+  },
+  "tools.ohne_verbindung": {
+    "de": "Keine Verbindung zum Server – bitte zuerst verbinden. Die geladenen Tools laufen weiter.",
+    "en": "No connection to the server — please connect first. Downloaded tools keep running."
+  },
+  "tools.erneut_versuchen": {
+    "de": "Erneut versuchen",
+    "en": "Try again"
+  },
+  "tools.ergaenzen": {
+    "de": "Angaben ergänzen",
+    "en": "Complete settings"
+  },
+  "update.jetzt": {
+    "de": "Jetzt aktualisieren",
+    "en": "Update now"
+  },
+  "update.spaeter": {
+    "de": "Später",
+    "en": "Later"
+  },
+  "update.laedt": {
+    "de": "Update wird geladen …",
+    "en": "Downloading the update …"
+  },
+  "update.laedt_anteil": {
+    "de": "Update wird geladen … {} %",
+    "en": "Downloading the update … {} %"
+  },
+  "update.prueft": {
+    "de": "Update wird geprüft …",
+    "en": "Checking the update …"
+  },
+  "update.tauscht": {
+    "de": "Update wird eingespielt …",
+    "en": "Installing the update …"
+  },
+  "update.getauscht": {
+    "de": "Neue Version {} ist eingespielt – quiver startet neu.",
+    "en": "Version {} is installed – quiver is restarting."
+  },
+  "update.grund.vorgabe": {
+    "de": "Updates sind von deiner Firma abgeschaltet.",
+    "en": "Updates are disabled by your organisation."
+  },
+  "update.grund.kein_schreibrecht": {
+    "de": "Der Programmordner gehört dem System – bitte die neue Fassung über die Geräteverwaltung einspielen.",
+    "en": "The program folder belongs to the system – please install the new version through device management."
+  },
+  "update.grund.braucht_rechte": {
+    "de": "Diese Installation braucht Administratorrechte. Bitte die neue Fassung mit dem Paket aus dem Release einspielen.",
+    "en": "This installation needs administrator rights. Please install the new version from the release package."
+  },
+  "update.grund.kein_paket": {
+    "de": "Für diese Installation gibt es kein Paket in der Veröffentlichung.",
+    "en": "There is no package for this installation in the release."
+  },
+  "update.grund.unbekannt": {
+    "de": "Für diese Installation kann quiver sich nicht selbst aktualisieren.",
+    "en": "quiver cannot update itself for this installation."
   }
 }

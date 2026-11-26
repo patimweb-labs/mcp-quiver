@@ -250,6 +250,10 @@ export type EintragZustand =
   | { zustand: "wartet-auf-werte"; felder: string[] }
   | { zustand: "startet" }
   | { zustand: "am-geraet-aus" }
+  /** Das Programm wird gerade vom Server geladen (Aufgabe 37). */
+  | { zustand: "wird-geladen" }
+  /** Das Programm wird ersetzt, weil seine Prüfsumme nicht mehr stimmt (Aufgabe 37). */
+  | { zustand: "aktualisiert" }
   | { zustand: "fehler"; text: string }
   | { zustand: "unbekannt" };
 
@@ -259,6 +263,25 @@ export interface Meldung {
   client_version: string;
   /** Serde schreibt `Vec<(EintragId, EintragZustand)>` als Paare. */
   eintraege: [EintragId, EintragZustand][];
+  /**
+   * Die Programme, die auf dem Gerät laufen, mit ihrer Fassung (Aufgabe 37).
+   * Ältere Clients lassen das Feld weg.
+   */
+  programme?: Programm[];
+}
+
+/** Ein Programm, das der Server an die Geräte verteilt (Aufgabe 37). */
+export interface Programm {
+  /** Der Programmname, z. B. `quiver-devops`. */
+  name: string;
+  /** Die Fassung aus dem Release; `unbekannt`, wenn der Betreiber sie selbst ablegt. */
+  version: string;
+  groesse: number;
+  sha256: string;
+  /** `windows`, `macos`, `linux`. */
+  system: string;
+  /** `x64`, `arm64`. */
+  arch: string;
 }
 
 /** Ein Gerät, wie die Verwaltung es sieht. */

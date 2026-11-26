@@ -155,6 +155,173 @@ und startet die betroffenen Einträge neu. Einträge, die es hier nicht gibt,
 werden übersprungen; ein falsches Passwort ändert nichts. Die Wahl „auf diesem
 Gerät abgeschaltet“ geht mit und steht in der Vorschau — aus bleibt aus.
 
+## Woher die Programme kommen
+
+Der Client bringt **keine** Werkzeuge mehr mit. Er bekommt sie vom Server
+(Aufgabe 37): bei der Anmeldung, beim Start und bei jedem Abgleich vergleicht
+er den Soll-Zustand mit dem, was im Profil liegt. Fehlt ein Programm oder
+stimmt seine Prüfsumme nicht, lädt er es vom Server, prüft Größe und SHA-256
+und startet es neu. Werkzeuge sind damit immer auf dem Stand des Servers.
+
+Ablage im Profil: `tools/<name>/<sha256>/<programm>` — Ordner 0700, Datei 0700
+(unter Windows: nur der Benutzer, über die Rechte des Profils). Geladen wird in
+eine Zwischendatei im Zielordner, Größe und Prüfsumme werden beim Schreiben
+mitgezählt, danach `fsync` und umbenennen; erst dann wird die Datei ausführbar.
+Vor **jedem** Start wird sie erneut geprüft (dieselbe Datei, kein Verweis,
+Größe und SHA-256); stimmt etwas nicht, wird sie neu geladen. Alte Fassungen
+fallen nach dem ersten erfolgreichen Start weg.
+
+Ein Eintrag nennt dazu nur den **Programmnamen**, etwa `quiver-devops`.
+Verteilt werden nur die eigenen Programme (`quiver-*`); ein Eintrag mit `npx`,
+`uvx`, `docker` oder einem festen Pfad funktioniert unverändert. Für welches
+System der Server was hat:
+
+| System | Angabe im Abruf |
+| --- | --- |
+| Windows x64 | `system=windows&arch=x64` |
+| macOS arm64 | `system=macos&arch=arm64` |
+| macOS x64 | `system=macos&arch=x64` |
+| Linux x64 | `system=linux&arch=x64` |
+| Linux arm64 | `system=linux&arch=arm64` |
+
+Hat der Server ein Programm für das System des Geräts nicht, sagt die Karte
+„Für dieses System gibt es das Tool nicht.“ — kein Fehler, kein roter Zustand.
+Ein Eintrag mit einem **alten festen Pfad** heilt sich selbst: es zählt nur
+noch der Programmname. Meldungen im Fenster nennen nie einen fremden
+Dateipfad, nur den Namen und den Grund; der volle Pfad steht im Protokoll.
+
+Wird ein Eintrag nicht mehr zugewiesen (aus der Gruppe, gesperrt, Zugang
+entzogen), stoppt der Client das Tool und **löscht das Programm**; die
+Konfiguration (Angaben, Zugänge, Geheimnisse, Anmeldung des Tools) bleibt und
+gilt wieder, sobald der Eintrag zurückkommt. Beim Abmelden am Gerät werden
+ebenso nur die Programme gelöscht. Die Karte zeigt während des Ladens „Wird
+vom Server geladen …“ oder „Aktualisiert“. Ist der Server nicht erreichbar,
+laufen die bereits geladenen Programme nach den bisherigen Regeln weiter.
+
+`QUIVER_TOOLS_DIR` bleibt für die Entwicklung: ein Ordner, in dem die
+Programme flach liegen (etwa ein ausgecheckter Stand). Er überschreibt die
+Ablage im Profil, sodass sich ein Programm ohne Server ausprobieren lässt.
+
+### Die Anzeige beim Laden
+
+Solange abgeglichen oder geladen wird, steht am Kopf der Werkzeugseite ein
+Satz mit Drehsymbol: „Verbinde mit dem Server …“, „Tools werden geladen (3 von
+12)“, „Wird gestartet …“. Am Ende steht dort kurz „Alles aktuell“ (oder „2
+Tools aktualisiert“) und verschwindet nach vier Sekunden. Auf der Karte steht
+„Wird geladen … 42 %“ (der Anteil, sobald die Größe bekannt ist) oder
+„Aktualisiert“; das Tray zeigt denselben Stand in kurzer Form.
+
+Die Anzeige steht **nur, wenn es etwas zu tun gibt**: was unter 300 ms dauert,
+erscheint nicht (kein Flackern), und solange nichts läuft, zeichnet das Fenster
+nicht neu. Hat das System „weniger Bewegung“ eingestellt (egui ohne
+Animationen), steht der Text ohne drehenden Ring.
+
+Der Knopf **„Tools aktualisieren“** (auf der Seite und im Tray) fragt sofort
+beim Server nach. Während einer läuft, ist er gesperrt. Danach meldet die
+Anzeige „Alles aktuell“ oder wie viele Programme kamen; besteht keine
+Verbindung (noch nicht eingebunden oder gerade getrennt), sagt der Client das
+im Hinweis über den Karten, statt ins Leere zu fragen.
+
+Geht beim Laden etwas schief, steht der Grund auf der Karte, und daneben gibt
+es **„Erneut versuchen“**. Ein Programm, das nicht lädt, hält die anderen
+nicht auf.
+
+## Die Anmeldung eines Tools
+
+Manche Werkzeuge melden sich für den Benutzer an (Microsoft 365, ZEP). Die
+Anmeldung löst immer der Benutzer im Fenster aus, nie ein Agent; die Karte
+zeigt dazu **einen** Satz und **einen** benannten Knopf. Kein Knopf besteht je
+nur aus einem Zeichen, auch nicht im schmalen Fenster:
+
+| Zustand | Satz auf der Karte | Knopf |
+| --- | --- | --- |
+| nicht angemeldet | „Nicht angemeldet“ | **Anmelden** |
+| Prüfung läuft | „Prüfe Anmeldung …“ mit Drehsymbol | keiner (gesperrt) |
+| Anmeldung im Browser | „Anmeldung im Browser läuft …“ | keiner |
+| angemeldet | „Angemeldet als …“ | **Abmelden** |
+| läuft ab | „Angemeldet als … – die Anmeldung läuft bald ab“ | **Anmelden** |
+| fehlgeschlagen | der Grund in einem Satz | **Erneut prüfen** |
+
+Die Prüfung ist ein Blick in den Tresor des Werkzeugs, kein Browser-Ablauf:
+sie hat **10 s** Zeit. Antwortet das Werkzeug nicht, steht danach ein Satz und
+**Erneut prüfen** da — kein Drehsymbol, das nie aufhört. „Erneut prüfen“
+fragt nur den Status ab; es meldet niemanden an und startet den Eintrag nicht
+neu, solange niemand angemeldet ist. Ein Werkzeug, das den Ablauf seines
+Tokens kennt, meldet ihn mit **Exit 3**; dann bietet die Karte „Anmelden“ an,
+bevor mitten in der Arbeit Schluss ist.
+
+![Anmeldung auf der Tools-Karte](../docs/bilder/fenster-dark-anmeldung-800.png)
+
+Fehlt das Programm auf diesem Gerät, steht auf der Karte **einmal** „Dieses
+Tool ist auf diesem Gerät nicht installiert.“ — kein technischer Fehler, kein
+Anmelde- und kein Einrichtungsknopf (es gäbe nichts zu starten). Den Hinweis
+für den Admin („bitte auf dem Server bereitstellen“) schreibt der Client ins
+Protokoll des Eintrags. Hat der Server das Programm für dieses System nicht,
+steht dort „Für dieses System gibt es das Tool nicht.“ — ebenfalls ohne Knopf.
+
+Unter **Windows** startet der Client die Werkzeuge und die Anmeldebefehle ohne
+eigenes Konsolenfenster (`CREATE_NO_WINDOW`): es blitzt keine schwarze Konsole
+auf, und ein Werkzeug ist ein Hintergrundprozess. Angemeldet wird im
+Standardbrowser. Der Rückweg aus dem Browser läuft über `http://127.0.0.1:<port>`
+— der Client und seine Werkzeuge binden dafür **nur** an 127.0.0.1, damit die
+Windows-Firewall nicht dazwischenkommt und nichts von außen erreichbar ist.
+Das Token des Werkzeugs liegt im Tresor des Werkzeugs unter `%APPDATA%`, nie
+beim Agenten.
+
+## Eine Karte, ein Knopf je Wirkung
+
+Jede Karte trägt genau einen Knopf für die Angaben: fehlen Pflichtangaben,
+**Angaben ergänzen**; ist alles da, den **Stift** („Bearbeiten“). Gibt es
+nichts einzutragen, steht auch kein Stift da — bei einer Zugangsliste führt
+**… hinzufügen** zur Liste. Was fehlt, steht in einer Zeile („Braucht Angaben:
+Pfad“), nicht zusätzlich darunter. Jeder weitere Knopf einer Karte hat seine
+eigene, benannte Wirkung: **Anmelden**, **Abmelden**, **Erneut prüfen**,
+**Einrichten**, **Abbrechen**, **Exportieren**, **Importieren**.
+
+## quiver aktualisieren
+
+Der Client fragt nie das Internet. Alle sechs Stunden fragt er **seinen Server**,
+ob eine neuere Fassung veröffentlicht ist (`GET /api/v1/geraet/updates`, mit dem
+Geräte-Token). Ist es so, erscheint über der Seite und in der Tray-Zeile ein
+Hinweis: die Version, der Text des Betreibers und ein Link auf die Änderungen.
+Gibt es ein Paket für diese Installation, bietet der Hinweis **Jetzt
+aktualisieren** und **Später** an.
+
+**Jetzt aktualisieren** tut Folgendes, in dieser Reihenfolge:
+
+1. laufende Werkzeuge werden beendet (laufende Aufrufe bekommen bis zu 10 s),
+2. das Paket kommt vom eigenen Server nach `<profil>/updates/<version>/`; dabei
+   werden `Content-Length` und die SHA-256 aus der Antwort des Servers schon
+   beim Schreiben geprüft,
+3. die neue Fassung wird entpackt und als `quiver --selbsttest` gestartet —
+   Exit 0, ohne Fenster, ohne Profil; scheitert das, bleibt alles, wie es ist,
+4. die alte Datei wird zu `<name>.alt`, die neue daneben gelegt; das Fenster
+   sagt „Neue Version X ist eingespielt“ und schließt,
+5. die neue Fassung startet, sobald das Profil freigegeben ist. Kommt sie nicht,
+   stellt der zweite Start die alte wieder hin.
+
+**Später** nimmt den Hinweis für diese Version bis zum nächsten Start weg. Die
+Abfrage läuft weiter; nur das Angebot verschwindet.
+
+Welches Paket gilt, erkennt der Client an seinem eigenen Pfad: portables ZIP und
+MSI je Benutzer unter Windows, `.app` aus dem `.dmg` unter macOS, AppImage und
+`tar.gz` unter Linux. Eine Installation aus `.deb`/`.rpm` (Systemordner) oder ein
+Ordner ohne Schreibrecht bekommt nur den Hinweis — quiver fasst keinen
+Programmordner an, der dem System gehört, und fragt nie nach root.
+
+Das **Profil wird nicht angefasst**: Einstellungen, Tresor, Geräte-Token,
+Angaben, Zugänge, Anmeldungen der Werkzeuge, Autostart und die geladenen
+Programme bleiben, wie sie waren. Das prüft ein Test, der das Profil vor und nach
+dem Tausch vergleicht.
+
+`quiver --selbsttest` ist eine schlichte Prüfung: Es nennt die Version, endet mit
+0 und fasst weder Profil noch Fenster an. Genau das startet das Selbst-Update vor
+dem Tausch.
+
+Hat der Betreiber das Angebot abgeschaltet (Vorgabe `UpdateAngebot`), bleibt der
+Hinweis; eingespielt wird dann durch die Geräteverwaltung (Intune) oder von Hand
+aus dem Release. Einzelheiten: [updates.de.md](updates.de.md).
+
 ## Protokoll und Datenschutz
 
 Die Seite **Protokoll** im Fenster listet jeden Tool-Aufruf eines Agenten (Zeit,
@@ -223,6 +390,7 @@ Alles optional:
 | `QUIVER_MCP_ADRESSE` | MCP-Endpunkt (Standard `127.0.0.1:8741`; ein zweiter Port lässt zwei Instanzen nebeneinander laufen) |
 | `QUIVER_AUTOSTART_DIR` | Ordner für die Autostart-Datei (macOS und Linux; Tests und andere Sitzungen) |
 | `QUIVER_TRESOR=speicher` | Geheimnisse im Arbeitsspeicher statt in der Tresor-Datei (Läufe ohne Spuren, zum Ausprobieren) |
+| `QUIVER_TOOLS_DIR` | Ordner mit flach liegenden Programmen statt der Ablage im Profil (Entwicklung) |
 
 `--headless` startet nur den Kern (bis Strg+C); `--hintergrund` bringt das Tray
 ohne Fenster.
@@ -235,6 +403,10 @@ ohne Fenster.
 | „Der Server ist nicht erreichbar“ | Adresse prüfen: `https` überall außer Loopback, kein Pfad am Ende. Die Verwaltung muss unter derselben Adresse erreichbar sein. |
 | Der Client zeigt „Erneut anmelden“ | Der Server verlangt eine neue Anmeldung (Token zu alt, 60 Tage ungenutzt oder Gerät entfernt). Angaben und Geräte-Token bleiben. |
 | Tools bleiben bei „fehlende Angaben“ | Die Karte nennt die Felder. Über den Stift ausfüllen; Geheimes geht in den Tresor. |
+| „Für dieses System gibt es das Tool nicht.“ | Der Server hat das Programm für dieses Betriebssystem/diese Architektur nicht. Der Admin legt es auf dem Server ab (siehe *Betrieb*); kein Fehler am Gerät. |
+| Karte bleibt auf „Wird vom Server geladen …“ | Der Server ist nicht erreichbar oder die Prüfsumme passt nicht. Das Protokoll des Eintrags nennt den Grund; die bereits geladenen Programme laufen weiter. |
+| „Dieses Tool ist auf diesem Gerät nicht installiert.“ | Der Eintrag nennt ein fremdes Programm (`npx`, `uvx`, …), das der `PATH` nicht kennt. Als festen Pfad eintragen oder dafür sorgen, dass es im `PATH` liegt. Der Grund steht im Protokoll des Eintrags. |
+| Die Karte bleibt auf „Anmeldung läuft …“ oder „Prüfe Anmeldung …“ stehen | Ein Werkzeug antwortet nicht. Nach 10 s (Prüfung) bzw. 5 min (Browser) endet es von selbst mit einem Satz und einem Knopf; hängt es weiter, das Protokoll des Eintrags ansehen und den Client neu starten. |
 | Ein Tool meldet „Prozess wurde beendet“ | Im Protokoll den Reiter *Tool-Logs* öffnen; stderr steht dort (maskiert). |
 | Ein Agent sieht keine Tools | Er muss gekoppelt sein und das Token aus *Agenten* nutzen. Endpunkt `http://127.0.0.1:8741/mcp` prüfen und ob der Eintrag auf diesem Gerät abgeschaltet ist. |
 | Zwei Clients streiten um den Port | Dem zweiten `QUIVER_MCP_ADRESSE=127.0.0.1:8742` und ein anderes `QUIVER_PROFIL` geben. |

@@ -306,8 +306,12 @@ impl<R: AsyncRead + Unpin> AsyncRead for ZeilenWache<R> {
 
 /// Eine Laufzeit starten und die MCP-Verbindung aufbauen. Was der Prozess auf
 /// stderr schreibt, landet im Protokoll (Aufgabe 17).
+///
+/// Das Programm wird hier gesucht, nicht beim Zusammensetzen der Laufzeit: so
+/// gilt für Start, Anmeldung, Status, Einrichtung und Testen dieselbe Regel
+/// (Aufgabe 35, [`crate::tools`]).
 pub async fn verbinden(
-    name: &str,
+    id: &EintragId,
     laufzeit: &Laufzeit,
     protokoll: &Arc<Protokoll>,
 ) -> anyhow::Result<EintragVerbindung> {
@@ -316,34 +320,40 @@ pub async fn verbinden(
             befehl,
             argumente,
             umgebung,
-        } => stdio(name, befehl, argumente, umgebung, protokoll).await,
+        } => stdio(id, befehl, argumente, umgebung, protokoll).await,
         Laufzeit::Remote { url, kopfzeilen } => remote(url, kopfzeilen).await,
     }
 }
 
 async fn stdio(
-    name: &str,
+    id: &EintragId,
     befehl: &str,
     argumente: &[String],
     umgebung: &quiver_domain::Werte,
     protokoll: &Arc<Protokoll>,
 ) -> anyhow::Result<EintragVerbindung> {
-    let mut kommando = tokio::process::Command::new(befehl);
+    let name = id.als_str().to_string();
+    let fund = crate::tools::fuer_eintrag(id, befehl, protokoll)?;
+    let mut kommando = tokio::process::Command::new(&fund.pfad);
     kommando
         .args(argumente)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Ein Werkzeug ist ein Hintergrundprozess: kein eigenes Konsolenfenster
+    // (Windows).
+    crate::hilfen::ohne_fenster(kommando.as_std_mut());
     umgebung_setzen(&mut kommando, umgebung);
 
+    // Die Meldung nennt nur den Programmnamen; den Pfad kennt das Protokoll.
     let mut kind = kommando
         .spawn()
-        .with_context(|| format!("{befehl} lässt sich nicht starten"))?;
+        .with_context(|| format!("{} lässt sich nicht starten", fund.name()))?;
     let stdin = kind.stdin.take().context("stdin des Kindprozesses")?;
     let stdout = kind.stdout.take().context("stdout des Kindprozesses")?;
     if let Some(stderr) = kind.stderr.take() {
-        stderr_ins_log(name.to_string(), stderr, protokoll.clone());
+        stderr_ins_log(name, stderr, protokoll.clone());
     }
 
     let wache = Arc::new(GroessenWache::default());
@@ -613,14 +623,18 @@ mod tests {
             argumente: Vec::new(),
             umgebung: quiver_domain::Werte::new(),
         };
-        let ordner = std::env::temp_dir().join(format!(
-            "quiver-laufzeit-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-        ));
+        static ZAEHLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nummer = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Prozessnummer und Zähler statt einer Zeitangabe: ein Name mit
+        // Doppelpunkt taugt unter Windows nicht als Pfad.
+        let ordner =
+            std::env::temp_dir().join(format!("quiver-laufzeit-{}-{nummer}", std::process::id()));
         let protokoll = Arc::new(Protokoll::neu(&ordner));
-        let ergebnis = verbinden("test", &laufzeit, &protokoll).await;
+        let ergebnis = verbinden(&EintragId::neu("test"), &laufzeit, &protokoll).await;
         assert!(ergebnis.is_err(), "Start muss scheitern");
+        // Die Meldung nennt den Namen, nicht den Ort des Programms.
+        let text = format!("{:#}", ergebnis.err().expect("Fehler"));
+        assert!(text.contains("gibt-es-garantiert-nicht-quiver"), "{text}");
         std::fs::remove_dir_all(&ordner).ok();
     }
 

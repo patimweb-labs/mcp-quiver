@@ -7,6 +7,7 @@ container image with one port (8740) and one volume (`/daten`).
 
 **Inhalt** · [Container](#container) · [First setup](#first-setup) ·
 [Address and Host](#address-and-host) · [Entra ID](#entra-id) ·
+[Programs for the devices](#programs-for-the-devices) ·
 [Configuration](#configuration) · [Reverse proxy](#reverse-proxy) ·
 [Backup](#backup) · [Upgrading](#upgrading) · [Logs](#logs) ·
 [Troubleshooting](#troubleshooting)
@@ -187,6 +188,48 @@ token is revoked, their devices lose their tools on the next check. If an admin
 deletes a group that came from Entra, it stays deleted; the admin UI can adopt
 it again. At most 200 groups are created this way.
 
+## Programs for the devices
+
+The server runs no tools; it keeps their programs ready (task 37). Devices
+download them with their device token via
+`GET /api/v1/geraet/tools/<name>?system=…&arch=…`; only what is in **that**
+device's desired state is served — a revocation takes effect immediately (403).
+
+Two sources, in this order:
+
+| Folder | Content |
+| --- | --- |
+| `<data>/tools/<system>/` | the operator's own programs (valid for every architecture of that system) |
+| `<data>/tools/<system>/<arch>/` | the same, for one architecture only |
+| `/opt/quiver/tools/<system>/<arch>/` | what the image brings (release of quiver-tools) |
+
+`<system>` is `windows`, `macos` or `linux`, `<arch>` is `x64` or `arm64`. The
+more specific location wins, and what the operator puts there wins over the
+image. Put the programs themselves there (executable; `.exe` on Windows) and
+optionally a `LISTE.json` with the version:
+
+```json
+{"version":"1.2.3","programme":[{"name":"quiver-devops","version":"1.2.3"}]}
+```
+
+Size and SHA-256 are always computed from the file — the list only supplies the
+version. A program above 128 MiB is not distributed. The folder is reachable by
+root only; **nothing** can be uploaded or changed through the web UI. What is
+available is shown by `GET /api/v1/admin/programme` (admin: the program per
+entry, the running version per device from the device's report).
+
+A changed file changes the revision of the desired state; the server notices it
+within 30 seconds and notifies the devices. An image **without** programs
+is valid: the log then says “keine Programme” at start-up and devices receive
+nothing (their configuration stays). The version is set in the `Dockerfile`; to
+build with another one:
+
+```bash
+docker build --build-arg QUIVER_TOOLS_VERSION=0.1.0 -t mcp-quiver-server .
+```
+
+With an empty value (`QUIVER_TOOLS_VERSION=`) it builds without programs and says so.
+
 ## Configuration
 
 | Variable | Meaning |
@@ -204,8 +247,9 @@ it again. At most 200 groups are created this way.
 | `QUIVER_ENTRA_GRUPPENNAMEN` | `an` fetches group names via Graph; default `aus`, any other value prevents startup |
 | `QUIVER_ENTRA_GRAPH` | Base URL for Graph, loopback only (tests); fixed to `https://graph.microsoft.com` in production |
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
+| `QUIVER_PROGRAMME` | Folders with the programs to distribute (default `<data>/tools` plus `/opt/quiver/tools`) |
 | `QUIVER_ALTGERAETE` | `gesperrt` (default once Entra is configured, otherwise `erlaubt`) for devices without a user |
-| `QUIVER_UPDATES` | `an` (default) or `aus`: may the server ask the GitHub releases for a new version? At most every six hours, no identifier, no payload. See [updates.md](updates.md) |
+| `QUIVER_UPDATES` | `an` (default) or `aus`: may the server ask the GitHub releases for a new version — and deliver its packages to the devices? At most every six hours, no identifier, no payload. See [updates.md](updates.md) |
 | `QUIVER_UPDATE_QUELLE` | loopback only (tests): base of the release query; fixed to the project repository in production |
 
 `.env.example` is the template.
@@ -265,6 +309,8 @@ log of that window as a secret.
 | Setup asks for a code that is not known | It is in the log of **this** start: `docker logs quiver \| grep Einrichtung`. |
 | `docker exec … quiver-server` does not work | Use the absolute path or the name in `PATH` (`/usr/local/bin/quiver-server`); there is no shell. |
 | Device gets no tools | The group has no set, the set is empty, or the entry is inactive. Check admin → Groups/Sets/Library. |
+| Card says “This tool does not exist for this system.” | The program is not in the server store for that system/arch — see *Programs for the devices*. |
+| Card stays on “Downloading from the server …” | The server store has no program for the device's system, or the file changed during transfer (503 in the log). Check `GET /admin/programme`. |
 | Entra sign-in fails (`AADSTS…`) | See the table in [entra.md](entra.md#when-it-gets-stuck). |
 | Group names stay "Entra-Gruppe …" | `QUIVER_ENTRA_GRUPPENNAMEN=an` and consent for `GroupMember.Read.All` are both required. |
 | Certificate warning from 30 days before expiry | Renew with `entra-schluessel --erneuern`, upload, then `--umschalten`; see [entra.md](entra.md#renew-the-certificate-annually-without-downtime). |

@@ -21,25 +21,59 @@
 //!
 //! Mehrere Prozesse dürfen gleichzeitig schreiben: jede Änderung liest die
 //! Datei unter einer Dateisperre neu, ändert einen Wert und ersetzt die Datei
-//! atomar (schreiben, dann umbenennen).
+//! atomar (schreiben, dann umbenennen). Die Sperre wird fair vergeben (Fäden
+//! eines Prozesses stellen sich an, die Versuche der Prozesse sind gestreut),
+//! und sie hat eine Frist, damit ein hängender fremder Prozess den Kern nicht
+//! blockiert.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
-use rand::RngCore;
+use rand::{Rng, RngCore};
 
 /// So lange wird auf die Sperre des Tresors gewartet, bevor der Aufruf
 /// aufgibt. Ohne Frist hing der Kern an einem Vorgang, der nie endet.
-pub const SPERRE_FRIST: Duration = Duration::from_secs(5);
-/// Der Abstand zwischen zwei Versuchen, die Sperre zu bekommen.
-const SPERRE_ABSTAND: Duration = Duration::from_millis(20);
+///
+/// Die Frist ist eine **Notbremse für einen hängenden fremden Prozess**, keine
+/// Wartezeit für den gewöhnlichen Betrieb: die Sperre wird fair vergeben (siehe
+/// [`DateiTresor::sperren`]), ein Wartender kommt also in der Reihenfolge dran,
+/// in der er anklopft. Zehn Sekunden reichen damit auch auf einem ausgelasteten
+/// Gerät deutlich zu.
+pub const SPERRE_FRIST: Duration = Duration::from_secs(10);
+/// Der kürzeste Abstand zwischen zwei Versuchen, die Dateisperre zu bekommen.
+const SPERRE_ABSTAND_MIN: Duration = Duration::from_millis(2);
+/// Der längste: länger zu schlafen als der Halter braucht, wäre verlorene Zeit.
+const SPERRE_ABSTAND_MAX: Duration = Duration::from_millis(40);
+
+/// Eine Sperre je Ordner **innerhalb dieses Prozesses**.
+///
+/// `flock` gilt von Prozess zu Prozess und ist dort nicht fair: wer zuletzt
+/// anklopft, kann ohne Weiteres zuerst drankommen. Ein Gedränge im eigenen Haus
+/// braucht es deshalb gar nicht erst – die Fäden eines Prozesses stellen sich
+/// hier an, und nur einer von ihnen klopft bei der Datei an. Damit hängt die
+/// Wartezeit an der Zahl der **Prozesse**, nicht an der Zahl der Fäden (der
+/// Grund, warum `gleichzeitige_schreiber_verlieren_nichts` unter Last
+/// scheiterte).
+///
+/// Die Sperren werden einmal angelegt und bleiben: es gibt einen Eintrag je
+/// Tresorordner, und ein Tresorordner lebt, solange das Programm läuft.
+static PROZESSSPERREN: Mutex<BTreeMap<PathBuf, &'static Mutex<()>>> = Mutex::new(BTreeMap::new());
+
+/// Die Sperre über alle Prozesse, solange sie lebt.
+struct Sperre {
+    /// `tresor.sperre`; das Schließen gibt die Dateisperre frei. Steht
+    /// **vor** dem Platz in der Reihe, damit die Datei zuerst freikommt.
+    _datei: File,
+    /// Der Platz in der Reihe der Fäden dieses Prozesses.
+    _prozess: MutexGuard<'static, ()>,
+}
 
 /// Ein Tresor in einem Ordner.
 pub struct DateiTresor {
@@ -48,6 +82,9 @@ pub struct DateiTresor {
     /// geschrieben und kein neuer Schlüssel erzeugt, bis der User „Neu
     /// beginnen“ wählt.
     kaputt: Mutex<Option<String>>,
+    /// Wie lange auf die Sperre gewartet wird ([`SPERRE_FRIST`]); für Tests
+    /// kürzer.
+    frist: Duration,
 }
 
 impl std::fmt::Debug for DateiTresor {
@@ -69,9 +106,16 @@ struct Huelle {
 impl DateiTresor {
     /// Ein Tresor im Ordner `ordner` (wird bei Bedarf angelegt).
     pub fn im_ordner(ordner: impl Into<PathBuf>) -> Self {
+        Self::mit_frist(ordner, SPERRE_FRIST)
+    }
+
+    /// Ein Tresor mit eigener Frist für die Sperre – nur für Tests: dort soll
+    /// ein absichtlich blockierter Tresor nicht zehn Sekunden kosten.
+    pub fn mit_frist(ordner: impl Into<PathBuf>, frist: Duration) -> Self {
         Self {
             ordner: ordner.into(),
             kaputt: Mutex::new(None),
+            frist,
         }
     }
 
@@ -155,11 +199,22 @@ impl DateiTresor {
         Ok(())
     }
 
-    /// Eine Sperre über alle Prozesse (`tresor.sperre`), solange der Wert lebt.
+    /// Die Sperre des Tresors, solange der Wert lebt: erst im Prozess, dann
+    /// über alle Prozesse (`tresor.sperre`).
+    ///
     /// Mit Frist: hängt ein anderer Prozess, gibt der Aufruf auf, statt zu
-    /// warten, bis das Programm beendet wird.
-    fn sperren(&self) -> anyhow::Result<File> {
+    /// warten, bis das Programm beendet wird. Die Wartezeit selbst ist fair,
+    /// weil die Versuche gestreut sind: ohne Streuung wachen alle Wartenden im
+    /// Gleichtakt auf, einer gewinnt und die übrigen verlieren wieder – unter
+    /// Last kam so ein Faden nie an die Reihe und der Tresor meldete
+    /// „gerade gesperrt“.
+    fn sperren(&self) -> anyhow::Result<Sperre> {
         self.ordner_anlegen()?;
+        let prozess = prozesssperre(&self.ordner);
+        let prozess = prozess
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+
         let pfad = self.ordner.join("tresor.sperre");
         let datei = OpenOptions::new()
             .create(true)
@@ -168,17 +223,27 @@ impl DateiTresor {
             .open(&pfad)?;
         // Auch die Sperrdatei gehört nur dem Benutzer (0644 wäre zu offen).
         crate::rechte::datei_schuetzen(&pfad);
+
         let beginn = Instant::now();
+        let mut abstand = SPERRE_ABSTAND_MIN;
         loop {
             match datei.try_lock() {
-                Ok(()) => return Ok(datei),
-                Err(std::fs::TryLockError::WouldBlock) if beginn.elapsed() < SPERRE_FRIST => {
-                    std::thread::sleep(SPERRE_ABSTAND);
+                Ok(()) => {
+                    return Ok(Sperre {
+                        _datei: datei,
+                        _prozess: prozess,
+                    })
                 }
-                Err(_) => {
-                    anyhow::bail!("Der Tresor ist gerade gesperrt – bitte gleich noch einmal")
-                }
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(fehler) => return Err(fehler.into()),
             }
+            let rest = self.frist.saturating_sub(beginn.elapsed());
+            if rest.is_zero() {
+                anyhow::bail!("Der Tresor ist gerade gesperrt – bitte gleich noch einmal");
+            }
+            let streuung = abstand.mul_f64(rand::rng().random::<f64>());
+            std::thread::sleep((abstand + streuung).min(rest));
+            abstand = (abstand * 2).min(SPERRE_ABSTAND_MAX);
         }
     }
 
@@ -285,6 +350,25 @@ impl DateiTresor {
             serde_json::to_string(&huelle)?.as_bytes(),
         )
     }
+}
+
+/// Die Sperre für einen Ordner im eigenen Prozess (siehe
+/// [`PROZESSSPERREN`]).
+///
+/// Der Schlüssel ist der echte Ordner, damit zwei Schreibweisen desselben
+/// Pfades (etwa mit `..` darin) in derselben Reihe stehen. Gibt es den Ordner
+/// noch nicht, gilt der Pfad, wie er dasteht – er wird gleich angelegt, und
+/// dann stimmen beide.
+fn prozesssperre(ordner: &Path) -> &'static Mutex<()> {
+    let schluessel = ordner
+        .canonicalize()
+        .unwrap_or_else(|_| ordner.to_path_buf());
+    let mut karte = PROZESSSPERREN
+        .lock()
+        .unwrap_or_else(|vergiftet| vergiftet.into_inner());
+    karte
+        .entry(schluessel)
+        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
 }
 
 /// Der Name, unter dem ein kaputter Tresor liegen bleibt:
@@ -413,7 +497,9 @@ mod tests {
                 std::thread::spawn(move || {
                     let tresor = DateiTresor::im_ordner(pfad);
                     for runde in 0..10 {
-                        tresor.schreiben(&format!("{nummer}-{runde}"), "x").unwrap();
+                        tresor
+                            .schreiben(&format!("{nummer}-{runde}"), "x")
+                            .expect("kein Schreibvorgang geht verloren");
                     }
                 })
             })
@@ -554,11 +640,13 @@ mod tests {
     }
 
     /// Die Sperre hat eine Frist: hängt ein anderer Schreiber, gibt der Aufruf
-    /// auf, statt den Kern zu blockieren.
+    /// auf, statt den Kern zu blockieren. Hier mit einer kurzen Frist, damit
+    /// der Test nicht zehn Sekunden kostet.
     #[test]
     fn die_sperre_hat_eine_frist() {
         let ordner = tempfile::tempdir().unwrap();
-        let tresor = DateiTresor::im_ordner(ordner.path());
+        let frist = Duration::from_millis(200);
+        let tresor = DateiTresor::mit_frist(ordner.path(), frist);
         tresor.schreiben("a", "x").unwrap();
         // Ein anderer Prozess (hier ein Faden mit eigenem Deskriptor) hält die
         // Sperre.
@@ -574,11 +662,39 @@ mod tests {
         let fehler = tresor.lesen("a").unwrap_err().to_string();
         assert!(fehler.contains("gesperrt"), "{fehler}");
         assert!(
-            beginn.elapsed() >= SPERRE_FRIST,
+            beginn.elapsed() >= frist,
             "es wurde gewartet, aber nicht ewig: {:?}",
+            beginn.elapsed()
+        );
+        assert!(
+            beginn.elapsed() < frist * 5,
+            "die Frist gilt: {:?}",
             beginn.elapsed()
         );
         halter.unlock().unwrap();
         assert_eq!(tresor.lesen("a").unwrap().as_deref(), Some("x"));
+    }
+
+    /// Die Sperre ist fair: Fäden desselben Prozesses stellen sich an, statt
+    /// sich um die Dateisperre zu prüfen. Unter Last kam vorher ein Faden nie
+    /// an die Reihe und der Tresor meldete „gerade gesperrt“.
+    #[test]
+    fn viele_schreiber_kommen_alle_dran() {
+        let ordner = tempfile::tempdir().unwrap();
+        let pfad = ordner.path().to_path_buf();
+        let faeden: Vec<_> = (0..16)
+            .map(|nummer| {
+                let pfad = pfad.clone();
+                std::thread::spawn(move || {
+                    let tresor = DateiTresor::mit_frist(pfad, Duration::from_millis(500));
+                    for runde in 0..5 {
+                        tresor.schreiben(&format!("{nummer}-{runde}"), "x").unwrap();
+                    }
+                })
+            })
+            .collect();
+        for faden in faeden {
+            faden.join().expect("kein Faden lief in die Frist");
+        }
     }
 }

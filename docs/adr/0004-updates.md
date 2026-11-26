@@ -1,6 +1,13 @@
 # ADR 0004 — Updates: anzeigen statt selbst installieren
 
-**Stand:** 2026-12-02 · **Aufgabe:** 34
+**Stand:** 2026-12-02 · **Aufgabe:** 34 · **Status:** ersetzt durch
+[ADR 0005](0005-client-update.md) (Aufgabe 39)
+
+> Diese Entscheidung gilt nicht mehr in Punkt 1, 3 und 4: der Client bietet ein
+> Update inzwischen an und tauscht sich selbst aus, wenn ein passendes Paket
+> vorliegt und die Firma es nicht abschaltet. Was bleibt, ist der Weg nach
+> draußen (nur der Server fragt), die Anzeige und die Pakete für die
+> Geräteverwaltung. Die Begründung steht in [ADR 0005](0005-client-update.md).
 
 ## Kontext
 

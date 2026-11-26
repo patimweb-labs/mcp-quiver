@@ -209,6 +209,10 @@ Dateien kommen.
   `%LOCALAPPDATA%\Programs\mcp-quiver`, mit Startmenü-Verknüpfung, Symbol unter
   *Apps und Features* und Deinstallation ohne Administratorrechte; dazu das
   portable `.zip` mit `quiver.exe` neben `LICENSE` und `README.md`.
+* **In den Paketen stecken keine Werkzeuge mehr.** Der Client bekommt sie bei
+  der Anmeldung vom Server und hält sie auf dessen Stand (Aufgabe 37); die
+  Programme je Plattform liefert das Release von
+  [`quiver-tools`](https://github.com/patimweb-labs/quiver-tools) (Aufgabe 38).
 * Autostart steckt in keinem Paket: den richtet der Client selbst ein
   (LaunchAgent, `HKCU\…\Run`, XDG-Autostart), wenn der Benutzer ihn einschaltet.
 

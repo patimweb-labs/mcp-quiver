@@ -33,6 +33,8 @@ tracing.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
 hex.workspace = true
+# Entpacken der Update-Pakete (ZIP, tar.gz) ohne fremdes Werkzeug (Aufgabe 39).
+flate2 = "1"
 axum = "0.8"
 dirs = "6"
 futures-util = "0.3"

@@ -8,6 +8,7 @@
     ServerUrl      REG_SZ    feste Server-Adresse
     Autostart      REG_DWORD 1 = an, 0 = aus
     UpdateHinweis  REG_SZ    Text des Hinweises; {version} wird ersetzt
+    UpdateAngebot  REG_DWORD 1 = Client darf selbst einspielen, 0 = nur Hinweis
 
   Platzhalter `https://quiver.example.test` vor dem Ausrollen ersetzen.
 -->
@@ -38,6 +39,15 @@
       <parentCategory ref="Quiver" />
       <elements>
         <boolean id="Autostart" valueName="Autostart" />
+      </elements>
+    </policy>
+    <policy name="UpdateAngebot" class="Machine"
+            displayName="$(string.UpdateAngebot)"
+            explainText="$(string.UpdateAngebotHelp)"
+            key="Software\Policies\mcp-quiver" valueName="UpdateAngebot">
+      <parentCategory ref="Quiver" />
+      <elements>
+        <boolean id="UpdateAngebot" valueName="UpdateAngebot" />
       </elements>
     </policy>
     <policy name="UpdateHinweis" class="Machine"
