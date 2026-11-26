@@ -37,6 +37,7 @@ import type {
   Satz,
   SatzId,
   Ueberblick,
+  UpdateStand,
   ZuordnungAendern,
 } from "./typen";
 
@@ -386,6 +387,13 @@ export class Client {
       `${API_BASIS}/admin/entra-gruppen/${pfad(id)}`,
       { methode: "PUT", rumpf: { aufnehmen: true } },
     );
+  }
+
+  // -------------------------------------------------------------- Updates
+
+  /** Stand der Update-Prüfung (Aufgabe 34). */
+  updates(): Promise<UpdateStand> {
+    return anfrage<UpdateStand>(`${API_BASIS}/admin/updates`);
   }
 
   // -------------------------------------------------------------- Geräte

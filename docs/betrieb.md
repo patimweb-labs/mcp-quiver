@@ -205,6 +205,8 @@ it again. At most 200 groups are created this way.
 | `QUIVER_ENTRA_GRAPH` | Base URL for Graph, loopback only (tests); fixed to `https://graph.microsoft.com` in production |
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
 | `QUIVER_ALTGERAETE` | `gesperrt` (default once Entra is configured, otherwise `erlaubt`) for devices without a user |
+| `QUIVER_UPDATES` | `an` (default) or `aus`: may the server ask the GitHub releases for a new version? At most every six hours, no identifier, no payload. See [updates.md](updates.md) |
+| `QUIVER_UPDATE_QUELLE` | loopback only (tests): base of the release query; fixed to the project repository in production |
 
 `.env.example` is the template.
 

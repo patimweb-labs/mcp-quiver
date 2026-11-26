@@ -19,7 +19,7 @@ use quiver_domain::{
 };
 use quiver_protocol::{
     Anmelden, AnmeldenAntwort, Code, CodeAnlegen, EintragZustand, GeraetAendern, GeraetStand,
-    Meldung, PruefspurEintrag, Ueberblick,
+    Meldung, PruefspurEintrag, Ueberblick, UpdateAngebot, UpdateStand,
 };
 use quiver_server::{app, benutzer, Konfig};
 use serde::de::DeserializeOwned;
@@ -1758,4 +1758,56 @@ async fn gruppe_mit_unbekanntem_satz_ist_422_mit_namen() {
             .contains("gibtsnicht"),
         "die Namen stehen in der Antwort: {rumpf}"
     );
+}
+
+// ------------------------------------------------ Updates: nur anzeigen (34)
+
+/// `GET /admin/updates` beantwortet die drei Fragen der Verwaltung, ohne dass
+/// je etwas geladen oder installiert wird: Server-Version, neueste
+/// veröffentlichte Version (hier: noch keine) und die Geräte mit älterem
+/// Client (hier: keines). Die Abfrage der Veröffentlichung ist an.
+#[tokio::test]
+async fn updates_zeigen_den_stand_ohne_angebot() {
+    let p = Pruefung::neu().await;
+    let (status, rumpf) = p.admin("GET", "/admin/updates", None).await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    assert_eq!(rumpf["abfrage_an"], true);
+    assert_eq!(rumpf["neueste_version"], Value::Null);
+    assert_eq!(rumpf["server_veraltet"], false);
+    assert_eq!(rumpf["veraltete_clients"].as_array().map(Vec::len), Some(0));
+    let stand: UpdateStand = als(&rumpf);
+    assert_eq!(stand.server_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(stand.fehler, None);
+}
+
+/// `GET /geraet/updates` nennt dem Gerät die laufende und die neueste Version –
+/// und **keine** Datei. Ohne bekannte Veröffentlichung bleibt es leer; ein
+/// Herunterladen gibt es nicht.
+#[tokio::test]
+async fn das_geraet_erfaehrt_die_veroeffentlichung_ohne_datei() {
+    let p = Pruefung::neu().await;
+    let antwort = p.aufbau().await;
+    let (status, rumpf) = p
+        .anfrage(
+            "GET",
+            "/geraet/updates?version=0.1.0",
+            Some(&antwort.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let angebot: UpdateAngebot = als(&rumpf);
+    assert_eq!(angebot.aktuelle_version, "0.1.0");
+    assert_eq!(angebot.neueste_version, None);
+    assert_eq!(angebot.aenderungen, None);
+    // Es gibt keinen Weg zu einer Datei (Aufgabe 34: nur anzeigen).
+    let (status, _) = p
+        .anfrage(
+            "GET",
+            "/geraet/updates/datei/quiver-0.2.0-windows-x86_64.msi",
+            Some(&antwort.token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

@@ -10,6 +10,7 @@ pub mod kopf;
 pub mod protokoll;
 pub mod seitenleiste;
 pub mod tools;
+pub mod update;
 pub mod verbindung;
 
 use eframe::egui::{self, RichText};

@@ -122,20 +122,36 @@ fn anmelden(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
         |ui| {
             ui.add_space(thema::SPACE_2);
             // Die Adresse steht immer da — vorbelegt mit der zuletzt
-            // benutzten, auch nach dem Abmelden.
-            let adresse = bausteine::feld(
-                ui,
-                &f,
-                &t(sprache, "verbindung.server"),
-                Some(&t(sprache, "verbindung.server_hinweis")),
-                |ui| {
-                    ui.add(
-                        bausteine::eingabefeld(&mut sicht.eingaben.server)
-                            .hint_text("https://quiver.firma.de")
-                            .desired_width(bausteine::feldbreite(ui)),
-                    )
-                },
-            );
+            // benutzten, auch nach dem Abmelden. Ist sie von der Firma
+            // vorgegeben (Aufgabe 34), steht sie fest und ist nicht änderbar.
+            let vorgegeben = sicht.modell.vorgaben.server_url.clone();
+            let adresse = match vorgegeben {
+                Some(url) => bausteine::feld(
+                    ui,
+                    &f,
+                    &t(sprache, "verbindung.server"),
+                    Some(&t(sprache, "vorgabe.server_fest")),
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(bausteine::text(&f, &url, Ton::Leise).monospace())
+                                .wrap(),
+                        )
+                    },
+                ),
+                None => bausteine::feld(
+                    ui,
+                    &f,
+                    &t(sprache, "verbindung.server"),
+                    Some(&t(sprache, "verbindung.server_hinweis")),
+                    |ui| {
+                        ui.add(
+                            bausteine::eingabefeld(&mut sicht.eingaben.server)
+                                .hint_text("https://quiver.firma.de")
+                                .desired_width(bausteine::feldbreite(ui)),
+                        )
+                    },
+                ),
+            };
             ui.add_space(thema::SPACE_2);
             match &wege {
                 None => {
@@ -199,7 +215,8 @@ fn anmelden(ui: &mut egui::Ui, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>) {
                     );
                 }
             }
-            if wege.is_some() {
+            // Eine vorgegebene Adresse lässt sich nicht ändern.
+            if wege.is_some() && sicht.modell.vorgaben.server_url.is_none() {
                 ui.add_space(thema::SPACE_3);
                 andere_adresse = bausteine::knopf(
                     ui,

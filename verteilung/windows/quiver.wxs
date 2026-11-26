@@ -12,6 +12,20 @@
 
   Die `UpgradeCode` bleibt für immer dieselbe — daran erkennt Windows, dass
   eine neue Version die alte ersetzt. Nicht ändern.
+
+  Stille Installation und Update (Aufgabe 34):
+
+      msiexec /i quiver-<version>-windows-x86_64.msi /qn
+
+  Das MSI braucht keinen weiteren Eingriff: es läuft still (`/qn`), das
+  `MajorUpgrade` ersetzt die alte Fassung, und der **Restart Manager** schließt
+  eine laufende `quiver.exe` vorher geordnet und startet sie nach dem Update
+  wieder. `MSIDISABLERMRESTART` steht deshalb ausdrücklich auf `0` (Vorgabe von
+  Windows; hier nur, damit es niemand versehentlich abschaltet).
+
+  Das **Profil** des Benutzers (`%APPDATA%\mcp-quiver`) liegt außerhalb des
+  Installationsordners: Deinstallieren lässt es stehen. Geeignet als
+  „Branchen-App (MSI)“ in Intune, siehe `docs/intune.md`.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
     <Package
@@ -28,6 +42,10 @@
 
         <MajorUpgrade
             DowngradeErrorMessage="Eine neuere Version von mcp-quiver ist bereits installiert." />
+
+        <!-- Restart Manager: schließt die laufende quiver.exe geordnet (WM_CLOSE)
+             und startet sie nach dem Update wieder. `0` = nicht abschalten. -->
+        <Property Id="MSIDISABLERMRESTART" Value="0" />
 
         <MediaTemplate EmbedCab="yes" />
 
@@ -55,6 +73,8 @@
     <Fragment>
         <ComponentGroup Id="Programm" Directory="INSTALLFOLDER">
             <Component>
+                <!-- Am laufenden Programm erkennt der Restart Manager, wen er
+                     vor dem Update schließen und danach wieder starten muss. -->
                 <File Id="QuiverExe" Source="$(var.Quelle)\quiver.exe" KeyPath="yes" />
             </Component>
             <Component>

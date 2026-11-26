@@ -1,45 +1,44 @@
-# 34 – Updates erkennen und installieren
+# 34 – Neue Versionen anzeigen, Verteilung über Intune
 
-Client und Verwaltung erkennen neue Versionen. Die Verwaltung zeigt sie an, der Client kann sich selbst
-aktualisieren: neue Version installieren, alte entfernen, **Konfiguration behalten**.
+quiver läuft für sich: keine fremden Werkzeuge, keine Signaturschlüssel, kein Selbst-Installieren.
+Installiert, aktualisiert und entfernt wird durch die Geräteverwaltung (Intune) oder von Hand mit den
+Paketen aus dem Release. Die Konfiguration des Benutzers bleibt bei jedem Update erhalten.
 
-## Grundsätze
+## 1. Anzeigen
 
-- **Keine Abfrage ohne Wissen des Betreibers.** Der Server fragt die Releases (GitHub) ab, Schalter
-  `QUIVER_UPDATES=an|aus` (Standard an), höchstens alle 6 Stunden mit Streuung, ohne Kennung, ohne
-  Nutzdaten. Der Client fragt **nur den Server**, nie das Internet. README/SECURITY anpassen („kein Ruf nach
-  Hause“ stimmt sonst nicht mehr).
-- **Installiert wird nur signiert.** Jede Datei eines Releases hat eine Ed25519-Signatur (minisign-Format)
-  über Dateiname, Version, Plattform und Prüfsumme. Der öffentliche Schlüssel steckt im Client. Ohne oder
-  mit falscher Signatur wird nichts installiert. Der private Schlüssel liegt nur als GitHub-Secret
-  `UPDATE_SIGNATUR_SCHLUESSEL` vor; ihn erzeugt und hinterlegt der Betreiber (Anleitung mitliefern).
-- **Kein Rückschritt:** nur höhere Versionen; Verkettung mit signierter Liste (`updates.json`).
-- Der Download kommt vom Server als Spiegel (geprüft gegen Signatur) oder direkt vom Release; die
-  Signatur entscheidet, nicht die Quelle. Feste Größengrenzen, Ablage nur im eigenen Ordner (0700).
+- Server fragt die Releases höchstens alle 6 h ab (`QUIVER_UPDATES=an|aus`, Standard an, ohne Kennung, ohne
+  Nutzdaten) und zeigt in der Verwaltung: neuere Server-Version, neueste Client-Version, welche Geräte
+  ältere Clients haben.
+- Der Client fragt nur den Server. Ist er älter, zeigt er einen ruhigen Hinweis in Fenster und Tray mit
+  Text aus der Vorgabe (Standard: „Version X ist verfügbar“; mit Verwaltung: „kommt über die
+  Geräteverwaltung“) und Link auf die Änderungen. Kein Herunterladen, kein Installieren.
 
-## Verwaltung
+## 2. Pakete für Intune
 
-Hinweis, wenn der Server älter ist (Version, Link auf Änderungen, Anleitung zum Aktualisieren des
-Containers; der Server tauscht sich nicht selbst aus). Liste der Geräte zeigt die Client-Version, veraltete
-sind markiert; Admin kann je Gruppe festlegen: nur anzeigen / automatisch installieren / Mindestversion.
+- Windows: MSI (je Benutzer, wie heute) muss still laufen (`msiexec /i … /qn`), Upgrade ersetzt die alte
+  Version, beendet einen laufenden Client vorher geordnet (RestartManager) und startet ihn danach wieder;
+  Deinstallation lässt das Profil stehen. Geeignet als „Branchen-App (MSI)“ in Intune, ohne weiteres Werkzeug.
+- macOS: zusätzlich `.pkg` (pkgbuild/productbuild, Bordmittel), installiert nach /Applications, ersetzt die
+  alte Version, beendet den laufenden Client vorher und startet ihn danach wieder. `.dmg` bleibt.
+- Linux bleibt wie es ist.
 
-## Client
+## 3. Vorgaben der Firma
 
-- Hinweis im Fenster und im Tray („Version X verfügbar“), Knopf „Jetzt installieren“, automatisches
-  Installieren nach Vorgabe, aber nie während ein Tool-Aufruf läuft; Aufschieben möglich.
-- Ablauf: herunterladen → Signatur prüfen → **Profil sichern** → alte Instanz geordnet beenden →
-  ersetzen → neue starten → Gesundheit (startet, MCP-Endpunkt antwortet) → alte Version entfernen.
-  Klappt der Start nicht: alte Version wieder einsetzen, Meldung, nicht erneut versuchen.
-- Je Paketart: macOS `.app` (atomar tauschen, Signatur/Quarantäne beachten), Windows MSI je Benutzer
-  (Upgrade, alte Version wird entfernt) und portables ZIP, Linux AppImage/`.tar.gz`; `.deb`/`.rpm` brauchen
-  Adminrechte und werden **nur angezeigt**. Nicht beschreibbare Orte: nur anzeigen.
-- Konfiguration, Tresor, Protokoll und Anmeldung bleiben; Profil-Migrationen sind abwärts verträglich
-  oder werden gesichert.
+Nur lesbar für den Benutzer, gesetzt durch die Verwaltung; Vorrang vor dem Profil:
+- Windows: `HKLM\Software\Policies\mcp-quiver`
+- macOS: verwaltete Einstellungen für `de.weppelmann.mcp-quiver` (nur der verwaltete Bereich)
+- Linux: `/etc/mcp-quiver/vorgaben.json` (nur root-eigen und nicht weltschreibbar)
+Felder: `ServerUrl` (dann fest, im Fenster nicht änderbar, Hinweis „von deiner Firma vorgegeben“),
+`Autostart` (an/aus), `UpdateHinweis` (Text). Ungültige Werte: ignorieren, im Protokoll nennen. Ohne
+Vorgaben alles wie bisher.
+- Vorlagen mitliefern: `.mobileconfig` (macOS) und ADMX/ADML bzw. Registry-Vorlage (Windows), mit
+  Platzhalter-Adresse.
 
 ## Prüfen
 
-Attrappe-Release (Server und Datei lokal), Fälle: neuer, gleich, älter, falsche Signatur, vertauschte
-Plattform, abgeschnittene Datei, voller Datenträger, Start der neuen Version scheitert → Rückfall,
-Aufruf läuft gerade, Nutzer schiebt auf, Konfiguration danach unverändert. Auf allen drei Systemen in der CI.
+Tests für die Anzeige, Vorgaben (je Plattform), stille Installation und Upgrade so weit die CI es
+erlaubt (Windows-Läufer: `msiexec /qn` installieren, Version 2 darüber, deinstallieren, Profil noch da;
+macOS-Läufer: `installer -pkg`). README/SECURITY: die Versionsabfrage des Servers erwähnen.
+`docs/intune.md` und `docs/intune.de.md`: Schritt für Schritt für Windows und macOS, kurz.
 
-Nicht committen, nicht pushen, keine Schlüssel erzeugen oder in Dateien schreiben.
+**Nicht committen, nicht pushen.**

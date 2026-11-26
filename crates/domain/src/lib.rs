@@ -13,6 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+pub mod updates;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Name eines Felds → Wert.

@@ -222,8 +222,12 @@ Repository ist derselbe Aufruf und kann lokal bauen:
 Die Pakete sind **unsigniert**, solange der Betreiber sie nicht signiert:
 Gatekeeper und SmartScreen fragen beim ersten Start einmal nach. Was das heißt
 und wie man daran vorbeikommt:
-[docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet). Jedes Release
-trägt außerdem `SHA256SUMS` und einen Herkunftsnachweis, den man prüfen kann:
+[docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet). quiver
+installiert sich nicht selbst: Aktualisiert wird über die Geräteverwaltung
+(Intune) oder von Hand aus den Paketen des Releases —
+[docs/intune.de.md](docs/intune.de.md); den Versionshinweis, den der Client
+zeigt, beschreibt [docs/updates.de.md](docs/updates.de.md). Jedes Release trägt
+außerdem `SHA256SUMS` und einen Herkunftsnachweis, den man prüfen kann:
 
 ```bash
 sha256sum -c SHA256SUMS
@@ -302,8 +306,16 @@ Protokoll: [docs/client.de.md](docs/client.de.md).
   Prozesse. Der `Host`-Kopf muss zur Basis-URL passen, CSP ohne Inline, HSTS
   bei https, Grenzen für Rumpf und Zeit, gedrosselte Anmeldung, eine Prüfspur
   über 180 Tage. Jeder Wert steht in [docs/haertung.md](docs/haertung.md).
-- **Keine Telemetrie.** Keine Update-Abfrage, keine Analyse, kein Ruf nach
-  Hause. Der Server spricht nur mit Microsoft, wenn Entra eingerichtet ist.
+- **Ein Versionshinweis, mehr nicht.** Der Client fragt nur seinen eigenen
+  Server, nie das Internet, und er installiert nichts. Der Server fragt die
+  GitHub-Veröffentlichungen höchstens alle sechs Stunden, mit Streuung, ohne
+  Kennung und ohne Nutzdaten; `QUIVER_UPDATES=aus` schaltet das ab. Der Client
+  zeigt einen ruhigen Hinweis mit dem Text des Betreibers und einem Link auf die
+  Änderungen. Installiert und aktualisiert wird über die Geräteverwaltung
+  (Intune) oder von Hand: [docs/intune.de.md](docs/intune.de.md). Keine
+  Analyse, kein Ruf nach Hause.
+- **Der Server spricht weiterhin nur mit Microsoft, wenn Entra eingerichtet
+  ist.**
 
 ## Betrieb
 

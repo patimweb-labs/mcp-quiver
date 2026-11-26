@@ -197,6 +197,54 @@ impl std::fmt::Debug for EntraKonfig {
     }
 }
 
+/// Woher der Server die Veröffentlichungen erfährt (Aufgabe 34).
+///
+/// **Keine Abfrage ohne Wissen des Betreibers:** [`UpdateKonfig::an`] ist der
+/// Schalter `QUIVER_UPDATES=an|aus` (Standard an). Gefragt wird höchstens alle
+/// sechs Stunden, mit Streuung, ohne Kennung und ohne Nutzdaten. Der Client
+/// fragt **nur diesen Server**, nie das Internet.
+#[derive(Clone)]
+pub struct UpdateKonfig {
+    /// Ist die Abfrage der Veröffentlichungen eingeschaltet?
+    pub an: bool,
+    /// Die Basis der Veröffentlichungen, z. B.
+    /// `https://github.com/patimweb-labs/mcp-quiver`. In Tests Loopback.
+    pub quelle: String,
+    /// Abstand zwischen zwei Abfragen.
+    pub abstand: Duration,
+    /// Zusätzliche Streuung (damit viele Server nicht im Takt fragen).
+    pub streuung: Duration,
+}
+
+impl std::fmt::Debug for UpdateKonfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UpdateKonfig")
+            .field("an", &self.an)
+            .field("quelle", &self.quelle)
+            .field("abstand", &self.abstand)
+            .field("streuung", &self.streuung)
+            .finish()
+    }
+}
+
+impl Default for UpdateKonfig {
+    fn default() -> Self {
+        Self {
+            an: true,
+            quelle: String::from(UPDATE_QUELLE),
+            abstand: UPDATE_ABSTAND,
+            streuung: UPDATE_STREUUNG,
+        }
+    }
+}
+
+/// Wo die Veröffentlichungen liegen (GitHub).
+pub const UPDATE_QUELLE: &str = "https://github.com/patimweb-labs/mcp-quiver";
+/// Höchstens alle sechs Stunden fragen.
+pub const UPDATE_ABSTAND: Duration = Duration::from_secs(6 * 60 * 60);
+/// Bis zu 30 Minuten Streuung dazu.
+pub const UPDATE_STREUUNG: Duration = Duration::from_secs(30 * 60);
+
 /// Woher der Server seine Daten nimmt.
 #[derive(Debug, Clone)]
 pub struct Konfig {
@@ -227,6 +275,8 @@ pub struct Konfig {
     /// So viele Anmeldevorgänge dürfen gleichzeitig offen sein
     /// ([`crate::anmeldung::OFFENE_VORGAENGE_MAX`]). Im Test kleiner.
     pub offene_vorgaenge_max: usize,
+    /// Update-Prüfung (Aufgabe 34).
+    pub updates: UpdateKonfig,
 }
 
 impl Konfig {
@@ -247,6 +297,7 @@ impl Konfig {
             laufzeit: Laufzeit::neu(),
             rumpf_zeit: crate::RUMPF_ZEIT,
             offene_vorgaenge_max: crate::anmeldung::OFFENE_VORGAENGE_MAX,
+            updates: UpdateKonfig::default(),
         }
     }
 
@@ -436,6 +487,15 @@ impl Konfig {
             adresse,
         )?;
 
+        let updates = UpdateKonfig {
+            an: updates_an_aus(std::env::var("QUIVER_UPDATES").ok().as_deref())?,
+            ..UpdateKonfig::default()
+        };
+        let updates = UpdateKonfig {
+            quelle: update_quelle_aus(std::env::var("QUIVER_UPDATE_QUELLE").ok().as_deref())?,
+            ..updates
+        };
+
         Ok(Self {
             daten,
             admin_dist: None,
@@ -449,6 +509,7 @@ impl Konfig {
             laufzeit: Laufzeit::neu(),
             rumpf_zeit: crate::RUMPF_ZEIT,
             offene_vorgaenge_max: crate::anmeldung::OFFENE_VORGAENGE_MAX,
+            updates,
         })
     }
 
@@ -476,6 +537,35 @@ pub fn gruppen_namen_aus(wert: Option<&str>) -> anyhow::Result<bool> {
             ),
         },
     }
+}
+
+/// Den Schalter `QUIVER_UPDATES` lesen: Standard an, sonst Startfehler.
+pub fn updates_an_aus(wert: Option<&str>) -> anyhow::Result<bool> {
+    match wert.map(str::trim).filter(|wert| !wert.is_empty()) {
+        None => Ok(true),
+        Some(wert) => match wert.to_ascii_lowercase().as_str() {
+            "an" => Ok(true),
+            "aus" => Ok(false),
+            anderes => anyhow::bail!(
+                "QUIVER_UPDATES kennt nur an|aus, nicht {anderes}; ohne Angabe gilt an"
+            ),
+        },
+    }
+}
+
+/// Die Quelle der Veröffentlichungen: im Betrieb GitHub, in Tests Loopback.
+pub fn update_quelle_aus(wert: Option<&str>) -> anyhow::Result<String> {
+    let Some(wert) = wert.map(str::trim).filter(|wert| !wert.is_empty()) else {
+        return Ok(String::from(UPDATE_QUELLE));
+    };
+    let basis = basis_url_pruefen(wert)?.trim_end_matches('/').to_string();
+    if basis != UPDATE_QUELLE && !ist_loopback_url(&basis) {
+        anyhow::bail!(
+            "QUIVER_UPDATE_QUELLE ist nur für Tests auf Loopback erlaubt; \
+             im Betrieb gilt {UPDATE_QUELLE}"
+        );
+    }
+    Ok(basis)
 }
 
 /// Die Basis für Graph: im Betrieb der feste Host, in Tests Loopback.

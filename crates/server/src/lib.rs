@@ -49,6 +49,7 @@ mod sitzung;
 mod speicher;
 pub mod spur;
 pub mod unterbefehl;
+mod updates;
 mod zuordnung;
 mod zustand;
 
@@ -68,7 +69,10 @@ use tower_http::trace::TraceLayer;
 
 use zustand::Zustand;
 
-pub use config::{Ausweis, EntraKonfig, Konfig, Uhr, GRAPH_BASIS, GRAPH_SCOPE};
+pub use config::{
+    Ausweis, EntraKonfig, Konfig, Uhr, UpdateKonfig, GRAPH_BASIS, GRAPH_SCOPE, UPDATE_ABSTAND,
+    UPDATE_QUELLE, UPDATE_STREUUNG,
+};
 pub use entra_schluessel::{EntraSchluessel, ZertifikatStand};
 pub use fehler::{Ergebnis, FehlerAntwort};
 pub use host::GESUND;
@@ -109,6 +113,7 @@ pub async fn app_mit_hintergrund_und_abschalter(
     let aufgaben = vec![
         tokio::spawn(refresh::hintergrund(zustand.clone())),
         tokio::spawn(beobachte_datenbank(zustand.clone())),
+        tokio::spawn(updates::hintergrund(zustand.clone())),
     ];
     Ok((router, Abschalter { zustand, aufgaben }))
 }
@@ -226,6 +231,8 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         .route("/ereignisse", get(geraet::ereignisse))
         .route("/meldung", post(geraet::meldung))
         .route("/abmelden", post(geraet::abmelden))
+        // Aufgabe 34: was der Server über die Veröffentlichung weiß.
+        .route("/updates", get(updates::angebot))
         .method_not_allowed_fallback(methode_falsch)
         .route_layer(middleware::from_fn_with_state(
             zustand.clone(),
@@ -276,6 +283,7 @@ fn router(zustand: Arc<Zustand>, dist: Option<PathBuf>) -> Router {
         )
         .route("/codes", post(admin::code_anlegen))
         .route("/ueberblick", get(admin::ueberblick))
+        .route("/updates", get(updates::stand))
         .route("/benutzer", get(benutzer::benutzer_liste))
         .route(
             "/benutzer/{oid}",

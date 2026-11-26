@@ -1,0 +1,26 @@
+#!/bin/sh
+# Nach der Installation (Aufgabe 34): den Client wieder starten, wenn er vorher
+# lief – im Angemeldeten Benutzer, nicht als root. Sonst bliebe nach einem
+# Update ein Tray-Symbol verschwunden.
+set -eu
+
+kennung="de.weppelmann.mcp-quiver"
+marke="/var/tmp/$kennung.lief"
+[ -f "$marke" ] || exit 0
+rm -f "$marke"
+
+benutzer=$(/usr/bin/stat -f '%Su' /dev/console)
+case "$benutzer" in
+    "" | root | loginwindow)
+        # Niemand angemeldet (oder nur der Anmeldebildschirm): nichts starten.
+        exit 0
+        ;;
+esac
+
+uid=$(/usr/bin/id -u "$benutzer")
+# `launchctl asuser` gibt dem Start die Sitzung des Benutzers; `open -a` nimmt
+# das Bündel, das gerade installiert wurde.
+/usr/bin/launchctl asuser "$uid" /usr/bin/sudo -u "$benutzer" \
+    /usr/bin/open -a "/Applications/quiver.app" >/dev/null 2>&1 || true
+
+exit 0

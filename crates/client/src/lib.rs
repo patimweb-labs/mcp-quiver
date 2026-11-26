@@ -43,6 +43,8 @@ pub mod rechte;
 mod server_anmeldung;
 mod sse;
 mod tresor;
+pub mod update;
+pub mod vorgaben;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
@@ -68,6 +70,8 @@ use hilfen::Abbruch;
 pub use protokoll::{Aufruf, LogFilter, Zeile};
 pub use server_anmeldung::{Browser, SystemBrowser};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
+pub use update::UpdateLage;
+pub use vorgaben::Vorgaben;
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
 const STATUS_ABSTAND: Duration = Duration::from_secs(10 * 60);
@@ -89,6 +93,9 @@ pub struct KernKonfig {
     /// Wer die Anmeldeseite des Servers öffnet (Aufgabe 22). Standard: das
     /// System; der Ende-zu-Ende-Test setzt eine Attrappe ein.
     pub browser: Arc<dyn Browser>,
+    /// Vorgaben der Firma (Aufgabe 34): Vorrang vor dem Profil. Standard: was
+    /// das System meldet; Tests setzen sie ausdrücklich.
+    pub vorgaben: Vorgaben,
 }
 
 impl KernKonfig {
@@ -102,6 +109,7 @@ impl KernKonfig {
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
             browser: Arc::new(SystemBrowser),
+            vorgaben: vorgaben::lesen(&vorgaben::Ort::aus_umgebung()),
         }
     }
 }
@@ -285,6 +293,14 @@ pub struct Modell {
     /// `.kaputt-<zeit>` daneben (Paket 3). Der Client läuft weiter.
     #[serde(default)]
     pub profil_hinweis: Option<String>,
+    /// Steht ein Update an (Aufgabe 34)? Reine Anzeige; eingespielt wird es
+    /// durch die Geräteverwaltung oder von Hand.
+    #[serde(default)]
+    pub update: UpdateLage,
+    /// Vorgaben der Firma (Aufgabe 34): feste Server-Adresse, Autostart,
+    /// Hinweistext. Leer heißt: keine Vorgaben.
+    #[serde(default)]
+    pub vorgaben: Vorgaben,
 }
 
 /// Der Stand eines Eintrags, ohne Verbindung (der Teil, der ins Modell geht).
@@ -386,6 +402,12 @@ impl Auslastung {
         true
     }
 
+    /// Laufen gerade keine Aufrufe?
+    #[cfg(test)]
+    pub(crate) fn ist_muessig(&self) -> bool {
+        self.gesamt == 0
+    }
+
     pub(crate) fn freigeben(&mut self, id: &EintragId) {
         if let Some(offen) = self.je_eintrag.get_mut(id) {
             *offen = offen.saturating_sub(1);
@@ -447,6 +469,8 @@ struct Stand {
     protokoll_fuer_agenten: bool,
     verbindung: Verbindung,
     endpunkt: String,
+    /// Der Stand des Updates (Aufgabe 34).
+    update: UpdateLage,
 }
 
 impl Stand {
@@ -489,6 +513,8 @@ impl Stand {
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
             tresor_fehler: self.tresor_fehler.clone(),
             profil_hinweis: self.profil_hinweis.clone(),
+            update: self.update.clone(),
+            vorgaben: Vorgaben::default(),
         }
     }
 
@@ -520,6 +546,7 @@ impl Stand {
                 .iter()
                 .map(|(id, sekunden)| (id.als_str().to_string(), *sekunden))
                 .collect(),
+            update: None,
         }
     }
 }
@@ -819,6 +846,10 @@ pub(crate) struct Innen {
     pub(crate) generation: AtomicU64,
     pub(crate) ende: Abbruch,
     pub(crate) erneut: Notify,
+    /// Weckt **nur** die Update-Prüfung (Aufgabe 34). Ein eigener Wecker,
+    /// damit sie dem Abgleich nicht die Anmeldung wegnehmen kann: `Notify`
+    /// weckt genau einen Wartenden, und den braucht der Abgleich.
+    pub(crate) update_erneut: Notify,
     pub(crate) aufgaben: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// Nur **ein** Schreibvorgang auf `zustand.json` zur Zeit. Zwei Aufgaben
     /// (Abgleich, Schalten, Meldung) schreiben sonst gleichzeitig dieselbe
@@ -858,7 +889,9 @@ impl Innen {
             .values()
             .filter_map(|sitzung| sitzung.agent.clone())
             .collect();
-        let modell = self.stand().modell(&verbunden);
+        let mut modell = self.stand().modell(&verbunden);
+        // Die Vorgaben der Firma gelten für die Anzeige, nicht für den Stand.
+        modell.vorgaben = self.konfig.vorgaben.clone();
         // `send_replace` legt den Wert auch dann ab, wenn gerade niemand zusieht.
         self.modell.send_replace(modell);
     }
@@ -911,6 +944,18 @@ impl Innen {
             }
         }
         werte
+    }
+
+    /// Den Update-Stand setzen (Aufgabe 34).
+    pub(crate) fn update_setzen(&self, lage: UpdateLage) {
+        {
+            let mut stand = self.stand();
+            if stand.update == lage {
+                return;
+            }
+            stand.update = lage;
+        }
+        self.modell_schicken();
     }
 
     /// Die Verbindung setzen, aber nur melden, wenn sie sich wirklich ändert.
@@ -2194,6 +2239,7 @@ impl Kern {
             protokoll_fuer_agenten: gespeichert.protokoll_fuer_agenten,
             verbindung,
             endpunkt: endpunkt.clone(),
+            update: UpdateLage::Unbekannt,
         };
         let (sender, _) = watch::channel(stand.modell(&BTreeSet::new()));
         let innen = Arc::new(Innen {
@@ -2206,6 +2252,7 @@ impl Kern {
             zaehler: AtomicU64::new(0),
             ende: Abbruch::neu(),
             erneut: Notify::new(),
+            update_erneut: Notify::new(),
             aufgaben: Mutex::new(Vec::new()),
             speicher_wache: Mutex::new(()),
             schalt_wache: tokio::sync::Mutex::new(()),
@@ -2238,6 +2285,7 @@ impl Kern {
         let status = tokio::spawn(anmeldung_lauf(innen.clone()));
         let aufraeumen = tokio::spawn(protokoll_aufraeumen(innen.clone()));
         let sitzungen = tokio::spawn(sitzungen_lauf(innen.clone()));
+        let updates = tokio::spawn(update::lauf(innen.clone()));
         {
             let mut aufgaben = innen
                 .aufgaben
@@ -2248,6 +2296,7 @@ impl Kern {
             aufgaben.push(status);
             aufgaben.push(aufraeumen);
             aufgaben.push(sitzungen);
+            aufgaben.push(updates);
         }
 
         tracing::info!("MCP-Endpunkt für Agenten: {endpunkt}");
@@ -2480,6 +2529,8 @@ impl Kern {
         self.innen.speichern();
         self.innen.modell_schicken();
         self.innen.erneut.notify_one();
+        // Nach einer neuen Anmeldung gleich nach einem Update fragen.
+        self.innen.update_erneut.notify_one();
         Ok(())
     }
 
@@ -3244,6 +3295,14 @@ impl Kern {
         self.innen.speichern();
         self.innen.modell_schicken();
         Ok(())
+    }
+
+    // ------------------------------------------------------------ Updates
+    // (Aufgabe 34)
+
+    /// Beim Server fragen, ob es etwas Neues gibt.
+    pub async fn update_pruefen(&self) -> anyhow::Result<()> {
+        update::pruefen(&self.innen).await
     }
 
     /// Alles anhalten (Fenster zu, Strg+C).

@@ -723,6 +723,7 @@ fn die_sicherung_nimmt_die_abschaltung_mit() {
         protokoll_fuer_agenten: false,
         verbindung: Verbindung::NichtEingebunden,
         endpunkt: String::new(),
+        update: UpdateLage::Unbekannt,
     };
     let (eintraege, geheim) = export_daten(&stand, false);
     assert!(geheim.is_none());
@@ -856,6 +857,7 @@ fn stand_mit(soll: &Soll, aus: &BTreeSet<EintragId>) -> Stand {
         protokoll_fuer_agenten: false,
         verbindung: Verbindung::NichtEingebunden,
         endpunkt: String::new(),
+        update: UpdateLage::Unbekannt,
     }
 }
 
@@ -965,4 +967,16 @@ fn die_antwortgroesse_zaehlt_ohne_kopie() {
         rmcp::model::ContentBlock::text("welt"),
     ]);
     assert_eq!(endpunkt::antwort_groesse(&ergebnis), 9, "5 + 4 Zeichen");
+}
+
+/// Ein Tausch darf nie mitten in einem Werkzeugaufruf beginnen (Aufgabe 34).
+#[test]
+fn ein_laufender_aufruf_haelt_den_tausch_auf() {
+    let mut auslastung = Auslastung::default();
+    let id = EintragId::neu("echo");
+    assert!(auslastung.ist_muessig());
+    assert!(auslastung.belegen(&id));
+    assert!(!auslastung.ist_muessig());
+    auslastung.freigeben(&id);
+    assert!(auslastung.ist_muessig());
 }

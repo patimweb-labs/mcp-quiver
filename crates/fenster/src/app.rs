@@ -142,6 +142,8 @@ pub enum Aktion {
     /// Eine laufende Einrichtung abbrechen (Paket 3): der Prozess endet, der
     /// Zustand geht zurück auf „Bereit“.
     EinrichtungAbbrechen { eintrag: EintragId },
+    /// Beim Server nach einer neuen Version fragen (Aufgabe 34).
+    UpdatePruefen,
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -154,11 +156,14 @@ pub fn render(ui: &mut egui::Ui, sicht: &mut Sicht) -> Vec<Aktion> {
         // Ohne Rand: den setzt die Seite innen (`bausteine::seite`), damit der
         // Scrollbalken am Fensterrand sitzt.
         .frame(egui::Frame::new().fill(sicht.thema.farben().bg_canvas))
-        .show(ui, |ui| match sicht.seite {
-            Seite::Verbindung => ansichten::verbindung::zeigen(ui, sicht, &mut aktionen),
-            Seite::Tools => ansichten::tools::zeigen(ui, sicht, &mut aktionen),
-            Seite::Agenten => ansichten::agenten::zeigen(ui, sicht, &mut aktionen),
-            Seite::Protokoll => ansichten::protokoll::zeigen(ui, sicht, &mut aktionen),
+        .show(ui, |ui| {
+            aktionen.extend(ansichten::update::zeigen(ui, sicht));
+            match sicht.seite {
+                Seite::Verbindung => ansichten::verbindung::zeigen(ui, sicht, &mut aktionen),
+                Seite::Tools => ansichten::tools::zeigen(ui, sicht, &mut aktionen),
+                Seite::Agenten => ansichten::agenten::zeigen(ui, sicht, &mut aktionen),
+                Seite::Protokoll => ansichten::protokoll::zeigen(ui, sicht, &mut aktionen),
+            }
         });
     ansichten::dialog::zeigen(ui.ctx(), sicht, &mut aktionen);
     aktionen
@@ -332,7 +337,15 @@ impl<K: KernZugang> Fenster<K> {
             match befehl {
                 Befehl::Zeigen => tray::zeigen(ctx),
                 Befehl::AutostartUmschalten => {
-                    self.sicht.autostart = !self.sicht.autostart;
+                    // Vorgabe der Firma (Aufgabe 34): der Autostart ist gesetzt.
+                    if self.sicht.modell.vorgaben.autostart.is_some() {
+                        self.sicht.hinweis = Some(crate::texte::t(
+                            self.sicht.sprache,
+                            "vorgabe.autostart_fest",
+                        ));
+                    } else {
+                        self.sicht.autostart = !self.sicht.autostart;
+                    }
                 }
                 Befehl::Beenden => {
                     EndeGrund::Tray.protokollieren();

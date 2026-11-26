@@ -213,6 +213,8 @@ Gruppen entstehen so.
 | `QUIVER_ENTRA_GRAPH` | Basis-URL für Graph, nur Loopback (Tests); im Betrieb fest `https://graph.microsoft.com` |
 | `QUIVER_PROXIES` | CIDR-Liste, denen `X-Forwarded-For` geglaubt wird |
 | `QUIVER_ALTGERAETE` | `gesperrt` (Vorgabe, sobald Entra eingerichtet ist, sonst `erlaubt`) für Geräte ohne Benutzer |
+| `QUIVER_UPDATES` | `an` (Vorgabe) oder `aus`: darf der Server die GitHub-Veröffentlichungen nach einer neuen Version fragen? Höchstens alle sechs Stunden, ohne Kennung, ohne Nutzdaten. Siehe [updates.de.md](updates.de.md) |
+| `QUIVER_UPDATE_QUELLE` | nur Loopback (Tests): Basis der Abfrage der Veröffentlichung; im Betrieb fest das Repository des Projekts |
 
 `.env.example` ist die Vorlage.
 

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions"
+                           revision="1.0" schemaVersion="1.0">
+  <displayName>mcp-quiver</displayName>
+  <description>Organisation policies for mcp-quiver.</description>
+  <resources>
+    <stringTable>
+      <string id="Quiver">mcp-quiver</string>
+      <string id="ServerUrl">Server address</string>
+      <string id="ServerUrlHelp">Fixed server address, e.g. https://quiver.example.test. Not editable in the window; it takes precedence over the profile.</string>
+      <string id="Autostart">Start at sign-in</string>
+      <string id="AutostartHelp">Starts mcp-quiver at sign-in in the background (tray). Takes precedence over the setting in the window.</string>
+      <string id="UpdateHinweis">Update hint text</string>
+      <string id="UpdateHinweisHelp">Text the client shows when a newer version is published. {version} is replaced by the version. Without it, “Version {version} is available via device management” applies.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="ServerUrl">
+        <textBox refId="ServerUrl">
+          <label>Server address</label>
+        </textBox>
+      </presentation>
+      <presentation id="UpdateHinweis">
+        <textBox refId="UpdateHinweis">
+          <label>Hint text</label>
+        </textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

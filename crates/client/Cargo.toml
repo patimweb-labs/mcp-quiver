@@ -55,6 +55,10 @@ rmcp = { version = "3.11", features = [
 ] }
 
 
+# Vorgaben der Firma lesen (Aufgabe 34): `HKLM\Software\Policies\mcp-quiver`.
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+
 [dev-dependencies]
 tempfile = "3"
 quiver-server = { path = "../server" }

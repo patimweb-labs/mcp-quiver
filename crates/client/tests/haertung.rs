@@ -238,6 +238,7 @@ fn konfig_fuer(ordner: &std::path::Path) -> KernKonfig {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: std::sync::Arc::new(SpeicherTresor::neu()),
         browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
     }
 }
 
@@ -594,6 +595,7 @@ async fn ein_kaputter_tresor_verhindert_den_start_nicht() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: std::sync::Arc::new(DateiTresor::fuer_profil(&profil)),
         browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await
     .expect("der Start gelingt trotz kaputtem Tresor");
@@ -642,6 +644,7 @@ async fn kaputtes_profil_und_zweiter_kern() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: std::sync::Arc::new(SpeicherTresor::neu()),
         browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await
     .expect("der Start gelingt");
@@ -669,6 +672,7 @@ async fn kaputtes_profil_und_zweiter_kern() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: std::sync::Arc::new(SpeicherTresor::neu()),
         browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await;
     let fehler = format!("{:#}", zweiter.expect_err("das Profil ist belegt"));
@@ -681,6 +685,7 @@ async fn kaputtes_profil_und_zweiter_kern() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: std::sync::Arc::new(SpeicherTresor::neu()),
         browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await
     .expect("nach dem Beenden startet ein neuer Kern");
@@ -720,6 +725,7 @@ async fn eine_unbrauchbare_kennung_startet_nicht() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: std::sync::Arc::new(SpeicherTresor::neu()),
         browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await
     .expect("Kern startet");

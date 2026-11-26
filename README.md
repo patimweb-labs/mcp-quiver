@@ -213,8 +213,11 @@ call and can build locally: `docker compose up -d --build`.
 
 The packages are **unsigned** unless the maintainer signs them: Gatekeeper and
 SmartScreen ask once on the first start. What that means and how to get past it:
-[docs/release.md](docs/release.md#what-unsigned-means). Every release also
-carries `SHA256SUMS` and a build provenance you can verify:
+[docs/release.md](docs/release.md#what-unsigned-means). quiver does not install
+itself: updates are rolled out by device management (Intune) or by hand from the
+packages in the release — [docs/intune.md](docs/intune.md), and the version
+hint the client shows is described in [docs/updates.md](docs/updates.md). Every
+release also carries `SHA256SUMS` and a build provenance you can verify:
 
 ```bash
 sha256sum -c SHA256SUMS
@@ -287,8 +290,14 @@ protocol: [docs/client.md](docs/client.md).
   `Host` header must match the base URL, CSP without inline, HSTS on https,
   body and time limits, throttled sign-in, an audit trail that keeps 180 days.
   Every value is in [docs/haertung.md](docs/haertung.md) (German).
-- **No telemetry.** No update check, no analytics, no call home. The server
-  talks to Microsoft only when Entra is configured.
+- **A version hint, nothing more.** The client asks only its own server, never
+  the internet, and it installs nothing. The server asks the GitHub releases at
+  most every six hours, with jitter, without an identifier and without payload;
+  `QUIVER_UPDATES=aus` switches that off. What the client shows is a quiet hint
+  with the operator's text and a link to the changes. Installation and updates
+  are done by device management (Intune) or by hand:
+  [docs/intune.md](docs/intune.md). No analytics, no call home.
+- **The server still talks to Microsoft only when Entra is configured.**
 
 ## Operation
 

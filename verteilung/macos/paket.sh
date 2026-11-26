@@ -9,8 +9,15 @@
 # Ergebnisse:
 #   dist/quiver.app                                    (zum Ausprobieren)
 #   dist/quiver-<version>-macos-<arch>.dmg
+#   dist/quiver-<version>-macos-<arch>.pkg             (für Intune, Aufgabe 34)
 #   dist/SIGNIERT.txt                                  (signiert-und-notarisiert,
 #                                                       signiert, unsigniert)
+#
+# Das `.pkg` entsteht mit den Bordmitteln `pkgbuild` und `productbuild`:
+# es installiert nach `/Applications`, ersetzt die alte Fassung, beendet einen
+# laufenden Client vorher und startet ihn danach wieder (siehe
+# `verteilung/macos/skripte/`). Nach der Installation lässt sich das Paket mit
+# `pkgutil --expand` ansehen, ohne es zu installieren.
 #
 # Ohne Geheimnisse wird **ad hoc** signiert (`codesign -s -`): das Bündel läuft
 # damit auf dem eigenen Rechner, aber Gatekeeper fragt beim ersten Start nach
@@ -150,6 +157,29 @@ if [ "$zustand" = signiert ] && [ -n "${APPLE_ID:-}" ] &&
     zustand=signiert-und-notarisiert
 fi
 
+# ------------------------------------------------------------------- Paket
+# Für die Geräteverwaltung (Intune, Aufgabe 34): ein `.pkg`, das nach
+# `/Applications` installiert. Die Skripte beenden einen laufenden Client vor
+# dem Austausch und starten ihn danach wieder; das Profil liegt in
+# `~/Library/Application Support/mcp-quiver` und bleibt unberührt.
+pkg="$dist/quiver-$version-macos-$arch.pkg"
+wurzel_pkg="$zwischen/pkg"
+mkdir -p "$wurzel_pkg/Applications"
+cp -R "$app" "$wurzel_pkg/Applications/"
+teilpaket="$zwischen/quiver-teil.pkg"
+pkgbuild --root "$wurzel_pkg" \
+    --identifier "de.weppelmann.mcp-quiver" \
+    --version "$version" \
+    --install-location "/" \
+    --scripts "$wurzel/verteilung/macos/skripte" \
+    "$teilpaket"
+rm -f "$pkg"
+productbuild --package "$teilpaket" \
+    --identifier "de.weppelmann.mcp-quiver" \
+    --version "$version" \
+    "$pkg"
+
 printf '%s\n' "$zustand" >"$dist/SIGNIERT.txt"
 echo "==> $dmg ($zustand)"
+echo "==> $pkg ($zustand)"
 ls -la "$dist"

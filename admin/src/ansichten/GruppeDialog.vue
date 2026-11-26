@@ -38,7 +38,6 @@ const fehler = ref<Record<string, string>>({});
 const speicherfehler = ref("");
 const konflikt = ref(false);
 const speichert = ref(false);
-
 watch(
   () => props.offen,
   (offen) => {

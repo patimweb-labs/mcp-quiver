@@ -268,9 +268,12 @@ pub struct Sicht {
 
 impl Sicht {
     pub fn neu(modell: Modell, einstellungen: &Einstellungen) -> Self {
+        // Eine vorgegebene Server-Adresse (Aufgabe 34) gilt immer.
         let server = modell
+            .vorgaben
             .server_url
             .clone()
+            .or_else(|| modell.server_url.clone())
             .or_else(|| modell.verbindung.server().map(str::to_string))
             .unwrap_or_default();
         // Was schon beim Start schiefsteht (Tresor, gespeicherter Stand),
@@ -599,6 +602,8 @@ mod tests {
             protokoll_fuer_agenten: false,
             tresor_fehler: None,
             profil_hinweis: None,
+            update: quiver_client::UpdateLage::Unbekannt,
+            vorgaben: quiver_client::Vorgaben::default(),
         }
     }
 

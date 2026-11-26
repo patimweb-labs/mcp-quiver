@@ -164,3 +164,22 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       Metainfo-Daten werden dabei nicht geprüft.
 - [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
 - [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.
+
+## Updates (Aufgabe 34)
+- [ ] Die Update-Abfrage des Servers ist gegen eine Attrappe auf Loopback
+      geprüft, nicht gegen die echte GitHub-API. Der Vertrag (JSON, `tag_name`,
+      `html_url`, `draft`/`prerelease`) steht in `quiver_domain::updates`.
+- [ ] Die Vorgaben werden je Plattform gelesen (Registry, verwaltete
+      Einstellungen, `/etc`), aber nur unter Linux und über den verlegbaren Ort
+      wirklich geprüft. Ein Test gegen eine echte Registry oder eine echte
+      `.mobileconfig` fehlt — beides schriebe in HKLM bzw. `/Library` und ist
+      darum bewusst nicht Teil der Tests.
+- [ ] Die macOS-Vorgaben werden über `plutil` in XML gewandelt (Bordmittel);
+      eine bereits binäre plist wird damit gelesen, aber nicht selbst geparst.
+- [ ] `.mobileconfig`, ADMX/ADML und die Registry-Vorlage sind Vorlagen mit
+      Platzhalter-Adresse; gegen ein echtes Intune ausgerollt wurde nichts.
+- [ ] Das `.pkg` wird lokal gebaut und mit `pkgutil --expand` geprüft, aber
+      nicht installiert. Die Skripte (`preinstall`/`postinstall`) laufen erst im
+      CI-Lauf auf einem macOS-Läufer.
+- [ ] Die stille MSI-Installation und das Update sind nur im CI-Lauf auf einem
+      Windows-Läufer geprüft, nicht auf einem echten verwalteten Rechner.

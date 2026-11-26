@@ -246,6 +246,8 @@ impl KernZugang for EchterKern {
                     kern.einrichtung_abbrechen(&eintrag);
                     Ok(())
                 }
+                // Updates (Aufgabe 34): nur fragen und anzeigen.
+                Aktion::UpdatePruefen => kern.update_pruefen().await,
             };
             if let Err(fehler) = ergebnis {
                 meldungen

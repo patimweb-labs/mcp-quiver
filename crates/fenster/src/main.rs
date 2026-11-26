@@ -120,7 +120,17 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
 
     let kern = EchterKern::starten(konfig)?;
     let mut sicht = Sicht::neu(kern.modell(), &einstellungen);
-    sicht.autostart = autostart::aktiv();
+    // Vorgaben der Firma (Aufgabe 34 §3) haben Vorrang vor dem Profil: der
+    // Autostart wird gesetzt (nicht nur angezeigt), die Server-Adresse ist fest.
+    sicht.autostart = match sicht.modell.vorgaben.autostart {
+        Some(an) => {
+            if let Err(fehler) = autostart::setzen(an) {
+                tracing::warn!("Autostart laut Vorgabe nicht setzbar: {fehler:#}");
+            }
+            an
+        }
+        None => autostart::aktiv(),
+    };
     let ende_fahne = EndeFahne::neu();
 
     let mut viewport = egui::ViewportBuilder::default()

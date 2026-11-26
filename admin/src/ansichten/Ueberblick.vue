@@ -7,7 +7,12 @@ import { WpButton } from "@weppelmann/components";
 
 import type { Client } from "../api/client";
 import { fehlertext } from "../api/client";
-import type { Eintrag, GeraetStand, Ueberblick } from "../api/typen";
+import type {
+  Eintrag,
+  GeraetStand,
+  Ueberblick,
+  UpdateStand,
+} from "../api/typen";
 import Karte from "../bausteine/Karte.vue";
 import Kasten from "../bausteine/Kasten.vue";
 import Leer from "../bausteine/Leer.vue";
@@ -21,13 +26,22 @@ import {
   wird_aktualisiert,
 } from "../logik/geraet";
 import { nach_kennung } from "../logik/eintrag";
+import { zeitpunkt } from "../logik/format";
 import { type Zustand, fehler, fertig, laedt } from "../logik/seite";
+import {
+  abfrage_text,
+  neueste_version,
+  stand_hinweis,
+  veraltete_text,
+} from "../logik/update";
 import { kennzahlen } from "../logik/ueberblick";
 
 interface Daten {
   ueberblick: Ueberblick;
   geraete: GeraetStand[];
   titel: Map<string, string>;
+  /** Stand der Update-Prüfung (Aufgabe 34); `null`, wenn nicht abrufbar. */
+  updates: UpdateStand | null;
 }
 
 const props = defineProps<{ client: Client }>();
@@ -36,15 +50,19 @@ const zustand = shallowRef<Zustand<Daten>>(laedt());
 async function laden(): Promise<void> {
   zustand.value = laedt();
   try {
-    const [ueberblick, geraete, eintraege] = await Promise.all([
+    // Der Update-Stand darf fehlen (älterer Server): die Übersicht bleibt
+    // dann nutzbar.
+    const [ueberblick, geraete, eintraege, updates] = await Promise.all([
       props.client.ueberblick(),
       props.client.geraete(),
       props.client.eintraege(),
+      props.client.updates().catch(() => null),
     ]);
     zustand.value = fertig({
       ueberblick,
       geraete,
       titel: titel_map(eintraege),
+      updates,
     });
   } catch (fehlerWert) {
     zustand.value = fehler(fehlertext(fehlerWert));
@@ -137,6 +155,54 @@ onMounted(laden);
             </ul>
           </li>
         </ul>
+      </Karte>
+
+      <Karte
+        v-if="zustand.daten.updates"
+        titel="Updates"
+        :unter="`Abfrage: ${abfrage_text(zustand.daten.updates)}`"
+      >
+        <p
+          v-if="stand_hinweis(zustand.daten.updates)"
+          class="problem__zeile"
+          role="status"
+        >
+          {{ stand_hinweis(zustand.daten.updates) }}
+        </p>
+        <dl class="fakten">
+          <dt class="fakten__key">Neueste Client-Version</dt>
+          <dd class="fakten__wert mono">
+            {{ neueste_version(zustand.daten.updates) || "—" }}
+          </dd>
+          <dt class="fakten__key">Zuletzt gefragt</dt>
+          <dd class="fakten__wert">
+            {{
+              zustand.daten.updates.zuletzt_geprueft
+                ? zeitpunkt(zustand.daten.updates.zuletzt_geprueft)
+                : "noch nicht"
+            }}
+          </dd>
+        </dl>
+        <p
+          v-if="veraltete_text(zustand.daten.updates)"
+          class="problem__zeile"
+          role="status"
+        >
+          {{ veraltete_text(zustand.daten.updates) }}
+        </p>
+        <ul v-if="zustand.daten.updates.veraltete_clients.length" class="problem__liste">
+          <li
+            v-for="eintrag in zustand.daten.updates.veraltete_clients"
+            :key="eintrag.geraet"
+            class="problem__zeile"
+          >
+            {{ eintrag.name || eintrag.geraet }} – Client {{ eintrag.version }}
+          </li>
+        </ul>
+        <p class="problem__zeile">
+          Eingespielt wird durch die Geräteverwaltung oder von Hand aus dem
+          Release; siehe docs/intune.md.
+        </p>
       </Karte>
 
       <Karte titel="Server">

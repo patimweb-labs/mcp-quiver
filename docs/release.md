@@ -14,7 +14,7 @@ workflow explicitly; a tag pushed by hand triggers it directly.
 | `.github/workflows/release.yml` | release-please, version check, five build jobs, checksums, provenance, release |
 | `release-please-config.json` | which files a release bumps (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`) |
 | `.release-please-manifest.json` | the last released version |
-| `verteilung/macos/paket.sh` | `quiver.app`, `.dmg`, signing and notarisation |
+| `verteilung/macos/paket.sh` | `quiver.app`, `.dmg`, `.pkg`, signing and notarisation |
 | `verteilung/linux/paket.sh` | `.tar.gz`, `.deb`, `.rpm`, AppImage |
 | `verteilung/windows/paket.ps1` | `.msi` (per user) and portable `.zip` |
 | `verteilung/version.sh` | the version from `Cargo.toml` |
@@ -124,6 +124,19 @@ compiler as the developers.
 for the provenance). Every `checkout` uses `persist-credentials: false` and
 `submodules: recursive`. There is no `pull_request_target`, and no user input
 takes the direct path into a `run:` block — values go through `env:`.
+
+## Packages for device management
+
+Besides the `.dmg`, the macOS job builds a `.pkg` (`pkgbuild`/`productbuild`,
+installs into `/Applications`, replaces an older version, quits a running client
+and starts it again). The Windows MSI installs silently (`msiexec /i … /qn`),
+replaces an older version via `MajorUpgrade` and uses the Restart Manager to
+close and restart a running client; uninstalling leaves the profile alone. Both
+are meant for Intune: [intune.md](intune.md).
+
+On pull requests the run installs both packages on the runner and uninstalls
+them again (silent install, upgrade, profile survives) — nothing is installed
+on a tag run.
 
 ## Secrets (all optional)
 

@@ -484,6 +484,8 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         protokoll_fuer_agenten: false,
         tresor_fehler: None,
         profil_hinweis: None,
+        update: quiver_client::UpdateLage::Unbekannt,
+        vorgaben: quiver_client::Vorgaben::default(),
     }
 }
 

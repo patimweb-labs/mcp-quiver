@@ -447,6 +447,7 @@ impl Pruefung {
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: tresor.clone(),
             browser: browser.clone(),
+            vorgaben: quiver_client::Vorgaben::default(),
         })
         .await
         .expect("Kern startet");
@@ -771,6 +772,7 @@ async fn abmelden_ohne_server_sagt_es_und_meldet_lokal_ab() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: p.tresor.clone(),
         browser: p.browser.clone(),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await
     .expect("Kern startet");
@@ -974,6 +976,7 @@ async fn entzug_ohne_ereignis_wirkt_beim_oeffnen_des_stroms() {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor: p.tresor.clone(),
         browser: p.browser.clone(),
+        vorgaben: quiver_client::Vorgaben::default(),
     })
     .await
     .expect("Kern startet");

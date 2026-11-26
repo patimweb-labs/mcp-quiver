@@ -227,7 +227,15 @@ pub enum TrayEintrag {
 /// Die Zustandszeile des Trays: „Verbunden · 4 Tools · 1 Agent" bzw.
 /// „Nicht verbunden". Gezählt wird, was gerade läuft und wer gerade da ist.
 pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
-    match &modell.verbindung {
+    // Ein anstehendes Update steht **vor** dem Zustand (Aufgabe 34). Der Satz
+    // kommt aus der Vorgabe der Firma (oder aus dem Standardtext) und nennt
+    // schon die Version; hier wird nichts nachgebaut.
+    let update = modell
+        .update
+        .anstehend()
+        .map(|(_, hinweis)| format!("{hinweis} · "))
+        .unwrap_or_default();
+    let zustand = match &modell.verbindung {
         Verbindung::NichtEingebunden => t(sprache, "tray.nicht_verbunden"),
         Verbindung::Verbindet { .. } => t(sprache, "tray.verbindet"),
         Verbindung::WartetAufBrowser { .. } => t(sprache, "tray.im_browser"),
@@ -256,18 +264,23 @@ pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
                 tf(sprache, "tray.tools", &[&tools])
             )
         }
-    }
+    };
+    format!("{update}{zustand}")
 }
 
 /// Das Tray-Menü als Daten — reine Funktion über dem Modell. Die Reihenfolge
 /// ist die des Menüs: Zustand, Fenster zeigen, Autostart, Trenner, Beenden.
+///
+/// Ist der Autostart von der Firma vorgegeben (Aufgabe 34), steht das Häkchen
+/// danach und der Eintrag lässt sich nicht umschalten (siehe `app.rs`).
 pub fn tray_menu(modell: &Modell, autostart: bool, sprache: Sprache) -> Vec<TrayEintrag> {
+    let autostart_an = modell.vorgaben.autostart.unwrap_or(autostart);
     vec![
         TrayEintrag::Zustand(tray_zeile(modell, sprache)),
         TrayEintrag::Zeigen(t(sprache, "tray.fenster")),
         TrayEintrag::Autostart {
             text: t(sprache, "tray.autostart"),
-            an: autostart,
+            an: autostart_an,
         },
         TrayEintrag::Trenner,
         TrayEintrag::Beenden(t(sprache, "tray.beenden")),
@@ -1302,6 +1315,8 @@ mod tests {
             protokoll_fuer_agenten: false,
             tresor_fehler: None,
             profil_hinweis: None,
+            update: quiver_client::UpdateLage::Unbekannt,
+            vorgaben: quiver_client::Vorgaben::default(),
         }
     }
 
@@ -2473,6 +2488,40 @@ mod tests {
             matches!(&menu[2], TrayEintrag::Autostart { text, an: false } if text == "Start at login")
         );
         assert!(matches!(&menu[4], TrayEintrag::Beenden(text) if text == "Quit"));
+    }
+
+    /// Ein anstehendes Update steht vorn in der Tray-Zeile (Aufgabe 34) – der
+    /// Satz kommt aus der Vorgabe der Firma und nennt die Version schon.
+    #[test]
+    fn ein_update_steht_vorn_in_der_tray_zeile() {
+        let mut m = modell(verbunden());
+        assert_eq!(tray_zeile(&m, Sprache::De), "Verbunden · 0 Tools · 1 Agent");
+        m.update = quiver_client::UpdateLage::Verfuegbar {
+            version: String::from("0.3.0"),
+            hinweis: String::from("Version 0.3.0 ist verfügbar."),
+            aenderungen: None,
+        };
+        assert_eq!(
+            tray_zeile(&m, Sprache::De),
+            "Version 0.3.0 ist verfügbar. · Verbunden · 0 Tools · 1 Agent"
+        );
+        // Ohne Angebot bleibt die Zeile, wie sie war.
+        m.update = quiver_client::UpdateLage::Keins;
+        assert_eq!(tray_zeile(&m, Sprache::De), "Verbunden · 0 Tools · 1 Agent");
+    }
+
+    /// Ist der Autostart vorgegeben, zeigt das Tray die Vorgabe (Aufgabe 34).
+    #[test]
+    fn eine_autostart_vorgabe_steht_im_tray() {
+        let mut m = modell(verbunden());
+        let menu = tray_menu(&m, false, Sprache::De);
+        assert!(matches!(&menu[2], TrayEintrag::Autostart { an: false, .. }));
+        m.vorgaben.autostart = Some(true);
+        let menu = tray_menu(&m, false, Sprache::De);
+        assert!(
+            matches!(&menu[2], TrayEintrag::Autostart { an: true, .. }),
+            "die Vorgabe gewinnt"
+        );
     }
 
     #[test]

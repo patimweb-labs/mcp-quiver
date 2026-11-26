@@ -1042,5 +1042,21 @@
   "agenten.token_hinweis": {
     "de": "Die Befehle lesen das Token verdeckt ein (read -s): es steht nie als Argument in der Prozessliste oder in der Shell-Historie. Alternativ lässt es sich in einer Datei ablegen, die nur Sie lesen können (chmod 600), und mit $(cat …) einsetzen. Die Zwischenablage wird nach 60 Sekunden geleert, solange sie noch diesen Wert enthält.",
     "en": "The commands read the token silently (read -s): it never appears as an argument in the process list or shell history. Alternatively, store it in a file only you can read (chmod 600) and use $(cat …). The clipboard is cleared after 60 seconds as long as it still holds this value."
+  },
+  "update.aenderungen": {
+    "de": "Änderungen ansehen",
+    "en": "View changes"
+  },
+  "update.pruefen": {
+    "de": "Erneut prüfen",
+    "en": "Check again"
+  },
+  "vorgabe.server_fest": {
+    "de": "von deiner Firma vorgegeben",
+    "en": "set by your organisation"
+  },
+  "vorgabe.autostart_fest": {
+    "de": "Der Autostart ist von deiner Firma vorgegeben.",
+    "en": "Autostart is set by your organisation."
   }
 }
