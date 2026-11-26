@@ -19,7 +19,9 @@ use quiver_client::{
     AgentSicht, AnmeldeZustand, Anmeldewege, EinrichtZustand, EintragSicht, Modell, Verbindung,
     Vorschau, VorschauArt, VorschauEintrag, Zusammenfassung,
 };
-use quiver_domain::{EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, FeldOption, Quelle, Werte};
+use quiver_domain::{
+    EintragId, FehlendesFeld, Feld, FeldArt, FeldLink, FeldOption, Quelle, Vorgaben, Werte,
+};
 use quiver_fenster::app::{Aktion, Fenster, KernZugang};
 use quiver_fenster::egui::accesskit::{Role, Toggled};
 use quiver_fenster::egui::{self, CursorIcon, OutputCommand};
@@ -268,6 +270,7 @@ fn eintrag(
         nicht_installiert: None,
         nicht_fuer_system: false,
         ladeanteil: None,
+        vorgaben: Default::default(),
     }
 }
 
@@ -4640,6 +4643,183 @@ fn bildschirmfoto_des_ladens() {
             h.run_steps(3);
             nichts_ragt_heraus(&h, groesse.masse.0, "laden");
             foto(&mut h, &ziel, "laden", thema, groesse.px);
+        }
+    }
+}
+
+/// Ein Eintrag, dessen Firma die Adresse fest und den Ordner als Vorschlag
+/// vorgibt (Aufgabe 36).
+fn vorgabe_eintrag() -> EintragSicht {
+    let mut fest = feld("adresse", Quelle::Client, "");
+    fest.pflicht = false;
+    fest.titel = Some("Adresse".into());
+    let mut vorschlag = feld("pfad", Quelle::Client, "Ordner für den Abgleich");
+    vorschlag.titel = Some("Ordner".into());
+    vorschlag.pflicht = false;
+    let mut eintrag = eintrag(
+        "postfach",
+        "Postfach",
+        "Mail lesen.",
+        EintragZustand::WartetAufWerte {
+            felder: vec!["token".into()],
+        },
+        vec![fest, vorschlag, feld("token", Quelle::Geheim, "Token")],
+    );
+    eintrag.vorgaben = Vorgaben {
+        fest: Werte::from([(
+            "adresse".to_string(),
+            "https://post.example.test/mcp".to_string(),
+        )]),
+        vorschlag: Werte::from([("pfad".to_string(), "/opt/post".to_string())]),
+    };
+    eintrag
+}
+
+/// Aufgabe 36: feste Werte stehen ausgegraut mit Hinweis da, Vorschläge sind
+/// ausgefüllt und änderbar — samt „Auf Vorschlag zurücksetzen“ je Feld.
+#[test]
+fn feste_werte_und_vorschlaege_im_angaben_dialog() {
+    let mut h = fenster(
+        modell(verbunden(), vec![vorgabe_eintrag()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
+        .click();
+    h.run();
+
+    // Der feste Wert steht im Feld, ist gesperrt und trägt den Hinweis.
+    let fest = h.get_by_role_and_label(Role::TextInput, "Adresse");
+    assert!(
+        fest.accesskit_node().is_disabled(),
+        "ein fester Wert lässt sich ändern"
+    );
+    assert!(
+        h.query_by_label("von deiner Firma vorgegeben").is_some(),
+        "der Hinweis auf die Firma fehlt"
+    );
+
+    // Der Vorschlag ist ausgefüllt, aber nicht gesperrt.
+    assert!(
+        !h.get_by_role_and_label(Role::TextInput, "Ordner")
+            .accesskit_node()
+            .is_disabled(),
+        "ein Vorschlag ist nicht änderbar"
+    );
+    match &h.state().0.sicht.dialog {
+        Dialog::Werte { eingaben, .. } => {
+            assert_eq!(eingaben[0].wert, "https://post.example.test/mcp");
+            assert_eq!(eingaben[1].wert, "/opt/post");
+            assert_eq!(eingaben[2].wert, "", "Geheimes bleibt leer");
+        }
+        anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+    }
+    // Solange der Wert dem Vorschlag entspricht, gibt es nichts zurückzusetzen.
+    assert!(
+        h.query_by_label("Auf Vorschlag zurücksetzen").is_none(),
+        "ohne Abweichung kein Zurücksetzen"
+    );
+
+    // Etwas anderes eintragen: jetzt lässt sich auf den Vorschlag zurück.
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        eingaben[1].wert = "/tmp/anders".into();
+    }
+    h.run();
+    let zurueck = h.get_by_role_and_label(Role::Button, "Auf Vorschlag zurücksetzen");
+    zurueck.hover();
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::PointingHand,
+        "kein Hand-Cursor auf „Auf Vorschlag zurücksetzen“"
+    );
+    h.get_by_role_and_label(Role::Button, "Auf Vorschlag zurücksetzen")
+        .click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Werte { eingaben, .. } => assert_eq!(eingaben[1].wert, "/opt/post"),
+        anderer => panic!("kein Angaben-Dialog: {anderer:?}"),
+    }
+}
+
+/// Wer dem Vorschlag folgt, speichert nichts am Gerät – so wirkt eine spätere
+/// Änderung der Vorgabe beim nächsten Abgleich (Aufgabe 36).
+#[test]
+fn ein_uebernommener_vorschlag_wird_nicht_gespeichert() {
+    let mut h = fenster(
+        modell(verbunden(), vec![vorgabe_eintrag()]),
+        Some(Seite::Tools),
+        Thema::Dunkel,
+        gross(),
+    );
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
+        .click();
+    h.run();
+    // Nur das Geheimnis fehlt noch – das gibt es hier nicht vom Server.
+    if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+        eingaben[2].wert = "t0p-geheim".into();
+    }
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Speichern").click();
+    h.run();
+    match &h.state().0.sicht.dialog {
+        Dialog::Keiner => {}
+        anderer => panic!("der Dialog blieb offen: {anderer:?}"),
+    }
+    let aktionen = h.state().1.aktionen.borrow();
+    let werte = aktionen
+        .iter()
+        .find_map(|aktion| match aktion {
+            Aktion::WerteSetzen { lokal, .. } => Some(lokal.clone()),
+            _ => None,
+        })
+        .expect("WerteSetzen");
+    assert!(
+        werte.get("adresse").is_none_or(|wert| wert.is_empty()),
+        "der feste Wert gehört nicht ans Gerät: {werte:?}"
+    );
+    assert!(
+        werte.get("pfad").is_none_or(|wert| wert.is_empty()),
+        "der übernommene Vorschlag wird nicht gespeichert: {werte:?}"
+    );
+}
+
+/// Der Angaben-Dialog mit einer festen Vorgabe und einem Vorschlag
+/// (`fenster-{dark,light}-vorgaben.png`, Aufgabe 36).
+#[test]
+fn bildschirmfoto_der_vorgaben() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut h = fenster(
+                modell(verbunden(), vec![vorgabe_eintrag()]),
+                Some(Seite::Tools),
+                thema,
+                groesse.masse,
+            );
+            zur_ruhe(&mut h);
+            h.get_by_role_and_label(Role::Button, "Angaben ergänzen")
+                .click();
+            zur_ruhe(&mut h);
+            // Der Ordner steht auf einem eigenen Wert: so ist im Bild auch
+            // „Auf Vorschlag zurücksetzen“ zu sehen.
+            if let Dialog::Werte { eingaben, .. } = &mut h.state_mut().0.sicht.dialog {
+                eingaben[1].wert = "/tmp/eigener-ordner".into();
+            }
+            zur_ruhe(&mut h);
+            assert!(
+                h.query_by_label("von deiner Firma vorgegeben").is_some(),
+                "{}: der Hinweis auf die feste Vorgabe fehlt",
+                thema.name()
+            );
+            nichts_ragt_heraus(&h, groesse.masse.0, "vorgaben");
+            foto(&mut h, &ziel, "vorgaben", thema, groesse.px);
         }
     }
 }

@@ -142,6 +142,7 @@ mod tests {
                 einrichtung,
             },
             werte: Werte::from([("ABLAGE".to_string(), "/tmp/profil".to_string())]),
+            fest: Default::default(),
         }
     }
 

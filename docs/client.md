@@ -128,6 +128,17 @@ address in the default browser — nothing else, no login, no listener.
 
 ![Settings dialog with a help link](../docs/bilder/fenster-dark-angaben-800.png)
 
+An admin can **pre-fill** values from the server (set dialog, per field
+*Vorschlag* or *Fest*; secrets are not offered at all). A *suggestion* arrives
+filled in and stays editable, with **Auf Vorschlag zurücksetzen** next to it as
+soon as the user types something else. A *fixed* value is greyed out and cannot
+be changed — the note says “von deiner Firma vorgegeben”. A required field that
+is pre-filled counts as answered. Fixed values and adopted suggestions are not
+stored on the device, so a change by the admin takes effect with the next sync,
+without signing in again.
+
+![Settings dialog with a fixed value and a suggestion](../docs/bilder/fenster-dark-vorgaben-800.png)
+
 Fields carry a **kind** (admin: *Art* and *Titel*): text, password, number,
 switch (checkbox), address (checked for `http(s)://`) or a choice list with
 fixed options. A *title* replaces the field name in the dialog — “SAP-Benutzer”

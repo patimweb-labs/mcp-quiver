@@ -48,7 +48,9 @@ ist Vue, und beide Oberflächen entstehen aus denselben Tokens.
 - **Konfiguration in Schichten.** Der Server kennt Endpunkte, Tenant und
   Vorgaben. Der Client ergänzt, was nur das Gerät weiß: lokale Pfade,
   persönliche Werte und Geheimnisse. Fehlende Felder nennt die Karte, sie rät
-  nicht.
+  nicht. Ein Admin kann einzelne Angaben vorbelegen – als **Vorschlag**, den
+  der Benutzer ändern darf, oder **fest**: dann steht der Wert ausgegraut da,
+  „von deiner Firma vorgegeben“. Geheimnisse lassen sich nie vorgeben.
 - **Jede Laufzeit, die ein MCP-Server braucht.** Stdio-Prozesse (eigene
   Binaries, `npx`, `uvx`, `docker`) und entfernte MCP-Server über Streamable
   HTTP. Keine Shell, keine Paketverwaltung, und auf dem Server läuft kein Tool.

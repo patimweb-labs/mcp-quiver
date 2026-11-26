@@ -169,6 +169,7 @@ impl Pruefung {
                         ),
                         ("ZIEL".to_string(), self.ziel.to_string_lossy().to_string()),
                     ]),
+                    fest: Default::default(),
                 }],
             },
         )

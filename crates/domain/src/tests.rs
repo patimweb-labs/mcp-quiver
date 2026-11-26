@@ -47,6 +47,7 @@ fn satz(id: &str, prio: i32, werte: &[(&str, &str)]) -> Satz {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            fest: Default::default(),
         }],
     }
 }
@@ -455,6 +456,7 @@ fn programme_aendern_die_revision() {
         eintraege: vec![SatzEintrag {
             eintrag: e.id.clone(),
             werte: [("tenant".to_string(), "acme".to_string())].into(),
+            fest: Default::default(),
         }],
     }];
     let soll = soll_berechnen(&geraet, &gruppen, &saetze, &[e]).expect("Soll");
@@ -506,4 +508,258 @@ fn system_und_architektur_sind_eng() {
     ] {
         assert_eq!(System::aus_teilen(schlecht.0, schlecht.1), None);
     }
+}
+
+// ---------------------------------------------------------------- Aufgabe 36
+
+fn werte(paare: &[(&str, &str)]) -> Werte {
+    paare
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+fn satz_vorbelegt(id: &str, prio: i32, paare: &[(&str, &str)], fest: &[&str]) -> Satz {
+    Satz {
+        id: SatzId::neu(id),
+        titel: id.into(),
+        prioritaet: prio,
+        eintraege: vec![SatzEintrag {
+            eintrag: EintragId::neu("mail"),
+            werte: werte(paare),
+            fest: fest.iter().map(|name| name.to_string()).collect(),
+        }],
+    }
+}
+
+/// Ein Vorschlag füllt ein Feld mit Quelle „Gerät“, das am Gerät leer ist.
+#[test]
+fn vorschlag_fuellt_ein_leeres_geraetefeld() {
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &[],
+    )]);
+    let soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    assert_eq!(
+        soll.eintraege[0].vorgabe("pfad"),
+        Some((Vorgabe::Vorschlag, "/opt"))
+    );
+    let geheim = werte(&[("token", "t0p")]);
+    let lz = konfig_zusammensetzen(&soll.eintraege[0], &Werte::new(), &geheim).unwrap();
+    match lz {
+        Laufzeit::Stdio { befehl, .. } => assert_eq!(befehl, "/opt/tool"),
+        _ => panic!("Stdio erwartet"),
+    }
+}
+
+/// Reihenfolge (Aufgabe 36): fest vom Server → Gerät → Vorschlag → Standard.
+#[test]
+fn geraet_schlaegt_vorschlag_und_fest_schlaegt_geraet() {
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &[],
+    )]);
+    let soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    let geheim = werte(&[("token", "t0p")]);
+    let lokal = werte(&[("pfad", "/usr/local")]);
+    let befehl = |soll: &SollEintrag| match konfig_zusammensetzen(soll, &lokal, &geheim).unwrap() {
+        Laufzeit::Stdio { befehl, .. } => befehl,
+        _ => panic!("Stdio erwartet"),
+    };
+    assert_eq!(
+        befehl(&soll.eintraege[0]),
+        "/usr/local/tool",
+        "Gerät gewinnt"
+    );
+
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &["pfad"],
+    )]);
+    let fest = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    assert_eq!(
+        fest.eintraege[0].vorgabe("pfad"),
+        Some((Vorgabe::Fest, "/opt"))
+    );
+    assert_eq!(befehl(&fest.eintraege[0]), "/opt/tool", "fest gewinnt");
+}
+
+/// Ein vorbelegtes Pflichtfeld gilt als gesetzt: der Dialog fragt es nicht ab.
+#[test]
+fn vorbelegtes_pflichtfeld_fehlt_nicht() {
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &[],
+    )]);
+    let soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    let fehlt =
+        konfig_zusammensetzen(&soll.eintraege[0], &Werte::new(), &Werte::new()).unwrap_err();
+    let namen: Vec<_> = fehlt.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(namen, ["token"], "nur das Geheimnis fehlt");
+}
+
+/// Geheimes kommt nie vom Server (Aufgabe 36), auch wenn es in alten Daten steht.
+#[test]
+fn geheimes_wird_nie_vorbelegt() {
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("token", "leck")],
+        &["token"],
+    )]);
+    let soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    assert!(!soll.eintraege[0].werte.contains_key("token"));
+    assert!(soll.eintraege[0].fest.is_empty());
+    let lokal = werte(&[("pfad", "/opt")]);
+    let lz =
+        konfig_zusammensetzen(&soll.eintraege[0], &lokal, &werte(&[("token", "t0p")])).unwrap();
+    match lz {
+        Laufzeit::Stdio { umgebung, .. } => assert_eq!(umgebung["TOKEN"], "t0p"),
+        _ => panic!("Stdio erwartet"),
+    }
+}
+
+/// Eine Änderung der Vorgabe ist ein neuer Fingerabdruck – der Client startet
+/// neu, ohne dass sich jemand anmeldet.
+#[test]
+fn geaenderte_vorgabe_aendert_den_fingerabdruck() {
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &[],
+    )]);
+    let alt = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &["pfad"],
+    )]);
+    let neu = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    assert_ne!(alt.revision, neu.revision);
+    assert_ne!(
+        alt.eintraege[0].fingerabdruck(),
+        neu.eintraege[0].fingerabdruck()
+    );
+    assert_eq!(
+        abgleichen(
+            &neu,
+            &BTreeMap::from([(EintragId::neu("mail"), alt.eintraege[0].fingerabdruck())])
+        ),
+        [Aktion::Neustarten(EintragId::neu("mail"))]
+    );
+}
+
+/// Die Vorgaben getrennt nach Art – so zeigt sie das Fenster.
+#[test]
+fn vorgaben_trennen_fest_und_vorschlag() {
+    let (g, gr, s, e) = welt(vec![satz_vorbelegt(
+        "a",
+        0,
+        &[("tenant", "x"), ("pfad", "/opt")],
+        &["pfad"],
+    )]);
+    let soll = soll_berechnen(&g, &gr, &s, &e).unwrap();
+    let vorgaben = soll.eintraege[0].vorgaben();
+    assert_eq!(vorgaben.fest["pfad"], "/opt");
+    assert_eq!(vorgaben.vorschlag["tenant"], "x");
+    assert!(!vorgaben.hat("token"));
+}
+
+fn eintrag_mit_schalter() -> Eintrag {
+    let mut e = eintrag("mail");
+    e.felder = vec![
+        feld("schreiben", Quelle::Client),
+        feld("pfad", Quelle::Client),
+        feld("token", Quelle::Geheim),
+    ];
+    e.felder[0].art = FeldArt::Schalter;
+    e
+}
+
+fn satz_eintrag(werte: &[(&str, &str)], fest: &[&str]) -> SatzEintrag {
+    SatzEintrag {
+        eintrag: EintragId::neu("mail"),
+        werte: self::werte(werte),
+        fest: fest.iter().map(|name| name.to_string()).collect(),
+    }
+}
+
+/// Der Server lehnt Geheimes, feste Schalter auf „an“ und „fest“ ohne Wert ab.
+#[test]
+fn vorgaben_werden_geprueft() {
+    let e = eintrag_mit_schalter();
+    assert_eq!(
+        vorgaben_pruefen(&e, &satz_eintrag(&[("pfad", "/opt")], &["pfad"])),
+        Ok(())
+    );
+    assert_eq!(
+        vorgaben_pruefen(&e, &satz_eintrag(&[("schreiben", "aus")], &["schreiben"])),
+        Ok(())
+    );
+    let geheimnis = vorgaben_pruefen(&e, &satz_eintrag(&[("token", "t0p")], &[])).unwrap_err();
+    assert!(geheimnis.contains("geheim"), "{geheimnis}");
+    let freigabe =
+        vorgaben_pruefen(&e, &satz_eintrag(&[("schreiben", "an")], &["schreiben"])).unwrap_err();
+    assert!(freigabe.contains("nur auf „aus“"), "{freigabe}");
+    let ohne_wert = vorgaben_pruefen(&e, &satz_eintrag(&[], &["pfad"])).unwrap_err();
+    assert!(ohne_wert.contains("keinen Wert"), "{ohne_wert}");
+    // Auch als Vorschlag nicht: wer das Feld nie anfasst, hätte sonst still
+    // freigegeben. Freigeben tut nur der User.
+    assert!(vorgaben_pruefen(&e, &satz_eintrag(&[("schreiben", "an")], &[])).is_err());
+    // Ein Schalter, dessen Standard „an“ ist (etwa „Zertifikat prüfen“), lässt
+    // sich nicht auf „aus“ vorbelegen – das schwächte die Sicherheit.
+    let mut pruefen = eintrag_mit_schalter();
+    pruefen.felder[0].standard = Some("an".into());
+    assert!(vorgaben_pruefen(&pruefen, &satz_eintrag(&[("schreiben", "aus")], &[])).is_err());
+    assert_eq!(
+        vorgaben_pruefen(
+            &pruefen,
+            &satz_eintrag(&[("schreiben", "an")], &["schreiben"])
+        ),
+        Ok(())
+    );
+    // Unbekannte Felder (ältere Daten) stören nicht.
+    assert_eq!(
+        vorgaben_pruefen(&e, &satz_eintrag(&[("gibtsnicht", "x")], &["gibtsnicht"])),
+        Ok(())
+    );
+}
+
+/// Ältere Daten ohne `fest` gelten als Vorschlag; ältere Clients lesen ein
+/// Soll mit Vorgaben unverändert.
+#[test]
+fn alte_daten_ohne_fest_sind_vorschlaege() {
+    let satz: Satz = serde_json::from_str(
+        r#"{"id":"a","titel":"A","eintraege":[{"eintrag":"mail","werte":{"pfad":"/opt"}}]}"#,
+    )
+    .unwrap();
+    assert!(satz.eintraege[0].fest.is_empty());
+
+    let soll: Soll = serde_json::from_str(
+        r#"{"revision":"r","eintraege":[{"eintrag":{"id":"mail","version":"1","titel":"M",
+            "herkunft":"eigen","laufzeit":{"art":"stdio","befehl":"echo"}},
+            "werte":{"pfad":"/opt"}}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        soll.eintraege[0].vorgabe("pfad"),
+        Some((Vorgabe::Vorschlag, "/opt"))
+    );
+    // Ein Soll ohne Vorgaben bleibt lesbar.
+    let schlicht: SollEintrag = serde_json::from_str(
+        r#"{"eintrag":{"id":"mail","version":"1","titel":"M","herkunft":"eigen",
+            "laufzeit":{"art":"stdio","befehl":"echo"}},"werte":{}}"#,
+    )
+    .unwrap();
+    assert!(schlicht.vorgaben().fest.is_empty());
 }

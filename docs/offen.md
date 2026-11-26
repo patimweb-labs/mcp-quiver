@@ -58,6 +58,15 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       aufgeräumt (alle 60 s), nicht in einem eigenen Takt je Tabelle.
 
 ## Client
+- [ ] Vorbelegung (Aufgabe 36): ein **fester** Wert wirkt erst beim nächsten
+      Abgleich; der Client startet dann neu, meldet sich aber nicht neu an.
+      Wer einen **Vorschlag** überschreibt, hat wieder einen Wert am Gerät, den
+      der Admin nicht sieht – der Vorschlag bleibt nur sichtbar, solange der
+      Benutzer nichts anderes einträgt.
+- [ ] Vorbelegung: im Satz-Dialog legt „Fest“ bei einem Schalter diesen auf
+      „aus“ (mehr erlaubt der Server nicht). Wer nur verbieten will, sieht den
+      Schalter im Formular also ausgeschaltet, ohne dass der Wert vorher
+      gesetzt war.
 - [ ] SIGTERM und Strg+C enden geordnet; das „Abmelden des Systems“ ist auf
       macOS/Windows nicht als eigener Grund erkennbar (dort bleibt es beim
       Fenster-Ende bzw. SIGTERM). Der Signal-Faden ist nicht als

@@ -56,8 +56,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use quiver_domain::{
-    EintragId, FehlendesFeld, Feld, Geraet, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag, Werte,
-    Zugang, MEHRFACH_UMGEBUNG,
+    EintragId, FehlendesFeld, Feld, Geraet, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag,
+    Vorgaben as FeldVorgaben, Werte, Zugang, MEHRFACH_UMGEBUNG,
 };
 use quiver_protocol::{AnmeldeGrund, Anmeldearten, EintragZustand, PRAEFIX};
 use rmcp::model::Tool;
@@ -191,6 +191,10 @@ pub struct EintragSicht {
     pub felder: Vec<Feld>,
     /// Werte, die am Gerät hinterlegt sind – ohne Geheimes.
     pub lokale_werte: Werte,
+    /// Vom Server vorgegebene Werte (Aufgabe 36): `fest` ist nicht änderbar,
+    /// `vorschlag` ist vorbelegt und änderbar.
+    #[serde(default, skip_serializing_if = "FeldVorgaben::ist_leer")]
+    pub vorgaben: FeldVorgaben,
     /// Welche Geheim-Felder gesetzt sind (nie der Wert selbst).
     pub geheim_gesetzt: Vec<String>,
     /// Werkzeugnamen ohne Präfix (`echo`, nicht `echo__echo`).
@@ -734,6 +738,7 @@ fn eintraege_sicht(
                     .cloned()
                     .collect(),
                 lokale_werte: werte,
+                vorgaben: eintrag.vorgaben(),
                 geheim_gesetzt: geheim_gesetzt
                     .get(id)
                     .map(|namen| namen.iter().cloned().collect())

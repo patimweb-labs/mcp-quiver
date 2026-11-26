@@ -263,6 +263,15 @@ export function hat_server_felder(eintrag: Eintrag): boolean {
   return server_felder(eintrag).length > 0;
 }
 
+/**
+ * Felder, die ein Satz vorbelegen kann (Aufgabe 36): alle außer Geheimnissen.
+ * Geheimes gehört ans Gerät und lässt sich weder als Vorschlag noch fest
+ * vorgeben – der Server lehnt es ab.
+ */
+export function vorbelegbare_felder(eintrag: Eintrag): Feld[] {
+  return eintrag.felder.filter((feld) => feld.quelle !== "geheim");
+}
+
 /** Nur Server-Werte übernehmen – Client- und Geheimfelder gehören ans Gerät. */
 export function server_werte(eintrag: Eintrag, werte: Werte): Werte {
   const erlaubt = new Set(server_felder(eintrag).map((feld) => feld.name));

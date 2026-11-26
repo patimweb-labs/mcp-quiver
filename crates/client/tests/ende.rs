@@ -257,10 +257,12 @@ async fn werkzeug_ist_nach_fuenf_sekunden_beim_agenten() {
             SatzEintrag {
                 eintrag: EintragId::neu("echo"),
                 werte: Werte::new(),
+                fest: Default::default(),
             },
             SatzEintrag {
                 eintrag: EintragId::neu("geheim"),
                 werte: Werte::new(),
+                fest: Default::default(),
             },
         ],
     };
@@ -483,6 +485,7 @@ async fn abgeschalteter_eintrag_verschwindet_beim_agenten() {
             eintraege: vec![SatzEintrag {
                 eintrag: EintragId::neu("abschalt"),
                 werte: Werte::new(),
+                fest: Default::default(),
             }],
         },
     )
@@ -759,6 +762,7 @@ async fn eingebunden_mit_echo(p: &Pruefung) -> rmcp::service::RunningService<Rol
             eintraege: vec![SatzEintrag {
                 eintrag: EintragId::neu("echo"),
                 werte: Werte::new(),
+                fest: Default::default(),
             }],
         },
     )

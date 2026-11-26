@@ -163,10 +163,25 @@ export interface Eintrag {
   mehrfach?: Mehrfach | null;
 }
 
-/** Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt. */
+/**
+ * Wie ein vorbelegter Wert gilt (Aufgabe 36): als Vorschlag, den der User am
+ * Gerät ändern darf, oder fest („von deiner Firma vorgegeben“).
+ */
+export type Vorgabe = "vorschlag" | "fest";
+
+/**
+ * Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt
+ * (Aufgabe 36). Geheime Felder gehören nicht hierher – der Server lehnt sie ab.
+ */
 export interface SatzEintrag {
   eintrag: EintragId;
   werte: Werte;
+  /**
+   * Felder aus `werte`, die **fest** gelten: im Client sichtbar, aber nicht
+   * änderbar („von deiner Firma vorgegeben“). Alle übrigen Werte sind
+   * Vorschläge. Fehlt die Liste (ältere Daten), ist alles ein Vorschlag.
+   */
+  fest?: string[];
 }
 
 /** Eine benannte Sammlung von Einträgen. */

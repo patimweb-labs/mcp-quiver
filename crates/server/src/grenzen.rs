@@ -11,7 +11,7 @@
 //! vielen Feldern) und klein genug, dass ein einzelner Aufruf die Datenbank
 //! nicht flutet.
 
-use quiver_domain::{Eintrag, Gruppe, Laufzeit, Satz, SatzEintrag, Werte};
+use quiver_domain::{Eintrag, Gruppe, Laufzeit, Satz, Werte};
 use quiver_protocol::Meldung;
 
 /// Längster Name (Kennung von Eintrag, Satz, Gruppe; Name eines Geräts).
@@ -193,7 +193,11 @@ pub fn eintrag_pruefen(eintrag: &Eintrag) -> Result<(), String> {
 }
 
 /// Grenzen eines Satzes.
-pub fn satz_pruefen(satz: &Satz) -> Result<(), String> {
+///
+/// `eintraege` sind die Einträge der Bibliothek: nur mit ihnen lässt sich
+/// prüfen, ob eine Vorbelegung auf ein **geheimes** Feld zielt oder einen
+/// Schalter freigibt (Aufgabe 36).
+pub fn satz_pruefen(satz: &Satz, eintraege: &[Eintrag]) -> Result<(), String> {
     pruefe_text("Kennung", satz.id.als_str(), NAME_MAX)?;
     if satz.id.als_str().trim().is_empty() {
         return Err(String::from("Kennung fehlt"));
@@ -205,9 +209,18 @@ pub fn satz_pruefen(satz: &Satz) -> Result<(), String> {
             satz.eintraege.len()
         ));
     }
-    for SatzEintrag { eintrag, werte } in &satz.eintraege {
+    for satz_eintrag in &satz.eintraege {
+        let eintrag = &satz_eintrag.eintrag;
         pruefe_text("Eintrag im Satz", eintrag.als_str(), NAME_MAX)?;
-        pruefe_karte(&format!("Werte für „{eintrag}“"), werte)?;
+        pruefe_karte(&format!("Werte für „{eintrag}“"), &satz_eintrag.werte)?;
+        for name in &satz_eintrag.fest {
+            pruefe_text("Festes Feld", name, NAME_MAX)?;
+        }
+        // Unbekannte Einträge meldet das Speichern selbst; hier zählt nur, was
+        // sich gegen den Eintrag prüfen lässt.
+        if let Some(bekannt) = eintraege.iter().find(|e| &e.id == eintrag) {
+            quiver_domain::vorgaben_pruefen(bekannt, satz_eintrag)?;
+        }
     }
     Ok(())
 }
@@ -333,10 +346,10 @@ mod tests {
             prioritaet: 0,
             eintraege: Vec::new(),
         };
-        assert_eq!(satz_pruefen(&satz), Ok(()));
+        assert_eq!(satz_pruefen(&satz, &[]), Ok(()));
         let mut zu_lang = satz.clone();
         zu_lang.titel = "T".repeat(TITEL_MAX + 1);
-        assert!(satz_pruefen(&zu_lang).is_err());
+        assert!(satz_pruefen(&zu_lang, &[]).is_err());
 
         let gruppe = Gruppe {
             id: GruppeId::neu("g"),

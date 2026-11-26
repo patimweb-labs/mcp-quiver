@@ -264,7 +264,10 @@ pub fn zip_entpacken(bytes: &[u8], ziel: &Path) -> Result<Vec<PathBuf>, EntpackF
 pub fn tar_gz_entpacken(bytes: &[u8], ziel: &Path) -> Result<Vec<PathBuf>, EntpackFehler> {
     std::fs::create_dir_all(ziel).map_err(|fehler| EntpackFehler::Schreiben(fehler.to_string()))?;
     let mut archiv = Vec::new();
+    // Höchstens ein Byte mehr als erlaubt lesen: ein „gzip-Bombe“ füllt so
+    // nie den Speicher, bevor die Grenze greift.
     GzDecoder::new(bytes)
+        .take(BYTES_MAX + 1)
         .read_to_end(&mut archiv)
         .map_err(|fehler| beschädigt(format!("gzip: {fehler}")))?;
     if archiv.len() as u64 > BYTES_MAX {

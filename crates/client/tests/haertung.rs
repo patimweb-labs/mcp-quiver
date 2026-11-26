@@ -160,6 +160,7 @@ impl Pruefung {
                     .map(|eintrag| SatzEintrag {
                         eintrag: eintrag.id.clone(),
                         werte: werte.clone(),
+                        fest: Default::default(),
                     })
                     .collect(),
             },
@@ -712,10 +713,12 @@ async fn eine_unbrauchbare_kennung_startet_nicht() {
         quiver_domain::SollEintrag {
             eintrag: demo_eintrag("echo", &protokoll, Werte::new()),
             werte: Werte::new(),
+            fest: Default::default(),
         },
         quiver_domain::SollEintrag {
             eintrag: demo_eintrag("quiver", &protokoll, Werte::new()),
             werte: Werte::new(),
+            fest: Default::default(),
         },
     ]);
     let datei = json!({ "soll": soll });

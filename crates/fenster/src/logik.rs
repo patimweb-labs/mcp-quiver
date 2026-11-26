@@ -17,7 +17,7 @@ use quiver_domain::{
 };
 use quiver_protocol::EintragZustand;
 
-use crate::modell::{Feldeingabe, ProtokollEingaben, Seite};
+use crate::modell::{Feldeingabe, Feldvorgabe, ProtokollEingaben, Seite};
 use crate::texte::{t, tf, Sprache};
 use crate::thema::Ton;
 use quiver_client::protokoll::Filter as ProtokollFilter;
@@ -636,6 +636,9 @@ pub fn sperrgrund(sprache: Sprache, eingaben: &[Feldeingabe]) -> Option<String> 
 
 /// Die Felder eines Eintrags als Eingaben: lokale Werte vorbelegt, Geheimnisse
 /// leer (gesetzte zeigen „••••" nur als Hinweis).
+///
+/// Vorgaben des Servers (Aufgabe 36) füllen ein leeres Feld; ein **fester**
+/// Wert steht da und ist nicht änderbar.
 pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
     eintrag
         .felder
@@ -648,10 +651,29 @@ pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
                 .get(&feld.name)
                 .map(String::as_str)
                 .unwrap_or_default();
+            let vorgabe = feldvorgabe(eintrag, feld, &art);
             let wert = if geheim {
                 String::new()
             } else if art == FeldArt::Schalter {
-                schalter_wert(gespeichert, feld.standard.as_deref())
+                // Ein Vorschlag für einen Schalter gilt, solange der User
+                // nichts anderes gewählt hat.
+                schalter_wert(
+                    gespeichert,
+                    vorgabe
+                        .as_ref()
+                        .map(|vorgabe| vorgabe.wert.as_str())
+                        .or(feld.standard.as_deref()),
+                )
+            } else if vorgabe.as_ref().is_some_and(|vorgabe| vorgabe.fest) {
+                vorgabe
+                    .as_ref()
+                    .map(|vorgabe| vorgabe.wert.clone())
+                    .unwrap_or_default()
+            } else if gespeichert.is_empty() {
+                vorgabe
+                    .as_ref()
+                    .map(|vorgabe| vorgabe.wert.clone())
+                    .unwrap_or_default()
             } else {
                 gespeichert.to_string()
             };
@@ -665,9 +687,29 @@ pub fn eingaben(eintrag: &EintragSicht) -> Vec<Feldeingabe> {
                 wert,
                 link: feld.link.clone(),
                 art,
+                vorgabe,
             }
         })
         .collect()
+}
+
+/// Die Vorgabe des Servers für ein Feld (Aufgabe 36), sofern es eine gibt.
+/// Geheime Felder werden nie vorgegeben; ein Schalterwert wird auf `an`/`aus`
+/// gebracht.
+fn feldvorgabe(eintrag: &EintragSicht, feld: &Feld, art: &FeldArt) -> Option<Feldvorgabe> {
+    if feld.quelle == Quelle::Geheim {
+        return None;
+    }
+    let (fest, wert) = match eintrag.vorgaben.fest.get(&feld.name) {
+        Some(wert) => (true, wert),
+        None => (false, eintrag.vorgaben.vorschlag.get(&feld.name)?),
+    };
+    let wert = if *art == FeldArt::Schalter {
+        schalter_wert(wert, feld.standard.as_deref())
+    } else {
+        wert.clone()
+    };
+    Some(Feldvorgabe { fest, wert })
 }
 
 /// Die Werte, die der Dialog nicht hergibt: die Standardwerte der Felder
@@ -746,6 +788,11 @@ fn platzhalter(text: &str) -> Vec<String> {
 /// Die Eingaben aufteilen in lokale und geheime Werte. Ein leeres Geheimnis
 /// heißt „unverändert" und wird nicht geschickt; ein leerer lokaler Wert
 /// löscht das Feld am Gerät.
+///
+/// Feste Vorgaben des Servers (Aufgabe 36) werden nicht gespeichert – sie
+/// gelten ohnehin. Ein Wert, der dem Vorschlag entspricht, wird ebenfalls
+/// nicht gespeichert: so wirkt eine spätere Änderung der Vorgabe beim
+/// nächsten Abgleich, ohne dass jemand etwas tun muss.
 pub fn werte_splitten(eingaben: &[Feldeingabe]) -> (Werte, Werte) {
     let mut lokal = Werte::new();
     let mut geheim = Werte::new();
@@ -755,8 +802,16 @@ pub fn werte_splitten(eingaben: &[Feldeingabe]) -> (Werte, Werte) {
             if !wert.is_empty() {
                 geheim.insert(eingabe.name.clone(), wert);
             }
-        } else {
-            lokal.insert(eingabe.name.clone(), wert);
+            continue;
+        }
+        match &eingabe.vorgabe {
+            Some(vorgabe) if vorgabe.fest => {}
+            Some(vorgabe) if vorgabe.wert.trim() == wert => {
+                lokal.insert(eingabe.name.clone(), String::new());
+            }
+            _ => {
+                lokal.insert(eingabe.name.clone(), wert);
+            }
         }
     }
     (lokal, geheim)
@@ -795,6 +850,9 @@ pub fn zugang_eingaben(zugaenge: &ZugaengeSicht, name: Option<&str>) -> Vec<Feld
                 wert,
                 link: feld.link.clone(),
                 art,
+                // Eine Zugangsliste gehört dem User: hier gibt es keine
+                // Vorgaben des Servers (Aufgabe 36).
+                vorgabe: None,
             }
         })
         .collect()
@@ -1534,6 +1592,7 @@ mod tests {
             nicht_installiert: None,
             nicht_fuer_system: false,
             ladeanteil: None,
+            vorgaben: Default::default(),
         }
     }
 
@@ -1828,6 +1887,104 @@ mod tests {
             ),
             "Signing in via browser …"
         );
+    }
+
+    /// Ein Eintrag mit Vorgaben des Servers (Aufgabe 36).
+    fn eintrag_mit_vorgaben() -> EintragSicht {
+        let mut eintrag = eintrag();
+        eintrag.vorgaben = quiver_domain::Vorgaben {
+            fest: Werte::from([("PFAD".to_string(), "/vom-server".to_string())]),
+            vorschlag: Werte::from([("SCHLUESSEL".to_string(), "/vorschlag".to_string())]),
+        };
+        eintrag
+    }
+
+    /// Fest steht im Feld und ist nicht änderbar; ein Vorschlag füllt nur, was
+    /// am Gerät leer ist – und Geheimes wird nie vorgegeben (Aufgabe 36).
+    #[test]
+    fn vorgaben_fuellen_leere_felder() {
+        let liste = eingaben(&eintrag_mit_vorgaben());
+        let pfad = &liste[0];
+        assert_eq!(pfad.wert, "/vom-server", "fest schlägt den Gerätewert");
+        assert_eq!(
+            pfad.vorgabe,
+            Some(Feldvorgabe {
+                fest: true,
+                wert: "/vom-server".into()
+            })
+        );
+        let schluessel = &liste[1];
+        assert_eq!(schluessel.wert, "", "Geheimes bleibt leer");
+        assert_eq!(
+            schluessel.vorgabe, None,
+            "ein Geheimnis lässt sich nicht vorbelegen"
+        );
+    }
+
+    /// Die gespeicherten Werte gewinnen gegen einen Vorschlag, ein leerer Wert
+    /// bekommt den Vorschlag gezeigt.
+    #[test]
+    fn vorschlag_fuellt_nur_leere_geraetewerte() {
+        let mut eintrag = selbst_gebauter_eintrag();
+        eintrag.vorgaben = quiver_domain::Vorgaben {
+            fest: Werte::new(),
+            vorschlag: Werte::from([("PFAD".to_string(), "/opt/post".to_string())]),
+        };
+        let liste = eingaben(&eintrag);
+        assert_eq!(liste[0].wert, "/tmp", "der Gerätewert gewinnt");
+        assert_eq!(
+            liste[0].vorgabe,
+            Some(Feldvorgabe {
+                fest: false,
+                wert: "/opt/post".into()
+            })
+        );
+
+        eintrag.lokale_werte.clear();
+        let liste = eingaben(&eintrag);
+        assert_eq!(liste[0].wert, "/opt/post", "der Vorschlag füllt");
+    }
+
+    /// Feste Werte und übernommene Vorschläge werden nicht am Gerät
+    /// gespeichert; ein eigener Wert schon (Aufgabe 36).
+    #[test]
+    fn feste_und_uebernommene_vorgaben_werden_nicht_gespeichert() {
+        let liste = eingaben(&eintrag_mit_vorgaben());
+        let (lokal, geheim) = werte_splitten(&liste);
+        assert!(
+            lokal.get("PFAD").is_none_or(|wert| wert.is_empty()),
+            "fest gehört nicht ans Gerät: {lokal:?}"
+        );
+        assert!(
+            geheim.is_empty(),
+            "ein leeres Geheimnis wird nicht geschickt"
+        );
+
+        // Ein Vorschlag, dem der User folgt, wird ebenfalls nicht gespeichert.
+        let mut uebernommen = liste.clone();
+        uebernommen[0].vorgabe = Some(Feldvorgabe {
+            fest: false,
+            wert: "/opt/post".into(),
+        });
+        uebernommen[0].wert = "/opt/post".into();
+        let (lokal, _) = werte_splitten(&uebernommen);
+        assert_eq!(lokal["PFAD"], "", "der Vorschlag bleibt beim Server");
+
+        // Ein eigener Wert und ein Geheimnis gehen ans Gerät.
+        let mut eigene = uebernommen.clone();
+        eigene[0].wert = "/tmp/selbst".into();
+        eigene[1].wert = "geheim".into();
+        let (lokal, geheim) = werte_splitten(&eigene);
+        assert_eq!(lokal["PFAD"], "/tmp/selbst");
+        assert_eq!(geheim["SCHLUESSEL"], "geheim");
+    }
+
+    /// Ein kleiner Eintrag mit einem Feld `PFAD` (Client, angelegt am Gerät).
+    fn selbst_gebauter_eintrag() -> EintragSicht {
+        let mut eintrag = eintrag();
+        eintrag.felder.truncate(1);
+        eintrag.lokale_werte = Werte::from([("PFAD".to_string(), "/tmp".to_string())]);
+        eintrag
     }
 
     #[test]

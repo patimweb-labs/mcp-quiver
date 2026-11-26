@@ -46,7 +46,10 @@ are built from the same tokens.
   Conflicts between pre-filled values are resolved by the set's priority.
 - **Configuration in layers.** The server knows endpoints, tenant and defaults.
   The client fills in what only the device knows: local paths, personal values
-  and secrets. Missing fields are named on the card, not guessed.
+  and secrets. Missing fields are named on the card, not guessed. An admin can
+  pre-fill single values — as a **suggestion** the user may change, or as
+  **fixed**: then the field is greyed out, "set by your company". Secrets can
+  never be pre-filled.
 - **Any runtime an MCP server needs.** Stdio processes (own binaries, `npx`,
   `uvx`, `docker`) and remote MCP servers over Streamable HTTP. No shell, no
   package manager and no tool runs on the server.

@@ -110,6 +110,7 @@ fn sicht_reicht_art_und_titel_durch() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag,
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let sicht = eintraege_sicht(
         &soll,
@@ -137,6 +138,7 @@ fn sicht_zeigt_nur_client_und_geheim_felder() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag("echo"),
         werte: Werte::from([("SERVER".to_string(), "vom-server".to_string())]),
+        fest: Default::default(),
     }]);
     let id = EintragId::neu("echo");
     let lokal = BTreeMap::from([(
@@ -216,6 +218,7 @@ fn zugaenge_stehen_in_der_sicht_ohne_geheimes() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag_mit_zugaengen("ssh"),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let id = EintragId::neu("ssh");
     let zugaenge = BTreeMap::from([(
@@ -279,6 +282,7 @@ fn zugaenge_stehen_in_der_sicht_ohne_geheimes() {
     let ohne = Soll::neu(vec![SollEintrag {
         eintrag: eintrag("echo"),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     assert!(eintraege_sicht(
         &ohne,
@@ -352,6 +356,7 @@ fn sicht_ohne_laeufer_wartet() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag("echo"),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let sicht = eintraege_sicht(
         &soll,
@@ -377,6 +382,7 @@ fn fehlende_werte_stehen_in_der_sicht() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag("echo"),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let id = EintragId::neu("echo");
     let laeufer = BTreeMap::from([(
@@ -478,10 +484,12 @@ fn anmeldung_steht_nur_bei_eintraegen_die_eine_brauchen() {
         SollEintrag {
             eintrag: mit,
             werte: Werte::new(),
+            fest: Default::default(),
         },
         SollEintrag {
             eintrag: eintrag("echo"),
             werte: Werte::new(),
+            fest: Default::default(),
         },
     ]);
     let id = EintragId::neu("postfach");
@@ -546,10 +554,12 @@ fn einrichtung_steht_nur_bei_eintraegen_die_eine_anbieten() {
         SollEintrag {
             eintrag: mit,
             werte: Werte::new(),
+            fest: Default::default(),
         },
         SollEintrag {
             eintrag: eintrag("echo"),
             werte: Werte::new(),
+            fest: Default::default(),
         },
     ]);
     let id = EintragId::neu("outline");
@@ -611,6 +621,7 @@ fn ein_zweiter_abgleich_startet_denselben_eintrag_nicht_noch_einmal() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag("echo"),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let id = EintragId::neu("echo");
     let gleich = BTreeMap::from([(id.clone(), soll.eintraege[0].fingerabdruck())]);
@@ -666,6 +677,7 @@ fn ein_abgeschalteter_eintrag_zeigt_abgeschaltet() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag("echo"),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let id = EintragId::neu("echo");
     let laeufer = BTreeMap::from([(
@@ -808,10 +820,12 @@ fn eine_unbrauchbare_kennung_steht_mit_grund_in_der_sicht() {
         SollEintrag {
             eintrag: eintrag("quiver"),
             werte: Werte::new(),
+            fest: Default::default(),
         },
         SollEintrag {
             eintrag: eintrag("echo"),
             werte: Werte::new(),
+            fest: Default::default(),
         },
     ]);
     let werte = BTreeMap::new();
@@ -1041,14 +1055,17 @@ fn ein_fehlendes_programm_steht_in_der_sicht() {
         SollEintrag {
             eintrag: fehlt,
             werte: Werte::new(),
+            fest: Default::default(),
         },
         SollEintrag {
             eintrag: fest,
             werte: Werte::new(),
+            fest: Default::default(),
         },
         SollEintrag {
             eintrag: entfernt,
             werte: Werte::new(),
+            fest: Default::default(),
         },
     ]);
     let werte = BTreeMap::new();
@@ -1102,6 +1119,7 @@ fn ein_verteiltes_programm_haengt_am_system() {
     let eintrag = SollEintrag {
         eintrag: verteilt,
         werte: Werte::new(),
+        fest: Default::default(),
     };
     let ohne = Soll::neu(vec![eintrag.clone()]);
     let mit = ohne.clone().mit_programmen(vec![quiver_domain::Programm {
@@ -1155,6 +1173,7 @@ fn der_ladezustand_steht_vor_dem_laeufer() {
     let soll = Soll::neu(vec![SollEintrag {
         eintrag: eintrag.clone(),
         werte: Werte::new(),
+        fest: Default::default(),
     }]);
     let id = eintrag.id.clone();
     let mut laeufer = BTreeMap::new();
@@ -1210,4 +1229,70 @@ fn der_ladezustand_steht_vor_dem_laeufer() {
         &BTreeMap::new(),
     );
     assert_eq!(ohne[0].zustand, EintragZustand::Laeuft { tools: 1 });
+}
+
+/// Aufgabe 36: Was der Server vorgibt, steht in der Sicht – getrennt in fest
+/// und Vorschlag, ohne Geheimes.
+#[test]
+fn sicht_traegt_die_vorgaben_des_servers() {
+    let mut eintrag = eintrag("echo");
+    eintrag.felder.push(Feld {
+        name: "ADRESSE".into(),
+        quelle: Quelle::Client,
+        pflicht: true,
+        ..Feld::default()
+    });
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag,
+        werte: Werte::from([
+            ("PFAD".to_string(), "/vom-server".to_string()),
+            (
+                "ADRESSE".to_string(),
+                "https://post.example.test/mcp".to_string(),
+            ),
+        ]),
+        fest: BTreeSet::from(["ADRESSE".to_string()]),
+    }]);
+    let sicht = eintraege_sicht(
+        &soll,
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let vorgaben = &sicht[0].vorgaben;
+    assert_eq!(vorgaben.fest["ADRESSE"], "https://post.example.test/mcp");
+    assert_eq!(vorgaben.vorschlag["PFAD"], "/vom-server");
+    assert!(!vorgaben.hat("TOKEN"));
+}
+
+/// Ältere Profile ohne `vorgaben` bleiben lesbar.
+#[test]
+fn sicht_ohne_vorgaben_ist_lesbar() {
+    let soll = Soll::neu(vec![SollEintrag {
+        eintrag: eintrag("echo"),
+        werte: Werte::new(),
+        fest: Default::default(),
+    }]);
+    let sicht = eintraege_sicht(
+        &soll,
+        &lokales(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        ),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    let alt = serde_json::to_string(&sicht[0]).expect("JSON");
+    let ohne = alt.replace("\"vorgaben\":{}", "");
+    let wieder: EintragSicht = serde_json::from_str(&ohne).expect("ohne vorgaben lesbar");
+    assert!(wieder.vorgaben.ist_leer());
 }

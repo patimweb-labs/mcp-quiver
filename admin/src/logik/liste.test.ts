@@ -5,7 +5,6 @@ import type { ListOption } from "@weppelmann/components";
 import {
   ABSTAND,
   HOEHE_MAX,
-  HOEHE_MIN,
   RAND,
   anker_sichtbar,
   erste_aktive,
@@ -57,13 +56,33 @@ describe("listenplatz", () => {
     expect(platz.oben).toBe(700 - ABSTAND - HOEHE_MAX);
   });
 
-  it("nimmt unten den Vorrang, solange ein paar Einträge Platz haben", () => {
-    // Genau HOEHE_MIN Platz unter dem Feld: das genügt für „unten“.
+  it("klappt nach oben, wenn die Liste unten nicht ganz hinpasst", () => {
+    // 150 px frei unter dem Feld, die Liste ist 200 px hoch, oben ist Platz.
     const hoehe = 32;
-    const oben = fenster.hoehe - hoehe - ABSTAND - RAND - HOEHE_MIN;
-    const platz = listenplatz(anker(oben, hoehe), fenster);
+    const oben = fenster.hoehe - hoehe - ABSTAND - RAND - 150;
+    const platz = listenplatz(anker(oben, hoehe), fenster, 200);
+    expect(platz.ueber).toBe(true);
+    expect(platz.hoehe).toBe(200);
+    expect(platz.oben).toBeGreaterThanOrEqual(RAND);
+  });
+
+  it("bleibt unten, wenn die Liste dort ganz hinpasst", () => {
+    const hoehe = 32;
+    const oben = fenster.hoehe - hoehe - ABSTAND - RAND - 150;
+    const platz = listenplatz(anker(oben, hoehe), fenster, 120);
     expect(platz.ueber).toBe(false);
-    expect(platz.hoehe).toBe(HOEHE_MIN);
+    expect(platz.hoehe).toBe(120);
+    expect(platz.oben + platz.hoehe).toBeLessThanOrEqual(fenster.hoehe - RAND);
+  });
+
+  it("nimmt die größere Seite, wenn sie nirgends ganz hinpasst", () => {
+    const eng = { breite: 1200, hoehe: 300 };
+    const platz = listenplatz(anker(80), eng, 280);
+    expect(platz.ueber).toBe(false);
+    expect(platz.oben + platz.hoehe).toBeLessThanOrEqual(eng.hoehe - RAND);
+    const tief = listenplatz(anker(200), eng, 280);
+    expect(tief.ueber).toBe(true);
+    expect(tief.oben).toBeGreaterThanOrEqual(RAND);
   });
 
   it("bleibt waagerecht im Fenster", () => {

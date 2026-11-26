@@ -123,6 +123,17 @@ pub struct Feldeingabe {
     /// Wie das Feld dargestellt wird (Aufgabe 16). Bei Geheimnissen steht
     /// hier immer [`FeldArt::Passwort`].
     pub art: FeldArt,
+    /// Vom Server vorgegeben (Aufgabe 36): `None` heißt „keine Vorgabe“.
+    pub vorgabe: Option<Feldvorgabe>,
+}
+
+/// Ein vom Server vorgegebener Wert eines Felds (Aufgabe 36).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Feldvorgabe {
+    /// Fest: sichtbar, aber nicht änderbar – „von deiner Firma vorgegeben“.
+    pub fest: bool,
+    /// Der vorgegebene Wert, wie er im Feld steht.
+    pub wert: String,
 }
 
 /// Der offene Dialog — höchstens einer.

@@ -294,12 +294,40 @@ pub struct Anmeldung {
     pub abmelden: Vec<String>,
 }
 
+/// Wie ein vom Server vorbelegter Wert am Gerät gilt (Aufgabe 36).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Vorgabe {
+    /// Vorbelegt, der User darf sie am Gerät ändern.
+    Vorschlag,
+    /// Sichtbar, aber nicht änderbar: „von deiner Firma vorgegeben“.
+    Fest,
+}
+
 /// Ein Eintrag in einem Satz, mit den Werten, die der Admin vorbelegt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SatzEintrag {
     pub eintrag: EintragId,
+    /// Vorbelegte Werte. Geheime Felder gehören nicht hierher (der Server
+    /// lehnt sie ab, [`vorgaben_pruefen`]).
     #[serde(default)]
     pub werte: Werte,
+    /// Felder aus `werte`, die **fest** gelten (Aufgabe 36). Alle übrigen
+    /// Werte sind Vorschläge. Fehlt die Liste (ältere Daten), ist alles ein
+    /// Vorschlag.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub fest: BTreeSet<String>,
+}
+
+impl SatzEintrag {
+    /// Ein Eintrag im Satz ohne jede Vorbelegung.
+    pub fn neu(eintrag: impl Into<EintragId>) -> Self {
+        Self {
+            eintrag: eintrag.into(),
+            werte: Werte::new(),
+            fest: BTreeSet::new(),
+        }
+    }
 }
 
 /// Eine benannte Sammlung von Einträgen.
@@ -468,15 +496,88 @@ pub fn verteiltes_programm(befehl: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SollEintrag {
     pub eintrag: Eintrag,
-    /// Nur Felder mit `Quelle::Server`.
+    /// Felder mit `Quelle::Server` und die Vorschläge bzw. festen Vorgaben
+    /// für Felder mit Quelle „Gerät“ (Aufgabe 36). Geheimes steht hier nie.
     pub werte: Werte,
+    /// Felder aus `werte`, die fest gelten. Fehlt die Liste (ältere Server),
+    /// ist alles ein Vorschlag.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub fest: BTreeSet<String>,
 }
 
 impl SollEintrag {
+    /// Ein Soll-Eintrag ohne Werte.
+    pub fn neu(eintrag: Eintrag) -> Self {
+        Self {
+            eintrag,
+            werte: Werte::new(),
+            fest: BTreeSet::new(),
+        }
+    }
+
     /// Fingerabdruck über Eintrag und Werte: ändert er sich, startet der Client neu.
+    /// Die festen Vorgaben gehören dazu – eine Änderung wirkt beim nächsten
+    /// Abgleich, ohne dass sich jemand neu anmeldet (Aufgabe 36).
     pub fn fingerabdruck(&self) -> String {
         let json = serde_json::to_vec(self).expect("SollEintrag ist serialisierbar");
         hex::encode(Sha256::digest(json))
+    }
+
+    /// Wie das Feld vom Server vorgegeben ist: Vorschlag oder fest, mit Wert.
+    /// `None` heißt: keine Vorbelegung.
+    pub fn vorgabe(&self, name: &str) -> Option<(Vorgabe, &str)> {
+        let wert = self
+            .werte
+            .get(name)
+            .map(String::as_str)
+            .filter(|wert| !wert.is_empty())?;
+        let art = if self.fest.contains(name) {
+            Vorgabe::Fest
+        } else {
+            Vorgabe::Vorschlag
+        };
+        Some((art, wert))
+    }
+
+    /// Die Vorgaben des Eintrags, aufgeteilt nach Art — so zeigt sie das
+    /// Fenster (fest ausgegraut, Vorschlag ausgefüllt und änderbar).
+    pub fn vorgaben(&self) -> Vorgaben {
+        let mut vorgaben = Vorgaben::default();
+        for (name, wert) in &self.werte {
+            if wert.is_empty() {
+                continue;
+            }
+            if self.fest.contains(name) {
+                vorgaben.fest.insert(name.clone(), wert.clone());
+            } else {
+                vorgaben.vorschlag.insert(name.clone(), wert.clone());
+            }
+        }
+        vorgaben
+    }
+}
+
+/// Vom Server vorgegebene Werte eines Eintrags, aufgeteilt für die Anzeige
+/// am Gerät (Aufgabe 36).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Vorgaben {
+    /// Fest: sichtbar, nicht änderbar („von deiner Firma vorgegeben“).
+    #[serde(default, skip_serializing_if = "Werte::is_empty")]
+    pub fest: Werte,
+    /// Vorschlag: vorbelegt, der User darf ihn ändern.
+    #[serde(default, skip_serializing_if = "Werte::is_empty")]
+    pub vorschlag: Werte,
+}
+
+impl Vorgaben {
+    /// Gibt es für dieses Feld eine Vorgabe?
+    pub fn hat(&self, name: &str) -> bool {
+        self.fest.contains_key(name) || self.vorschlag.contains_key(name)
+    }
+
+    /// Gibt es überhaupt keine Vorgabe?
+    pub fn ist_leer(&self) -> bool {
+        self.fest.is_empty() && self.vorschlag.is_empty()
     }
 }
 
@@ -599,9 +700,8 @@ pub fn soll_berechnen(
         .flat_map(|g| g.saetze.iter())
         .collect();
 
-    // Eintrag → Feld → (Priorität, Satz, Wert)
-    let mut gewaehlt: BTreeMap<&EintragId, BTreeMap<String, (i32, &SatzId, String)>> =
-        BTreeMap::new();
+    // Eintrag → Feld → was gilt (Priorität, Satz, Wert, fest)
+    let mut gewaehlt: BTreeMap<&EintragId, BTreeMap<String, Gewaehlt>> = BTreeMap::new();
     for satz in saetze.iter().filter(|s| satz_ids.contains(&s.id)) {
         for se in &satz.eintraege {
             let eintrag = eintraege
@@ -616,25 +716,47 @@ pub fn soll_berechnen(
             }
             let felder = gewaehlt.entry(&eintrag.id).or_default();
             for (name, wert) in &se.werte {
-                let ist_server = eintrag
-                    .felder
-                    .iter()
-                    .any(|f| &f.name == name && f.quelle == Quelle::Server);
-                if !ist_server {
+                // Geheimes kommt nie vom Server; unbekannte Felder (ältere
+                // Daten) wirken nicht (Aufgabe 36).
+                let Some(feld) = eintrag.felder.iter().find(|f| &f.name == name) else {
+                    continue;
+                };
+                if feld.quelle == Quelle::Geheim || wert.is_empty() {
                     continue;
                 }
-                match felder.get(name) {
-                    Some((p, _, _)) if *p > satz.prioritaet => {}
-                    Some((p, anderer, w)) if *p == satz.prioritaet && w != wert => {
+                let fest = se.fest.contains(name);
+                match felder
+                    .get(name)
+                    .map(|g| (g.prioritaet, g.wert.clone(), g.fest))
+                {
+                    Some((p, _, _)) if p > satz.prioritaet => {}
+                    Some((p, alt, _)) if p == satz.prioritaet && alt != *wert => {
                         return Err(SollFehler::Widerspruch {
                             eintrag: eintrag.id.clone(),
                             feld: name.clone(),
-                            a: (*anderer).clone(),
+                            a: felder[name].satz.clone(),
                             b: satz.id.clone(),
                         });
                     }
+                    // Gleicher Wert, gleiche Priorität: „fest“ ist die
+                    // strengere Ansage und gewinnt.
+                    Some((p, _, alt_fest)) if p == satz.prioritaet => {
+                        if fest && !alt_fest {
+                            if let Some(gewaehlt) = felder.get_mut(name) {
+                                gewaehlt.fest = true;
+                            }
+                        }
+                    }
                     _ => {
-                        felder.insert(name.clone(), (satz.prioritaet, &satz.id, wert.clone()));
+                        felder.insert(
+                            name.clone(),
+                            Gewaehlt {
+                                prioritaet: satz.prioritaet,
+                                satz: satz.id.clone(),
+                                wert: wert.clone(),
+                                fest,
+                            },
+                        );
                     }
                 }
             }
@@ -648,13 +770,80 @@ pub fn soll_berechnen(
                 .iter()
                 .find(|e| &e.id == id)
                 .expect("oben gefunden");
-            SollEintrag {
-                eintrag: eintrag.clone(),
-                werte: felder.into_iter().map(|(k, (_, _, w))| (k, w)).collect(),
+            let mut soll = SollEintrag::neu(eintrag.clone());
+            for (name, gewaehlt) in felder {
+                if gewaehlt.fest {
+                    soll.fest.insert(name.clone());
+                }
+                soll.werte.insert(name, gewaehlt.wert);
             }
+            soll
         })
         .collect();
     Ok(Soll::neu(liste))
+}
+
+/// Was ein Satz für ein Feld festlegt, solange die Prioritäten streiten.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Gewaehlt {
+    prioritaet: i32,
+    satz: SatzId,
+    wert: String,
+    fest: bool,
+}
+
+/// Prüft die Vorbelegung eines Satz-Eintrags (Aufgabe 36).
+///
+/// - Geheime Felder lassen sich **nicht** vorbelegen – weder als Vorschlag
+///   noch fest. Der Wert gehört ans Gerät.
+/// - Ein Schalter am Gerät lässt sich nur auf seinen **Standard** vorbelegen –
+///   als Vorschlag wie fest. Der Standard ist die sichere Stellung („Schreiben“
+///   aus, „Zertifikat prüfen“ an): der Admin kann sie festschreiben, aber nichts
+///   heimlich freigeben oder abschwächen. Wer das Gerät benutzt, entscheidet.
+/// - „Fest“ ohne Wert ist keine Vorgabe.
+///
+/// Unbekannte Feldnamen bleiben stehen (ältere Daten); sie wirken nicht.
+/// `Ok(())` heißt: die Vorbelegung taugt.
+/// `an` oder `aus` – wie ein Schalterwert gemeint ist.
+fn schalter_stellung(wert: &str) -> &'static str {
+    match wert.trim().to_ascii_lowercase().as_str() {
+        "an" | "ja" | "1" | "true" | "ein" | "on" | "yes" => "an",
+        _ => "aus",
+    }
+}
+
+pub fn vorgaben_pruefen(eintrag: &Eintrag, satz_eintrag: &SatzEintrag) -> Result<(), String> {
+    for feld in &eintrag.felder {
+        let wert = satz_eintrag.werte.get(&feld.name);
+        let fest = satz_eintrag.fest.contains(&feld.name);
+        if feld.quelle == Quelle::Geheim && (wert.is_some() || fest) {
+            return Err(format!(
+                "Das Feld „{}“ von {} ist geheim und lässt sich nicht vorbelegen",
+                feld.name, eintrag.id
+            ));
+        }
+        if feld.art == FeldArt::Schalter && feld.quelle != Quelle::Server {
+            if let Some(wert) = wert.filter(|wert| !wert.is_empty()) {
+                let sicher = schalter_stellung(feld.standard.as_deref().unwrap_or("aus"));
+                if schalter_stellung(wert) != sicher {
+                    return Err(format!(
+                        "Der Schalter „{}“ von {} lässt sich nur auf „{sicher}“ vorbelegen",
+                        feld.name, eintrag.id
+                    ));
+                }
+            }
+        }
+        if !fest {
+            continue;
+        }
+        if wert.filter(|wert| !wert.is_empty()).is_none() {
+            return Err(format!(
+                "Das Feld „{}“ von {} ist fest vorgegeben, hat aber keinen Wert",
+                feld.name, eintrag.id
+            ));
+        };
+    }
+    Ok(())
 }
 
 /// Ein Feld, das am Gerät noch fehlt.
@@ -666,8 +855,11 @@ pub struct FehlendesFeld {
 }
 
 /// Setzt die Konfiguration in Schichten zusammen (SPEC.md §6) und ersetzt
-/// `${feld}` in der Laufzeit:
-/// Standard des Felds → Werte des Servers → Werte am Gerät (`lokal`, `geheim`).
+/// `${feld}` in der Laufzeit.
+///
+/// Reihenfolge je Feld (Aufgabe 36): fest vom Server → Gerät → Vorschlag vom
+/// Server → Standard des Felds. Geheime Felder kommen immer vom Gerät
+/// (`geheim`), der Server gibt sie nie vor.
 ///
 /// Fehlen Pflichtfelder, kommt die Liste zurück, damit das Fenster genau diese
 /// abfragt.
@@ -679,13 +871,26 @@ pub fn konfig_zusammensetzen(
     let mut werte = Werte::new();
     let mut fehlend = Vec::new();
     for feld in &soll.eintrag.felder {
-        let wert = match feld.quelle {
-            Quelle::Server => soll.werte.get(&feld.name),
+        let am_geraet = match feld.quelle {
             Quelle::Client => lokal.get(&feld.name),
             Quelle::Geheim => geheim.get(&feld.name),
+            Quelle::Server => None,
         }
         .cloned()
-        .filter(|w| !w.is_empty())
+        .filter(|w| !w.is_empty());
+        // Geheimes gibt der Server nie vor – auch nicht, wenn alte Daten es
+        // enthielten.
+        let vom_server = if feld.quelle == Quelle::Geheim {
+            None
+        } else {
+            soll.vorgabe(&feld.name)
+        };
+        let wert = match (vom_server, am_geraet) {
+            (Some((Vorgabe::Fest, wert)), _) => Some(wert.to_string()),
+            (_, Some(wert)) => Some(wert),
+            (Some((Vorgabe::Vorschlag, wert)), None) => Some(wert.to_string()),
+            (None, None) => None,
+        }
         .or_else(|| feld.standard.clone());
         match wert {
             Some(w) => {

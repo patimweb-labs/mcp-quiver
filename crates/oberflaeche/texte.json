@@ -1190,5 +1190,13 @@
   "update.grund.unbekannt": {
     "de": "Für diese Installation kann quiver sich nicht selbst aktualisieren.",
     "en": "quiver cannot update itself for this installation."
+  },
+  "tools.vorgegeben": {
+    "de": "von deiner Firma vorgegeben",
+    "en": "set by your company"
+  },
+  "tools.auf_vorschlag": {
+    "de": "Auf Vorschlag zurücksetzen",
+    "en": "Reset to the suggestion"
   }
 }

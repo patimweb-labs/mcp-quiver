@@ -107,6 +107,7 @@ impl Geruest {
         let soll = Soll::neu(vec![SollEintrag {
             eintrag,
             werte: Werte::new(),
+            fest: Default::default(),
         }]);
 
         Self {

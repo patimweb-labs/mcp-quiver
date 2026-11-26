@@ -158,6 +158,7 @@ impl Pruefung {
                 eintraege: vec![SatzEintrag {
                     eintrag: eintrag.id.clone(),
                     werte: Werte::new(),
+                    fest: Default::default(),
                 }],
             },
         )

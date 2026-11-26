@@ -124,23 +124,45 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                 let link = eingaben[i].link.clone();
                                 let art = eingaben[i].art.clone();
                                 let schalter = art == FeldArt::Schalter;
-                                let hinweis = (!eingaben[i].beschreibung.is_empty()).then(|| {
-                                    if eingaben[i].pflicht && !schalter {
-                                        format!(
-                                            "{} · {}",
-                                            eingaben[i].beschreibung,
-                                            t(sprache, "tools.pflicht")
-                                        )
-                                    } else {
-                                        eingaben[i].beschreibung.clone()
-                                    }
+                                // Vorgabe des Servers (Aufgabe 36): fest heißt
+                                // ausgegraut und nicht änderbar, ein Vorschlag
+                                // steht ausgefüllt da und lässt sich zurücksetzen.
+                                let vorgabe = eingaben[i].vorgabe.clone();
+                                let fest = vorgabe.as_ref().is_some_and(|vorgabe| vorgabe.fest);
+                                let zuruecksetzen = vorgabe.as_ref().is_some_and(|vorgabe| {
+                                    !vorgabe.fest && vorgabe.wert.trim() != eingaben[i].wert.trim()
                                 });
+                                let mut hinweis =
+                                    (!eingaben[i].beschreibung.is_empty()).then(|| {
+                                        if eingaben[i].pflicht && !schalter {
+                                            format!(
+                                                "{} · {}",
+                                                eingaben[i].beschreibung,
+                                                t(sprache, "tools.pflicht")
+                                            )
+                                        } else {
+                                            eingaben[i].beschreibung.clone()
+                                        }
+                                    });
+                                if fest {
+                                    let grund = t(sprache, "tools.vorgegeben");
+                                    hinweis = Some(match hinweis {
+                                        Some(hinweis) => format!("{hinweis} · {grund}"),
+                                        None => grund,
+                                    });
+                                }
                                 // Ein Schalter ist eine Checkbox mit dem Titel
                                 // daneben, keine Formularzeile (Aufgabe 16).
                                 if schalter {
                                     let mut an = logik::schalter_an(&eingaben[i].wert);
                                     ui.add_space(thema::SPACE_1);
-                                    if bausteine::haken(ui, &mut an, &anzeige).changed() {
+                                    let geaendert = ui
+                                        .add_enabled_ui(!fest, |ui| {
+                                            bausteine::haken(ui, &mut an, &anzeige)
+                                        })
+                                        .inner
+                                        .changed();
+                                    if geaendert {
                                         eingaben[i].wert =
                                             if an { "an".into() } else { "aus".into() };
                                     }
@@ -153,7 +175,7 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                     ui.add_space(thema::SPACE_1);
                                 } else {
                                     bausteine::feld(ui, &f, &anzeige, hinweis.as_deref(), |ui| {
-                                        match &art {
+                                        ui.add_enabled_ui(!fest, |ui| match &art {
                                             FeldArt::Auswahl { optionen } => {
                                                 let liste: Vec<(String, String)> = optionen
                                                     .iter()
@@ -201,8 +223,26 @@ pub fn zeigen(ctx: &egui::Context, sicht: &mut Sicht, aktionen: &mut Vec<Aktion>
                                                 }
                                                 antwort
                                             }
-                                        }
+                                        })
+                                        .inner
                                     });
+                                }
+                                // „Auf Vorschlag zurücksetzen“ steht nur da, wo
+                                // der User etwas anderes eingetragen hat.
+                                if zuruecksetzen {
+                                    ui.add_space(thema::SPACE_1);
+                                    let zurueck = bausteine::knopf(
+                                        ui,
+                                        &f,
+                                        Icon::Neuladen,
+                                        &t(sprache, "tools.auf_vorschlag"),
+                                    )
+                                    .clicked();
+                                    if zurueck {
+                                        if let Some(vorgabe) = &eingaben[i].vorgabe {
+                                            eingaben[i].wert = vorgabe.wert.clone();
+                                        }
+                                    }
                                 }
                                 // Hilfe-Link neben dem Feld: nur aktiv, wenn die
                                 // **aktuellen** Eingaben eine Adresse ergeben; sonst

@@ -417,6 +417,7 @@ fn satz(id: &str, eintrag_id: &str, werte: Value) -> Satz {
         eintraege: vec![SatzEintrag {
             eintrag: EintragId::neu(eintrag_id),
             werte: serde_json::from_value::<Werte>(werte).expect("Werte"),
+            fest: Default::default(),
         }],
     }
 }
@@ -528,6 +529,7 @@ async fn ablauf_vom_eintrag_bis_zum_soll() {
                 eintrag: EintragId::neu("wetter"),
                 werte: serde_json::from_value::<Werte>(json!({ "PFAD": "/tmp/streng" }))
                     .expect("Werte"),
+                fest: Default::default(),
             }],
         })
         .await
@@ -2085,4 +2087,164 @@ async fn die_verwaltung_sieht_die_programme() {
     // Ändern lässt sich hier nichts: kein PUT, kein DELETE.
     let (status, _) = p.admin("PUT", "/admin/programme", Some(json!([]))).await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// Aufgabe 36: Der Server nimmt nur Vorbelegungen an, die er verantworten
+/// kann – Geheimes nie, einen Schalter nur auf „aus“ fest – und was er annimmt,
+/// steht im Soll des Geräts.
+#[tokio::test]
+async fn vorbelegung_wird_geprueft_und_steht_im_soll() {
+    let p = Pruefung::neu().await;
+    let mut postfach = eintrag("postfach");
+    postfach.felder = vec![
+        Feld {
+            name: "ADRESSE".into(),
+            beschreibung: "MCP-Adresse".into(),
+            quelle: Quelle::Client,
+            pflicht: true,
+            standard: None,
+            link: None,
+            art: FeldArt::Url,
+            titel: None,
+        },
+        Feld {
+            name: "SCHREIBEN".into(),
+            beschreibung: "Schreiben erlauben".into(),
+            quelle: Quelle::Client,
+            pflicht: false,
+            standard: Some("aus".into()),
+            link: None,
+            art: FeldArt::Schalter,
+            titel: None,
+        },
+        Feld {
+            name: "TOKEN".into(),
+            beschreibung: "Zugangstoken".into(),
+            quelle: Quelle::Geheim,
+            pflicht: true,
+            standard: None,
+            link: None,
+            art: FeldArt::Passwort,
+            titel: None,
+        },
+    ];
+    assert_eq!(p.put_eintrag(&postfach).await.0, StatusCode::OK);
+
+    // Ein Geheimnis vorbelegen: abgelehnt, und nichts wird gespeichert.
+    let (status, rumpf) = p
+        .admin(
+            "PUT",
+            "/admin/saetze/geheim",
+            Some(json!({
+                "id": "geheim",
+                "titel": "Geheim",
+                "prioritaet": 0,
+                "eintraege": [{
+                    "eintrag": "postfach",
+                    "werte": { "TOKEN": "leck" },
+                    "fest": ["TOKEN"]
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rumpf}");
+    assert!(
+        rumpf["fehler"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("geheim"),
+        "der Grund wird benannt: {rumpf}"
+    );
+    let (status, _) = p.admin("GET", "/admin/saetze/geheim", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nichts gespeichert");
+
+    // Einen Schalter heimlich freigeben: abgelehnt.
+    let (status, rumpf) = p
+        .admin(
+            "PUT",
+            "/admin/saetze/freigabe",
+            Some(json!({
+                "id": "freigabe",
+                "titel": "Freigabe",
+                "prioritaet": 0,
+                "eintraege": [{
+                    "eintrag": "postfach",
+                    "werte": { "SCHREIBEN": "an" },
+                    "fest": ["SCHREIBEN"]
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rumpf}");
+    assert!(
+        rumpf["fehler"].as_str().unwrap_or_default().contains("aus"),
+        "der Schalter lässt sich nur auf „aus“ festlegen: {rumpf}"
+    );
+
+    // Auch als Vorschlag nicht: still freigeben darf der Admin nicht.
+    let (status, rumpf) = p
+        .admin(
+            "PUT",
+            "/admin/saetze/vorschlag",
+            Some(json!({
+                "id": "vorschlag",
+                "titel": "Vorschlag",
+                "prioritaet": 0,
+                "eintraege": [{
+                    "eintrag": "postfach",
+                    "werte": { "SCHREIBEN": "an" }
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rumpf}");
+
+    // Die feste Adresse gilt und steht im Soll des Geräts.
+    let (status, rumpf) = p
+        .admin(
+            "PUT",
+            "/admin/saetze/basis",
+            Some(json!({
+                "id": "basis",
+                "titel": "Basis",
+                "prioritaet": 1,
+                "eintraege": [{
+                    "eintrag": "postfach",
+                    "werte": { "ADRESSE": "https://post.example.test/mcp" },
+                    "fest": ["ADRESSE"]
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let (status, rumpf) = p.admin("GET", "/admin/saetze/basis", None).await;
+    assert_eq!(status, StatusCode::OK, "{rumpf}");
+    let gespeichert: Satz = als(&rumpf);
+    assert!(gespeichert.eintraege[0].fest.contains("ADRESSE"));
+    assert_eq!(
+        gespeichert.eintraege[0].werte["ADRESSE"],
+        "https://post.example.test/mcp"
+    );
+
+    assert_eq!(
+        p.put_gruppe(&gruppe("team", &["basis"])).await.0,
+        StatusCode::OK
+    );
+    let code = p.code_anlegen(&["team"], Some(60)).await;
+    let antwort = p.anmelden(&code.code, "Testrechner").await;
+    let soll = p.soll(&antwort.token).await;
+    let eintrag = soll
+        .eintraege
+        .iter()
+        .find(|eintrag| eintrag.eintrag.id == EintragId::neu("postfach"))
+        .expect("Eintrag im Soll");
+    assert_eq!(
+        eintrag.werte["ADRESSE"], "https://post.example.test/mcp",
+        "die Vorgabe steht im Soll"
+    );
+    assert!(eintrag.fest.contains("ADRESSE"), "als fest markiert");
+    assert!(
+        !eintrag.werte.contains_key("TOKEN"),
+        "Geheimes geht nie an ein Gerät"
+    );
 }
