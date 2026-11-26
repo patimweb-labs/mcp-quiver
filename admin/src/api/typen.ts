@@ -488,6 +488,38 @@ export interface Einrichten {
   code?: string;
 }
 
+// ---------------------------------------------------------------- Updates
+// (Aufgabe 34)
+
+/** Wie eine Gruppe mit Updates umgeht. */
+/** Ein Gerät, dessen Client älter ist als die neueste Veröffentlichung. */
+export interface VeralteterClient {
+  geraet: string;
+  /** Der Anzeigename des Geräts (aus seiner Meldung). */
+  name: string;
+  /** Die Version, die es zuletzt gemeldet hat. */
+  version: string;
+}
+
+/** `GET /api/v1/admin/updates`: Stand der Abfrage und was daraus folgt. */
+export interface UpdateStand {
+  /** Die laufende Server-Version. */
+  server_version: string;
+  /** Ist die Abfrage der Veröffentlichungen an (`QUIVER_UPDATES`)? */
+  abfrage_an: boolean;
+  /** RFC 3339; `null`, wenn noch nie gefragt wurde. */
+  zuletzt_geprueft?: string | null;
+  /** Die neueste veröffentlichte Version; `null`, solange nichts vorliegt. */
+  neueste_version?: string | null;
+  /** Die Seite mit den Änderungen, falls die Veröffentlichung eine nennt. */
+  aenderungen?: string | null;
+  /** Ist der Server selbst älter als die neueste Veröffentlichung? */
+  server_veraltet: boolean;
+  /** Geräte, deren Client älter ist (der Server nennt höchstens 50). */
+  veraltete_clients: VeralteterClient[];
+  fehler?: string | null;
+}
+
 /** Die Seiten der Verwaltung. */
 export type Seite =
   | "ueberblick"

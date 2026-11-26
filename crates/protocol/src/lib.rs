@@ -25,6 +25,8 @@
 //! | POST | `/admin/codes` | Admin | [`CodeAnlegen`] → [`Code`] |
 //! | GET | `/admin/ueberblick` | Admin | → [`Ueberblick`] |
 //! | GET | `/admin/programme` | Admin | → `Vec<`[`quiver_domain::Programm`]`>` |
+//! | GET | `/geraet/updates` | Gerät | → [`UpdateAngebot`] (Aufgabe 34) |
+//! | GET | `/admin/updates` | Admin | → [`UpdateStand`] |
 //!
 //! Ohne `/api/v1` liegen die offenen Wege der Anmeldung: `/auth/stand` →
 //! [`AuthStand`] und `/auth/einrichten` → [`Ich`] (Aufgabe 25).
@@ -32,7 +34,7 @@
 //! PUT legt an oder ersetzt (die Kennung steht im Pfad und im Rumpf, beide
 //! müssen gleich sein). Fehler kommen als [`Fehler`] mit passendem Status.
 
-use quiver_domain::{EintragId, Geraet, GruppeId};
+use quiver_domain::{EintragId, Geraet, GeraetId, GruppeId};
 use serde::{Deserialize, Serialize};
 
 pub const PRAEFIX: &str = "/api/v1";
@@ -449,6 +451,84 @@ pub struct Anmeldearten {
     /// Ein Root-Benutzer ist gesetzt (E-Mail und Passwort).
     pub root: bool,
 }
+
+// ---------------------------------------------------------------- Updates
+
+/// `GET /api/v1/geraet/updates`: was der Server über die Veröffentlichung
+/// weiß. **Kein Paket, keine Adresse zum Laden** – der Client lädt nichts; er
+/// zeigt nur an (Aufgabe 34).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateAngebot {
+    /// Die Version, die das Gerät gemeldet hat (oder aus der Abfrage).
+    pub aktuelle_version: String,
+    /// Die neueste veröffentlichte Version; `None`, solange der Server nichts
+    /// erfahren hat.
+    #[serde(default)]
+    pub neueste_version: Option<String>,
+    /// Die Seite mit den Änderungen, falls die Veröffentlichung eine nennt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aenderungen: Option<String>,
+    /// Die Pakete, die es für das gemeldete System gibt (Aufgabe 39). Leer
+    /// heißt: nichts zum Tauschen (älterer Server, keine Prüfsumme, anderes
+    /// System) – dann bleibt es beim Hinweis.
+    #[serde(default)]
+    pub pakete: Vec<UpdatePaket>,
+}
+
+/// Ein Paket dieser Veröffentlichung für das System des Geräts (Aufgabe 39).
+///
+/// Der Client wählt die Art, die zu seiner Installation passt, lädt sie über
+/// [`crate::PRAEFIX`]`/geraet/updates/paket/{name}` und prüft Größe und
+/// SHA-256 **vor** jedem Schritt. Ohne Prüfsumme gibt es kein Paket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdatePaket {
+    /// Der Dateiname im Release (`quiver-0.5.0-linux-x86_64.tar.gz`).
+    pub name: String,
+    /// Größe in Bytes.
+    pub groesse: u64,
+    /// SHA-256 über die Datei, klein und hexadezimal.
+    pub sha256: String,
+    /// `zip`, `msi`, `dmg`, `pkg`, `appimage`, `tar.gz`, `deb`, `rpm`.
+    pub art: String,
+}
+
+/// Ein Gerät, dessen Client älter ist als die neueste Veröffentlichung.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VeralteterClient {
+    pub geraet: GeraetId,
+    /// Der Anzeigename des Geräts (aus seiner Meldung).
+    pub name: String,
+    /// Die Version, die es zuletzt gemeldet hat.
+    pub version: String,
+}
+
+/// `GET /api/v1/admin/updates`: Stand der Abfrage und was daraus folgt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateStand {
+    /// Die laufende Server-Version.
+    pub server_version: String,
+    /// Ist die Abfrage der Veröffentlichungen eingeschaltet (`QUIVER_UPDATES`)?
+    pub abfrage_an: bool,
+    /// RFC 3339; `None`, wenn noch nie gefragt wurde.
+    #[serde(default)]
+    pub zuletzt_geprueft: Option<String>,
+    /// Die neueste veröffentlichte Version; `None`, solange nichts vorliegt.
+    #[serde(default)]
+    pub neueste_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aenderungen: Option<String>,
+    /// Ist der **Server** älter als die neueste Veröffentlichung? Er tauscht
+    /// sich nicht selbst aus; der Hinweis sagt, dass er neu aufgesetzt wird.
+    pub server_veraltet: bool,
+    /// Geräte, deren Client älter ist (höchstens [`VERALTETE_MAX`] Stück).
+    #[serde(default)]
+    pub veraltete_clients: Vec<VeralteterClient>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fehler: Option<String>,
+}
+
+/// So viele veraltete Geräte nennt die Verwaltung höchstens.
+pub const VERALTETE_MAX: usize = 50;
 
 /// Fehlerantwort.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

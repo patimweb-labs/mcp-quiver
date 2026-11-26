@@ -172,8 +172,16 @@ pub(crate) struct SystemAbfrage {
 }
 
 impl SystemAbfrage {
+    /// Aus zwei Angaben (etwa aus einer anderen Abfrage) eine Abfrage bauen.
+    pub(crate) fn neu(system: Option<&str>, arch: Option<&str>) -> Self {
+        Self {
+            system: system.map(str::to_string),
+            arch: arch.map(str::to_string),
+        }
+    }
+
     /// `Ok(None)`: keine Angabe. `Err`: eine Angabe, die es nicht gibt.
-    fn lesen(&self) -> Result<Option<System>, FehlerAntwort> {
+    pub(crate) fn lesen(&self) -> Result<Option<System>, FehlerAntwort> {
         match (self.system.as_deref(), self.arch.as_deref()) {
             (None, None) => Ok(None),
             (Some(system), Some(arch)) => {
@@ -333,7 +341,7 @@ fn system_von(programm: &Programm) -> System {
 
 /// Eine Datei als Strom, höchstens `rest` Bytes (keine Zeile über die Größe
 /// hinaus: was das Soll nennt, ist auch das Ende).
-fn datei_strom(
+pub(crate) fn datei_strom(
     datei: tokio::fs::File,
     rest: u64,
 ) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {

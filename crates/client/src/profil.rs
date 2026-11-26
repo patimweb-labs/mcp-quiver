@@ -62,6 +62,12 @@ pub struct Profil {
     /// Eintrag, gelten 120 s; erlaubt sind 1–900 s.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aufruf_fristen: BTreeMap<String, u64>,
+    /// Der frühere Merker für „später“ und einen gescheiterten Tausch
+    /// (Aufgabe 34). Der Selbst-Tausch ist entfallen; das Feld wird nur noch
+    /// gelesen, damit eine vorhandene `zustand.json` weiter lesbar bleibt, und
+    /// beim nächsten Schreiben weggelassen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<serde_json::Value>,
 }
 
 /// Nur schreiben, wenn der Schalter an ist.

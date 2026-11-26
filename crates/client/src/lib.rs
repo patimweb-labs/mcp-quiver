@@ -44,6 +44,8 @@ mod server_anmeldung;
 mod sse;
 mod tools;
 mod tresor;
+pub mod update;
+pub mod vorgaben;
 mod werkzeuge;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,7 +57,7 @@ use std::time::Duration;
 
 use quiver_domain::{
     EintragId, FehlendesFeld, Feld, Geraet, Laufzeit, Mehrfach, Quelle, Soll, SollEintrag,
-    Vorgaben, Werte, Zugang, MEHRFACH_UMGEBUNG,
+    Vorgaben as FeldVorgaben, Werte, Zugang, MEHRFACH_UMGEBUNG,
 };
 use quiver_protocol::{AnmeldeGrund, Anmeldearten, EintragZustand, PRAEFIX};
 use rmcp::model::Tool;
@@ -71,6 +73,8 @@ pub use protokoll::{Aufruf, LogFilter, Zeile};
 pub use server_anmeldung::{Browser, SystemBrowser};
 pub use tools::{Fund, Herkunft, NichtGefunden, Suche, ORDNER_SCHALTER};
 pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
+pub use update::UpdateLage;
+pub use vorgaben::Vorgaben;
 pub use werkzeuge::Ablage;
 
 /// Wie oft der Anmeldezustand der Einträge nachgesehen wird.
@@ -93,6 +97,13 @@ pub struct KernKonfig {
     /// Wer die Anmeldeseite des Servers öffnet (Aufgabe 22). Standard: das
     /// System; der Ende-zu-Ende-Test setzt eine Attrappe ein.
     pub browser: Arc<dyn Browser>,
+    /// Vorgaben der Firma (Aufgabe 34): Vorrang vor dem Profil. Standard: was
+    /// das System meldet; Tests setzen sie ausdrücklich.
+    pub vorgaben: Vorgaben,
+    /// Wie quiver hier installiert ist (Aufgabe 39): Art, Programmpfad und ob
+    /// der Ordner schreibbar ist. Standard: das erkennt der Client selbst;
+    /// Tests setzen einen Programmordner im Testordner.
+    pub aufstellung: update::Aufstellung,
 }
 
 impl KernKonfig {
@@ -106,6 +117,8 @@ impl KernKonfig {
             profil,
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 8741)),
             browser: Arc::new(SystemBrowser),
+            vorgaben: vorgaben::lesen(&vorgaben::Ort::aus_umgebung()),
+            aufstellung: update::Aufstellung::dieses(),
         }
     }
 }
@@ -180,8 +193,8 @@ pub struct EintragSicht {
     pub lokale_werte: Werte,
     /// Vom Server vorgegebene Werte (Aufgabe 36): `fest` ist nicht änderbar,
     /// `vorschlag` ist vorbelegt und änderbar.
-    #[serde(default, skip_serializing_if = "Vorgaben::ist_leer")]
-    pub vorgaben: Vorgaben,
+    #[serde(default, skip_serializing_if = "FeldVorgaben::ist_leer")]
+    pub vorgaben: FeldVorgaben,
     /// Welche Geheim-Felder gesetzt sind (nie der Wert selbst).
     pub geheim_gesetzt: Vec<String>,
     /// Werkzeugnamen ohne Präfix (`echo`, nicht `echo__echo`).
@@ -333,6 +346,14 @@ pub struct Modell {
     /// `.kaputt-<zeit>` daneben (Paket 3). Der Client läuft weiter.
     #[serde(default)]
     pub profil_hinweis: Option<String>,
+    /// Steht ein Update an (Aufgabe 34)? Reine Anzeige; eingespielt wird es
+    /// durch die Geräteverwaltung oder von Hand.
+    #[serde(default)]
+    pub update: UpdateLage,
+    /// Vorgaben der Firma (Aufgabe 34): feste Server-Adresse, Autostart,
+    /// Hinweistext. Leer heißt: keine Vorgaben.
+    #[serde(default)]
+    pub vorgaben: Vorgaben,
     /// Was gerade getan wird (Abgleich, Programme laden, Starten) – für die
     /// Anzeige am Kopf der Werkzeugseite (Nachtrag zu Aufgabe 37).
     #[serde(default)]
@@ -438,6 +459,12 @@ impl Auslastung {
         true
     }
 
+    /// Laufen gerade keine Aufrufe?
+    #[cfg(test)]
+    pub(crate) fn ist_muessig(&self) -> bool {
+        self.gesamt == 0
+    }
+
     /// Wie viele Aufrufe dieses Eintrags laufen gerade?
     pub(crate) fn offen(&self, id: &EintragId) -> usize {
         self.je_eintrag.get(id).copied().unwrap_or(0)
@@ -514,6 +541,11 @@ struct Stand {
     protokoll_fuer_agenten: bool,
     verbindung: Verbindung,
     endpunkt: String,
+    /// Der Stand des Updates (Aufgabe 34).
+    update: UpdateLage,
+    /// Diese Version wurde mit „Später“ abgelehnt (Aufgabe 39): der Hinweis
+    /// bleibt weg, bis der Client neu startet oder eine neuere Version kommt.
+    update_abgelehnt: Option<String>,
 }
 
 impl Stand {
@@ -558,6 +590,15 @@ impl Stand {
             protokoll_fuer_agenten: self.protokoll_fuer_agenten,
             tresor_fehler: self.tresor_fehler.clone(),
             profil_hinweis: self.profil_hinweis.clone(),
+            update: match (&self.update, &self.update_abgelehnt) {
+                (UpdateLage::Verfuegbar { version, .. }, Some(abgelehnt))
+                    if version == abgelehnt =>
+                {
+                    UpdateLage::Keins
+                }
+                (lage, _) => lage.clone(),
+            },
+            vorgaben: Vorgaben::default(),
             fortschritt: self.fortschritt.clone(),
         }
     }
@@ -590,6 +631,7 @@ impl Stand {
                 .iter()
                 .map(|(id, sekunden)| (id.als_str().to_string(), *sekunden))
                 .collect(),
+            update: None,
         }
     }
 }
@@ -904,6 +946,20 @@ fn export_daten(
 /// Geheimfelder und je Zugang dessen Geheimfelder.
 type Geheimplan = (EintragId, Vec<String>, Vec<(String, Vec<String>)>);
 
+/// Eine Version als Ordnername: nur Zeichen, die kein Pfad sind.
+fn version_sicher(version: &str) -> String {
+    let text: String = version
+        .chars()
+        .filter(|zeichen| zeichen.is_ascii_alphanumeric() || matches!(zeichen, '.' | '-' | '_'))
+        .take(64)
+        .collect();
+    if text.is_empty() {
+        String::from("unbekannt")
+    } else {
+        text
+    }
+}
+
 /// Innerei des Kerns; geteilt zwischen Fassade, Abgleich und Endpunkt.
 pub(crate) struct Innen {
     pub(crate) konfig: KernKonfig,
@@ -918,6 +974,10 @@ pub(crate) struct Innen {
     pub(crate) generation: AtomicU64,
     pub(crate) ende: Abbruch,
     pub(crate) erneut: Notify,
+    /// Weckt **nur** die Update-Prüfung (Aufgabe 34). Ein eigener Wecker,
+    /// damit sie dem Abgleich nicht die Anmeldung wegnehmen kann: `Notify`
+    /// weckt genau einen Wartenden, und den braucht der Abgleich.
+    pub(crate) update_erneut: Notify,
     pub(crate) aufgaben: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// Nur **ein** Schreibvorgang auf `zustand.json` zur Zeit. Zwei Aufgaben
     /// (Abgleich, Schalten, Meldung) schreiben sonst gleichzeitig dieselbe
@@ -952,6 +1012,8 @@ pub(crate) struct Innen {
     /// Hat der Benutzer „Tools aktualisieren“ gedrückt? Dann zeigt das Fenster
     /// auch dann „Alles aktuell“, wenn nichts zu tun war.
     pub(crate) fertig_zeigen: AtomicBool,
+    /// Wo quiver liegt und wie es installiert ist (Aufgabe 39).
+    pub(crate) aufstellung: update::Aufstellung,
 }
 
 impl Innen {
@@ -975,6 +1037,19 @@ impl Innen {
                 return false;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Alle Werkzeuge sauber beenden (Aufgabe 39): erst stoppen, dann warten,
+    /// bis kein Aufruf mehr läuft. So wird nicht mitten in einer Arbeit
+    /// getauscht.
+    pub(crate) async fn alle_tools_stoppen(self: &Arc<Self>) {
+        let ids: Vec<EintragId> = self.stand().laeufer.keys().cloned().collect();
+        for id in &ids {
+            stoppe_in(self, id);
+        }
+        for id in &ids {
+            self.aufrufe_abwarten(id, Duration::from_secs(10)).await;
         }
     }
 
@@ -1127,7 +1202,9 @@ impl Innen {
             .values()
             .filter_map(|sitzung| sitzung.agent.clone())
             .collect();
-        let modell = self.stand().modell(&verbunden);
+        let mut modell = self.stand().modell(&verbunden);
+        // Die Vorgaben der Firma gelten für die Anzeige, nicht für den Stand.
+        modell.vorgaben = self.konfig.vorgaben.clone();
         // `send_replace` legt den Wert auch dann ab, wenn gerade niemand zusieht.
         self.modell.send_replace(modell);
     }
@@ -1180,6 +1257,18 @@ impl Innen {
             }
         }
         werte
+    }
+
+    /// Den Update-Stand setzen (Aufgabe 34).
+    pub(crate) fn update_setzen(&self, lage: UpdateLage) {
+        {
+            let mut stand = self.stand();
+            if stand.update == lage {
+                return;
+            }
+            stand.update = lage;
+        }
+        self.modell_schicken();
     }
 
     /// Die Verbindung setzen, aber nur melden, wenn sie sich wirklich ändert.
@@ -2847,6 +2936,8 @@ impl Kern {
             protokoll_fuer_agenten: gespeichert.protokoll_fuer_agenten,
             verbindung,
             endpunkt: endpunkt.clone(),
+            update: UpdateLage::Unbekannt,
+            update_abgelehnt: None,
         };
         let (sender, _) = watch::channel(stand.modell(&BTreeSet::new()));
         let innen = Arc::new(Innen {
@@ -2859,6 +2950,7 @@ impl Kern {
             zaehler: AtomicU64::new(0),
             ende: Abbruch::neu(),
             erneut: Notify::new(),
+            update_erneut: Notify::new(),
             aufgaben: Mutex::new(Vec::new()),
             speicher_wache: Mutex::new(()),
             schalt_wache: tokio::sync::Mutex::new(()),
@@ -2873,6 +2965,7 @@ impl Kern {
             programm_wache: tokio::sync::Mutex::new(()),
             erster_abgleich: AtomicBool::new(true),
             fertig_zeigen: AtomicBool::new(false),
+            aufstellung: konfig.aufstellung.clone(),
         });
 
         // Geheimnisse wieder aufnehmen. Der gespeicherte Soll-Zustand läuft
@@ -2908,6 +3001,7 @@ impl Kern {
         let status = tokio::spawn(anmeldung_lauf(innen.clone()));
         let aufraeumen = tokio::spawn(protokoll_aufraeumen(innen.clone()));
         let sitzungen = tokio::spawn(sitzungen_lauf(innen.clone()));
+        let updates = tokio::spawn(update::lauf(innen.clone()));
         {
             let mut aufgaben = innen
                 .aufgaben
@@ -2918,6 +3012,7 @@ impl Kern {
             aufgaben.push(status);
             aufgaben.push(aufraeumen);
             aufgaben.push(sitzungen);
+            aufgaben.push(updates);
         }
 
         tracing::info!("MCP-Endpunkt für Agenten: {endpunkt}");
@@ -3150,6 +3245,8 @@ impl Kern {
         self.innen.speichern();
         self.innen.modell_schicken();
         self.innen.erneut.notify_one();
+        // Nach einer neuen Anmeldung gleich nach einem Update fragen.
+        self.innen.update_erneut.notify_one();
         Ok(())
     }
 
@@ -3965,6 +4062,164 @@ impl Kern {
         }
         self.innen.speichern();
         self.innen.modell_schicken();
+        Ok(())
+    }
+
+    // ------------------------------------------------------------ Updates
+    // (Aufgabe 34)
+
+    /// Beim Server fragen, ob es etwas Neues gibt.
+    pub async fn update_pruefen(&self) -> anyhow::Result<()> {
+        update::pruefen(&self.innen).await
+    }
+
+    /// „Später“: der Hinweis verschwindet für diese Version bis zum nächsten
+    /// Start. Gefragt wird weiter – nur eben nicht mehr angeboten.
+    pub fn update_spaeter(&self) {
+        let lage = self.innen.stand().update.clone();
+        if let UpdateLage::Verfuegbar { version, .. } = lage {
+            let mut stand = self.innen.stand();
+            stand.update_abgelehnt = Some(version);
+            drop(stand);
+            self.innen.modell_schicken();
+        }
+    }
+
+    /// „Jetzt aktualisieren“: laden, prüfen, Selbsttest, tauschen (Aufgabe 39).
+    ///
+    /// Läuft **nicht** im Fenster: das Paket kann groß sein und der Tausch
+    /// schreibt Dateien. Die Anzeige folgt aus dem Modell
+    /// ([`UpdateLage::Arbeit`]), damit das Fenster weiter zeichnet.
+    ///
+    /// Was hier nicht passiert: das Profil anfassen. Getauscht wird nur das
+    /// Programm; Tresor, Geräte-Token, Angaben, Zugänge und Anmeldungen bleiben
+    /// unberührt.
+    pub async fn update_installieren(&self) -> anyhow::Result<()> {
+        let (version, paket) = match self.innen.stand().update.clone() {
+            UpdateLage::Verfuegbar {
+                version,
+                angebot: update::Angebot::Bereit { paket },
+                ..
+            } => (version, paket),
+            _ => anyhow::bail!("es steht kein Update zum Tauschen bereit"),
+        };
+        let (Some(server), Some(token)) = self.innen.zugang() else {
+            anyhow::bail!("ohne Verbindung zum Server gibt es kein Paket");
+        };
+        let profil = self.innen.konfig.profil.clone();
+        let system = self.innen.system.clone();
+        let aufstellung = self.innen.aufstellung.clone();
+        if !aufstellung.art.tauschbar() || !aufstellung.schreibbar {
+            anyhow::bail!("diese Installation tauscht sich nicht selbst aus");
+        }
+        // 1. Laufende Werkzeuge sauber beenden – kein Tausch mitten im Aufruf.
+        Innen::alle_tools_stoppen(&self.innen).await;
+        self.innen.update_setzen(UpdateLage::Arbeit {
+            schritt: update::UpdateSchritt::Laedt,
+            anteil: Some(0),
+        });
+
+        // 2. Das Paket holen und dabei Größe und Prüfsumme prüfen.
+        let ordner = profil.join("updates").join(version_sicher(&version));
+        let innen = self.innen.clone();
+        let holen = update::paket_holen(
+            &self.innen.http,
+            &server,
+            &token,
+            &system,
+            &paket,
+            &ordner,
+            move |anteil| {
+                innen.update_setzen(UpdateLage::Arbeit {
+                    schritt: update::UpdateSchritt::Laedt,
+                    anteil,
+                });
+            },
+        )
+        .await;
+        let paket_pfad = match holen {
+            Ok(pfad) => pfad,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen.update_setzen(UpdateLage::Fehler { text });
+                return Err(fehler);
+            }
+        };
+
+        // 3. Prüfen und tauschen – im Hintergrundfaden, weil hier Dateien
+        //    geschrieben und Prozesse gestartet werden.
+        self.innen.update_setzen(UpdateLage::Arbeit {
+            schritt: update::UpdateSchritt::Prueft,
+            anteil: None,
+        });
+        let arbeitsordner = ordner.join("entpackt");
+        let art = aufstellung.art;
+        let programm = aufstellung.programm.clone();
+        // 3a. Entpacken und den Selbsttest der neuen Fassung.
+        let vorbereitet = {
+            let paket_pfad = paket_pfad.clone();
+            let arbeitsordner = arbeitsordner.clone();
+            tokio::task::spawn_blocking(move || {
+                update::tausch::vorbereiten(art, &paket_pfad, &arbeitsordner, update::selbsttest)
+            })
+            .await
+            .map_err(|fehler| anyhow::anyhow!("die Prüfung ist abgebrochen: {fehler}"))
+            .and_then(|ergebnis| ergebnis)
+        };
+        let vorbereitet = match vorbereitet {
+            Ok(vorbereitet) => vorbereitet,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen.update_setzen(UpdateLage::Fehler { text });
+                return Err(fehler);
+            }
+        };
+        // 3b. Tauschen.
+        self.innen.update_setzen(UpdateLage::Arbeit {
+            schritt: update::UpdateSchritt::Tauscht,
+            anteil: None,
+        });
+        let profil_fuer_tausch = profil.clone();
+        let programm_fuer_tausch = programm.clone();
+        let ergebnis = tokio::task::spawn_blocking(move || {
+            let ergebnis =
+                update::tausch::anwenden(art, &programm_fuer_tausch, &paket_pfad, vorbereitet)?;
+            match &ergebnis {
+                update::tausch::Ergebnis::Getauscht {
+                    programm,
+                    sicherung,
+                } => {
+                    update::tausch::marke_schreiben(&profil_fuer_tausch, programm, sicherung)?;
+                }
+                update::tausch::Ergebnis::Installer { .. } => {}
+            }
+            Ok::<_, anyhow::Error>(ergebnis)
+        })
+        .await
+        .map_err(|fehler| anyhow::anyhow!("der Tausch ist abgebrochen: {fehler}"))
+        .and_then(|ergebnis| ergebnis);
+        let ergebnis = match ergebnis {
+            Ok(ergebnis) => ergebnis,
+            Err(fehler) => {
+                let text = format!("{fehler:#}");
+                self.innen.update_setzen(UpdateLage::Fehler { text });
+                return Err(fehler);
+            }
+        };
+
+        // 4. Neustart vormerken. Das Fenster liest die Bitte, wenn es das
+        //    Profil freigegeben hat (`main`), und startet die neue Fassung.
+        self.innen.update_setzen(UpdateLage::Getauscht {
+            version: version.clone(),
+        });
+        match ergebnis {
+            update::tausch::Ergebnis::Getauscht { programm, .. } => {
+                update::tausch::neustart_vormerken(&profil, &programm)?;
+            }
+            update::tausch::Ergebnis::Installer { paket, .. } => {
+                update::tausch::installer_starten(&paket)?;
+            }
+        }
         Ok(())
     }
 

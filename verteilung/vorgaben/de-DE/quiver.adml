@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions"
+                           revision="1.0" schemaVersion="1.0">
+  <displayName>mcp-quiver</displayName>
+  <description>Vorgaben der Firma für mcp-quiver.</description>
+  <resources>
+    <stringTable>
+      <string id="Quiver">mcp-quiver</string>
+      <string id="ServerUrl">Server-Adresse</string>
+      <string id="ServerUrlHelp">Feste Server-Adresse, z. B. https://quiver.example.test. Im Fenster nicht änderbar; sie hat Vorrang vor dem Profil.</string>
+      <string id="Autostart">Beim Anmelden starten</string>
+      <string id="AutostartHelp">Startet mcp-quiver beim Anmelden im Hintergrund (Tray). Vorrang vor der Einstellung im Fenster.</string>
+      <string id="UpdateHinweis">Text des Update-Hinweises</string>
+      <string id="UpdateHinweisHelp">Text, den der Client anzeigt, wenn eine neuere Version veröffentlicht ist. {version} wird durch die Version ersetzt. Ohne Angabe gilt „Version {version} kommt über die Geräteverwaltung“.</string>
+      <string id="UpdateAngebot">Update selbst einspielen</string>
+      <string id="UpdateAngebotHelp">Erlaubt dem Client, ein angebotenes Update selbst zu laden und einzuspielen. Aus (0): nur der Hinweis; eingespielt wird dann durch die Geräteverwaltung. Ohne Angabe gilt: an (Aufgabe 39).</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="ServerUrl">
+        <textBox refId="ServerUrl">
+          <label>Server-Adresse</label>
+        </textBox>
+      </presentation>
+      <presentation id="UpdateHinweis">
+        <textBox refId="UpdateHinweis">
+          <label>Hinweistext</label>
+        </textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

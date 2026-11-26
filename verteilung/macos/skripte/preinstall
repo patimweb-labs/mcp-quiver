@@ -1,0 +1,34 @@
+#!/bin/sh
+# Vor der Installation (Aufgabe 34): einen laufenden Client geordnet beenden,
+# damit die alte Fassung nicht unter dem laufenden Prozess ausgetauscht wird.
+#
+# Läuft als root (Installer). `pkill -x quiver` schickt SIGTERM; der Client
+# beendet sich geordnet (Profil-Sperre fällt, Kindprozesse stoppen). Ob er
+# überhaupt lief, merkt sich eine Marke – nur dann startet `postinstall` ihn
+# wieder.
+set -eu
+
+kennung="de.weppelmann.mcp-quiver"
+marke="/var/tmp/$kennung.lief"
+rm -f "$marke"
+
+if /usr/bin/pgrep -x quiver >/dev/null 2>&1; then
+    : >"$marke"
+    /usr/bin/pkill -x quiver >/dev/null 2>&1 || true
+    # Höchstens zehn Sekunden warten; danach beendet SIGKILL den Rest.
+    i=0
+    while /usr/bin/pgrep -x quiver >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
+        sleep 0.5
+        i=$((i + 1))
+    done
+    /usr/bin/pkill -9 -x quiver >/dev/null 2>&1 || true
+fi
+
+# Die alte Fassung entfernen: der Installer legt die Dateien des neuen Bündels
+# darüber, würde aber Dateien löschen, die es nicht mehr gibt, nicht selbst
+# wegräumen. Ohne das bliebe ein Rest der alten Version im Bündel liegen.
+if [ -d /Applications/quiver.app ]; then
+    /bin/rm -rf /Applications/quiver.app
+fi
+
+exit 0

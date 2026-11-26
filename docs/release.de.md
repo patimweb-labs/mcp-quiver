@@ -15,7 +15,7 @@ löst ihn direkt aus.
 | `.github/workflows/release.yml` | release-please, Versionsprüfung, fünf Baujobs, Prüfsummen, Herkunft, Release |
 | `release-please-config.json` | welche Dateien ein Release anhebt (`Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`) |
 | `.release-please-manifest.json` | die zuletzt veröffentlichte Version |
-| `verteilung/macos/paket.sh` | `quiver.app`, `.dmg`, Signieren und Notarisieren |
+| `verteilung/macos/paket.sh` | `quiver.app`, `.dmg`, `.pkg`, Signieren und Notarisieren |
 | `verteilung/linux/paket.sh` | `.tar.gz`, `.deb`, `.rpm`, AppImage |
 | `verteilung/windows/paket.ps1` | `.msi` (je Benutzer) und portables `.zip` |
 | `verteilung/version.sh` | die Version aus `Cargo.toml` |
@@ -129,6 +129,20 @@ für die Herkunft). Jedes `checkout` nutzt `persist-credentials: false` und
 `submodules: recursive`. Es gibt kein `pull_request_target`, und keine
 Nutzereingabe geht direkt in ein `run:` — Werte laufen über `env:`.
 
+## Pakete für die Geräteverwaltung
+
+Neben dem `.dmg` baut der macOS-Job ein `.pkg` (`pkgbuild`/`productbuild`,
+installiert nach `/Applications`, ersetzt eine ältere Fassung, beendet einen
+laufenden Client und startet ihn wieder). Das Windows-MSI installiert still
+(`msiexec /i … /qn`), ersetzt eine ältere Fassung über `MajorUpgrade` und
+schließt einen laufenden Client über den Restart Manager (und startet ihn
+wieder); Deinstallieren lässt das Profil stehen. Beides ist für Intune gedacht:
+[intune.de.md](intune.de.md).
+
+Auf Pull Requests installiert der Lauf beide Pakete auf dem Läufer und
+deinstalliert sie wieder (stille Installation, Update, Profil überlebt) — bei
+einem Tag-Lauf wird nichts installiert.
+
 ## Geheimnisse (alle optional)
 
 Ohne sie wird das macOS-Bündel **ad hoc** signiert und Windows bleibt
@@ -207,7 +221,7 @@ Dateien kommen.
 Die Skripte sind dieselben, die die CI aufruft:
 
 ```bash
-verteilung/macos/paket.sh                     # macOS: dist/quiver.app, dist/*.dmg
+verteilung/macos/paket.sh                     # macOS: dist/quiver.app, dist/*.dmg, dist/*.pkg
 verteilung/linux/paket.sh                     # Linux: tar.gz, deb, rpm, AppImage
 pwsh -File verteilung/windows/paket.ps1       # Windows: msi + zip
 verteilung/version.sh                         # gibt die Version aus

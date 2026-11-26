@@ -16,7 +16,7 @@ use crate::profil::Einstellungen;
 use crate::thema::{self, Thema};
 use crate::tray::{self, Befehl, Tray};
 use eframe::egui;
-use quiver_client::Modell;
+use quiver_client::{Modell, UpdateLage};
 use quiver_domain::{EintragId, Werte};
 
 /// Wie der Autostart geschaltet wird — im Betrieb [`crate::autostart::setzen`],
@@ -159,6 +159,12 @@ pub enum Aktion {
     /// Eine laufende Einrichtung abbrechen (Paket 3): der Prozess endet, der
     /// Zustand geht zurück auf „Bereit“.
     EinrichtungAbbrechen { eintrag: EintragId },
+    /// Beim Server nach einer neuen Version fragen (Aufgabe 34).
+    UpdatePruefen,
+    /// Das angebotene Update laden, prüfen und einspielen (Aufgabe 39).
+    UpdateInstallieren,
+    /// „Später“: der Hinweis verschwindet für diese Version (Aufgabe 39).
+    UpdateSpaeter,
 }
 
 /// Ein Bild: Kopf, Navigation, Seite, Dialog. Gibt die Aktionen zurück, die
@@ -171,11 +177,14 @@ pub fn render(ui: &mut egui::Ui, sicht: &mut Sicht) -> Vec<Aktion> {
         // Ohne Rand: den setzt die Seite innen (`bausteine::seite`), damit der
         // Scrollbalken am Fensterrand sitzt.
         .frame(egui::Frame::new().fill(sicht.thema.farben().bg_canvas))
-        .show(ui, |ui| match sicht.seite {
-            Seite::Verbindung => ansichten::verbindung::zeigen(ui, sicht, &mut aktionen),
-            Seite::Tools => ansichten::tools::zeigen(ui, sicht, &mut aktionen),
-            Seite::Agenten => ansichten::agenten::zeigen(ui, sicht, &mut aktionen),
-            Seite::Protokoll => ansichten::protokoll::zeigen(ui, sicht, &mut aktionen),
+        .show(ui, |ui| {
+            aktionen.extend(ansichten::update::zeigen(ui, sicht));
+            match sicht.seite {
+                Seite::Verbindung => ansichten::verbindung::zeigen(ui, sicht, &mut aktionen),
+                Seite::Tools => ansichten::tools::zeigen(ui, sicht, &mut aktionen),
+                Seite::Agenten => ansichten::agenten::zeigen(ui, sicht, &mut aktionen),
+                Seite::Protokoll => ansichten::protokoll::zeigen(ui, sicht, &mut aktionen),
+            }
         });
     ansichten::dialog::zeigen(ui.ctx(), sicht, &mut aktionen);
     aktionen
@@ -207,6 +216,10 @@ pub struct Fenster<K: KernZugang> {
     ende_gemeldet: bool,
     /// Was zuletzt in die Zwischenablage ging – und seit wann (Paket 3).
     zwischenablage: Zwischenablage,
+    /// Seit wann der Tausch durch ist (Aufgabe 39): der Hinweis „Neustart“
+    /// steht einen Augenblick, dann schließt das Fenster und die neue Fassung
+    /// startet.
+    getauscht_seit: Option<std::time::Instant>,
 }
 
 /// Leert die Zwischenablage nach kurzer Zeit, wenn noch unser Wert darin
@@ -303,6 +316,7 @@ impl<K: KernZugang> Fenster<K> {
             ende: None,
             ende_gemeldet: false,
             zwischenablage: Zwischenablage::default(),
+            getauscht_seit: None,
         }
     }
 
@@ -349,7 +363,15 @@ impl<K: KernZugang> Fenster<K> {
             match befehl {
                 Befehl::Zeigen => tray::zeigen(ctx),
                 Befehl::AutostartUmschalten => {
-                    self.sicht.autostart = !self.sicht.autostart;
+                    // Vorgabe der Firma (Aufgabe 34): der Autostart ist gesetzt.
+                    if self.sicht.modell.vorgaben.autostart.is_some() {
+                        self.sicht.hinweis = Some(crate::texte::t(
+                            self.sicht.sprache,
+                            "vorgabe.autostart_fest",
+                        ));
+                    } else {
+                        self.sicht.autostart = !self.sicht.autostart;
+                    }
                 }
                 // Nachtrag zu Aufgabe 37: „Tools aktualisieren“ im Tray.
                 Befehl::ToolsAktualisieren => {
@@ -481,8 +503,37 @@ impl<K: KernZugang> Fenster<K> {
         }
         self.autostart_pflegen();
         self.zwischenablage.beobachten(ui.ctx(), zeit);
+        self.neustart_pflegen(ui.ctx(), zeit);
+    }
+
+    /// Nach dem Tausch: den Hinweis kurz stehen lassen, dann schließen.
+    ///
+    /// Das Schließen hält den Kern an (`on_exit`) und gibt das Profil frei;
+    /// erst danach startet [`crate::main`] die neue Fassung. Vorher wäre es
+    /// eine zweite Instanz, die sich sofort wieder beendet.
+    fn neustart_pflegen(&mut self, ctx: &egui::Context, zeit: f64) {
+        let getauscht = matches!(self.sicht.modell.update, UpdateLage::Getauscht { .. });
+        if !getauscht {
+            self.getauscht_seit = None;
+            return;
+        }
+        let seit = *self
+            .getauscht_seit
+            .get_or_insert_with(std::time::Instant::now);
+        if seit.elapsed() < NEUSTART_ANZEIGE {
+            ctx.request_repaint_after(NEUSTART_ANZEIGE - seit.elapsed());
+            return;
+        }
+        let _ = zeit;
+        if !self.beenden {
+            self.beenden = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 }
+
+/// So lange steht „Quiver startet neu“ da, bevor das Fenster schließt.
+pub const NEUSTART_ANZEIGE: std::time::Duration = std::time::Duration::from_millis(1200);
 
 impl<K: KernZugang> eframe::App for Fenster<K> {
     /// Läuft auch, wenn das Fenster weggelegt ist (Tray, zweite Instanz).

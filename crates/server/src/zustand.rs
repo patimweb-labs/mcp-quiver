@@ -61,6 +61,11 @@ pub(crate) struct Zustand {
     /// Ein Einlösen je Benutzer; verhindert doppelte Refresh-Aufrufe.
     refresh: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     pub(crate) uhr: crate::config::Uhr,
+    /// Die zuletzt gelesene Veröffentlichung (Aufgabe 34).
+    pub(crate) updates: Mutex<crate::updates::Lage>,
+    /// Nur ein Abruf der Veröffentlichung zur Zeit (Aufgabe 39): ein Paket,
+    /// ein Weg nach draußen.
+    pub(crate) update_wache: AsyncMutex<()>,
 }
 
 impl Zustand {
@@ -96,6 +101,8 @@ impl Zustand {
             argon: Semaphore::new(ARGON2_GLEICHZEITIG),
             refresh: Mutex::new(HashMap::new()),
             uhr,
+            updates: Mutex::new(crate::updates::Lage::neu()),
+            update_wache: AsyncMutex::new(()),
         }
     }
 

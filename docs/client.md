@@ -279,6 +279,48 @@ not once more underneath. Every further button on a card has its own named
 effect: **Sign in**, **Sign out**, **Check again**, **Set up**, **Cancel**,
 **Export**, **Import**.
 
+## Updating quiver
+
+The client never asks the internet. Every six hours it asks **its server**
+whether a newer version is published (`GET /api/v1/geraet/updates`, with the
+device token). If there is one, a hint appears above the page and in the tray
+line: the version, the operator's text and a link to the changes. If a package
+for this installation exists, the hint offers **Update now** and **Later**.
+
+**Update now** does the following, in this order:
+
+1. running tools are stopped (running calls get up to 10 s to finish),
+2. the package is downloaded from the own server into
+   `<profile>/updates/<version>/`, checking `Content-Length` and SHA-256 from the
+   server's answer while streaming,
+3. the new version is unpacked and started as `quiver --selbsttest` — exit 0, no
+   window, no profile; if that fails nothing changes,
+4. the old program is renamed to `<name>.alt`, the new one is put next to it,
+   and the window says "Version X is installed" and closes,
+5. the new version starts once the profile has been released. If it does not
+   come up, the second start puts the old one back.
+
+**Later** hides the hint for this version until the next start. The status
+fetch keeps running; only the offer goes away.
+
+Which packages are used is decided by the client from its own path: portable ZIP
+and per-user MSI on Windows, `.app` from the `.dmg` on macOS, AppImage and
+`tar.gz` on Linux. An installation from `.deb`/`.rpm` (system directories) or a
+folder without write permission only gets the hint — quiver does not touch a
+program folder that belongs to the system, and it never asks for root.
+
+The **profile is not touched**: settings, vault, device token, entries, access
+data, tool sign-ins, autostart and the downloaded tools stay as they are. That
+is checked by a test that compares the profile before and after the swap.
+
+`quiver --selbsttest` is a plain check: it prints the version, exits 0 and
+touches neither the profile nor a window. It is what the self-update runs before
+swapping.
+
+If the operator switched the offer off (`UpdateAngebot` policy), the hint
+remains; installing is then done by device management (Intune) or by hand from
+the release. Details: [updates.md](updates.md).
+
 ## Protocol and privacy
 
 The window's **Protocol** page lists every tool call an agent triggers (time,

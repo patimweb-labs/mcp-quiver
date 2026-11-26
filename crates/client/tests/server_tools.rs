@@ -326,6 +326,8 @@ async fn starte_kern(ordner: &Path, tresor: Arc<SpeicherTresor>) -> Kern {
         mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
         tresor,
         browser: Arc::new(quiver_client::SystemBrowser),
+        vorgaben: quiver_client::Vorgaben::default(),
+        aufstellung: quiver_client::update::Aufstellung::nicht_tauschen(),
     })
     .await
     .expect("Kern startet")

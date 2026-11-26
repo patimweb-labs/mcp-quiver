@@ -16,7 +16,7 @@ use quiver_domain::{Eintrag, EintragId, Geraet, Gruppe, GruppeId, Satz};
 use quiver_protocol::Meldung;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::hilfen;
@@ -38,7 +38,9 @@ pub const UNBEGRENZT: &str = "unbegrenzt";
 /// 4 = Härtung: Alter und letzte Nutzung des Geräte-Tokens, Zähler in der
 ///     Prüfspur, gemerkte Root-Anmeldeadressen, Indizes für Ablauf und Zeit.
 /// 5 = Aufgabe 33: `benutzer_gruppen` – von Hand vergebene Zugehörigkeiten.
-pub const SCHEMA_VERSION: i64 = 5;
+/// 6 = Aufgabe 34: `update_stand` merkt sich die zuletzt gelesene
+///     Veröffentlichung (eine Zeile; sonst fragte jeder Neustart sofort).
+pub const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS eintraege (id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -134,6 +136,13 @@ CREATE TABLE IF NOT EXISTS geraete_codes (
     challenge     TEXT NOT NULL,
     name          TEXT NOT NULL,
     gueltig_bis   TEXT NOT NULL
+);
+-- Der zuletzt gelesene Stand der Veröffentlichung (Aufgabe 34): eine Zeile,
+-- damit der Server nach einem Neustart nicht sofort wieder fragt und die
+-- Verwaltung etwas zu zeigen hat.
+CREATE TABLE IF NOT EXISTS update_stand (
+    id   INTEGER PRIMARY KEY CHECK (id = 1),
+    json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS entra_gruppen (
     id            TEXT PRIMARY KEY,
@@ -434,6 +443,46 @@ pub fn unbekannte_eintraege(conn: &Connection, satz: &Satz) -> anyhow::Result<Ve
         .filter(|id| !eintraege.iter().any(|e| &e.id == *id))
         .cloned()
         .collect())
+}
+
+/// Eine Zeile in `update_stand`: die zuletzt gelesene Veröffentlichung und
+/// wann sie gelesen wurde.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateStandZeile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub veroeffentlichung: Option<quiver_domain::updates::Veroeffentlichung>,
+    /// RFC 3339; wann zuletzt erfolgreich gefragt wurde.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zuletzt: Option<String>,
+}
+
+/// Der zuletzt gelesene Stand der Veröffentlichung (Aufgabe 34).
+///
+/// Er liegt in der Datenbank und nicht nur im Speicher: sonst fragte jeder
+/// Neustart des Servers sofort wieder, und die Verwaltung hätte nach einem
+/// Neustart nichts zu zeigen.
+pub fn update_stand(conn: &Connection) -> anyhow::Result<Option<UpdateStandZeile>> {
+    let text = conn
+        .query_row("SELECT json FROM update_stand WHERE id = 1", [], |zeile| {
+            zeile.get::<_, String>(0)
+        })
+        .optional()?;
+    match text {
+        Some(text) => Ok(Some(
+            serde_json::from_str(&text).context("update_stand: JSON nicht lesbar")?,
+        )),
+        None => Ok(None),
+    }
+}
+
+/// Den Stand der Veröffentlichung ablegen (eine Zeile).
+pub fn update_stand_setzen(conn: &Connection, stand: &UpdateStandZeile) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO update_stand (id, json) VALUES (1, ?1) \
+         ON CONFLICT (id) DO UPDATE SET json = excluded.json",
+        params![serde_json::to_string(stand)?],
+    )?;
+    Ok(())
 }
 
 /// Verweise einer Gruppe auf Sätze, die es nicht gibt.

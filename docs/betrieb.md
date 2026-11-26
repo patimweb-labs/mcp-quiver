@@ -249,6 +249,8 @@ With an empty value (`QUIVER_TOOLS_VERSION=`) it builds without programs and say
 | `QUIVER_PROXIES` | CIDR list trusted for `X-Forwarded-For` |
 | `QUIVER_PROGRAMME` | Folders with the programs to distribute (default `<data>/tools` plus `/opt/quiver/tools`) |
 | `QUIVER_ALTGERAETE` | `gesperrt` (default once Entra is configured, otherwise `erlaubt`) for devices without a user |
+| `QUIVER_UPDATES` | `an` (default) or `aus`: may the server ask the GitHub releases for a new version — and deliver its packages to the devices? At most every six hours, no identifier, no payload. See [updates.md](updates.md) |
+| `QUIVER_UPDATE_QUELLE` | loopback only (tests): base of the release query; fixed to the project repository in production |
 
 `.env.example` is the template.
 

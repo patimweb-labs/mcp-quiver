@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Vorgaben der Firma für macOS (Aufgabe 34, §3) – als Vorlage für Intune
+  (Geräte → Konfiguration → Vorlage „Benutzerdefiniert“) oder ein MDM.
+
+  Ersetzt `https://quiver.example.test` durch die eigene Adresse und legt die
+  Datei als benutzerdefiniertes Profil ab. quiver liest **nur** den verwalteten
+  Bereich (`/Library/Managed Preferences/de.weppelmann.mcp-quiver.plist`),
+  nie die Einstellungen des Benutzers.
+
+  Die Felder:
+    ServerUrl      feste Server-Adresse (im Fenster nicht änderbar)
+    Autostart      beim Anmelden starten (true/false)
+    UpdateHinweis  Text des Update-Hinweises; {version} wird ersetzt
+    UpdateAngebot  darf der Client das Update selbst einspielen? (false =
+                   nur Hinweis; Aufgabe 39)
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadType</key>
+			<string>com.apple.ManagedClient.preferences</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>PayloadIdentifier</key>
+			<string>de.weppelmann.mcp-quiver.vorgaben</string>
+			<key>PayloadUUID</key>
+			<string>4B0F0C1E-8B3A-4E7C-9D2F-1A6E5C4B7D01</string>
+			<key>PayloadDisplayName</key>
+			<string>mcp-quiver – Vorgaben</string>
+			<key>PayloadContent</key>
+			<dict>
+				<key>de.weppelmann.mcp-quiver</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>ServerUrl</key>
+								<string>https://quiver.example.test</string>
+								<key>Autostart</key>
+								<true/>
+								<key>UpdateHinweis</key>
+								<string>Version {version} kommt über die Geräteverwaltung</string>
+								<key>UpdateAngebot</key>
+								<false/>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+			</dict>
+		</dict>
+	</array>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+	<key>PayloadIdentifier</key>
+	<string>de.weppelmann.mcp-quiver</string>
+	<key>PayloadUUID</key>
+	<string>9C2A7B54-1D3E-4F80-A6B9-2E7C5D8F3A02</string>
+	<key>PayloadDisplayName</key>
+	<string>mcp-quiver – Vorgaben</string>
+	<key>PayloadDescription</key>
+	<string>Feste Server-Adresse, Autostart, Update-Hinweis und Update-Angebot für mcp-quiver.</string>
+	<key>PayloadOrganization</key>
+	<string>Beispielfirma</string>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+</dict>
+</plist>

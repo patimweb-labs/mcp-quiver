@@ -2,6 +2,13 @@
 
 Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
 
+## Tests
+- [ ] `instanz::tests` (Fenster) hängt an zwei Zeitfenstern (500 ms Annahme,
+      2 s Verbindung). Unter schwerer Last des Rechners (viele Testprozesse
+      gleichzeitig) ist `zweite_instanz_weckt_die_erste` gelegentlich rot,
+      einzeln und in ruhigen Läufen grün. Ein fester Ablauf ohne Netz und Zeit
+      (Kanal statt Port) wäre die ehrliche Lösung.
+
 ## Server
 - [ ] Die Abschlussseite des Browser-Lauschers ist schlicht und nur deutsch;
       die Fenstertexte sind de/en. Die Seite verrät keinen Code, aber sie folgt
@@ -173,6 +180,53 @@ Jeder Punkt ist bewusst offen gelassen und wird abgebaut (AGENTS.md §2.5).
       Metainfo-Daten werden dabei nicht geprüft.
 - [ ] Der Text des Releases ist deutsch; englische Release-Notes gibt es nicht.
 - [ ] Kein Flatpak — nicht gefordert, wäre ein eigenes Paket.
+
+## Updates (Aufgabe 34)
+- [ ] Die Update-Abfrage des Servers ist gegen eine Attrappe auf Loopback
+      geprüft, nicht gegen die echte GitHub-API. Der Vertrag (JSON, `tag_name`,
+      `html_url`, `draft`/`prerelease`) steht in `quiver_domain::updates`.
+- [ ] Die Vorgaben werden je Plattform gelesen (Registry, verwaltete
+      Einstellungen, `/etc`), aber nur unter Linux und über den verlegbaren Ort
+      wirklich geprüft. Ein Test gegen eine echte Registry oder eine echte
+      `.mobileconfig` fehlt — beides schriebe in HKLM bzw. `/Library` und ist
+      darum bewusst nicht Teil der Tests.
+- [ ] Die macOS-Vorgaben werden über `plutil` in XML gewandelt (Bordmittel);
+      eine bereits binäre plist wird damit gelesen, aber nicht selbst geparst.
+- [ ] `.mobileconfig`, ADMX/ADML und die Registry-Vorlage sind Vorlagen mit
+      Platzhalter-Adresse; gegen ein echtes Intune ausgerollt wurde nichts.
+- [ ] Das `.pkg` wird lokal gebaut und mit `pkgutil --expand` geprüft, aber
+      nicht installiert. Die Skripte (`preinstall`/`postinstall`) laufen erst im
+      CI-Lauf auf einem macOS-Läufer.
+- [ ] Die stille MSI-Installation und das Update sind nur im CI-Lauf auf einem
+      Windows-Läufer geprüft, nicht auf einem echten verwalteten Rechner.
+
+## Update durch den Client (Aufgabe 39)
+- [ ] Der Tausch ist je Art im Testordner geprüft (ZIP, `tar.gz`, AppImage und
+      `.app`; macOS-Teil nur auf macOS). Auf einem **echten** Gerät ist er
+      nicht gelaufen: kein Windows-Rechner, kein Gerät mit MSI, kein
+      AppImage-Start. Der erste Lauf auf einem wirklichen Rechner steht aus.
+- [ ] Für das MSI gibt es **keinen Selbsttest** vor dem Tausch: es ist ein
+      Installationsprogramm. Windows prüft es selbst (`/qn`,
+      `MajorUpgrade`, Restart Manager); die neue Fassung macht ihren
+      `--selbsttest` erst beim nächsten Start.
+- [ ] Der Rückfall auf die alte Fassung greift beim **zweiten** Start ohne
+      Beweis (Marke im Profil). Kommt die neue Fassung über den Start des
+      Kerns hinaus und scheitert erst später, bleibt sie stehen; ein
+      überwachender Helferprozess fehlt bewusst (ADR 0005, „Verworfene Wege“).
+- [ ] Alte Pakete unter `<daten>/updates/<version>/` werden **nicht**
+      aufgeräumt. Das kostet Platz und braucht einen Lauf, den es noch nicht
+      gibt.
+- [ ] Der Selbsttest wird nur gegen eine echte Fassung geprüft, nicht gegen
+      eine, die absichtlich hängt. Die Frist (`SELBSTTEST_FRIST`, 60 s) ist
+      deshalb nur im Code belegt.
+- [ ] Die Client-Integration (`crates/client/tests/update.rs`) läuft nur unter
+      Unix: der Selbsttest startet die neue Fassung als eigenes Programm, und
+      die Attrappe dafür ist ein Shell-Skript. Unter Windows decken die
+      Einheitstests des Tauschs und der CI-Lauf den Weg ab.
+- [ ] Ist das Programm-Verzeichnis schreibbar, aber das Umbenennen scheitert
+      (etwa weil ein Virenscanner die Datei hält), bleibt die alte Fassung an
+      ihrem Platz und die Meldung nennt den Grund. Ein erneuter Versuch ist
+      Handarbeit.
 
 ## Werkzeuge vom Server (Aufgabe 37)
 - [ ] End-to-End **nicht** geprüft: „Platte voll“ (ENOSPC beim Schreiben der

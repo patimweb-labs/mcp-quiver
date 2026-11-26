@@ -14,7 +14,7 @@ import { WpButton, WpDialog } from "@weppelmann/components";
 import { tief_kopie } from "../logik/kopie";
 
 import { fehlertext, anmeldearten, type Client } from "../api/client";
-import type { Eintrag, GeraetStand, Gruppe } from "../api/typen";
+import type { Eintrag, GeraetStand, Gruppe, UpdateStand } from "../api/typen";
 import Karte from "../bausteine/Karte.vue";
 import Klappknopf from "../bausteine/Klappknopf.vue";
 import Leer from "../bausteine/Leer.vue";
@@ -34,6 +34,7 @@ import {
   zustand_ton,
 } from "../logik/geraet";
 import { zeitpunkt } from "../logik/format";
+import { neueste_version, veraltet } from "../logik/update";
 import { type Zustand, fehler, fertig, laedt } from "../logik/seite";
 import EinbindenDialog from "./EinbindenDialog.vue";
 import GeraetDialog from "./GeraetDialog.vue";
@@ -46,6 +47,8 @@ interface Daten {
   titel: Map<string, string>;
   /** Ist Entra eingerichtet? Dann gibt es keine Einmal-Codes. */
   entra: boolean;
+  /** Stand der Update-Prüfung (Aufgabe 34); `null`, wenn nicht abrufbar. */
+  updates: UpdateStand | null;
 }
 
 const zustand = shallowRef<Zustand<Daten>>(laedt());
@@ -79,11 +82,12 @@ const entraAktiv = computed(
 async function laden(): Promise<void> {
   zustand.value = laedt();
   try {
-    const [geraete, gruppen, eintraege, arten] = await Promise.all([
+    const [geraete, gruppen, eintraege, arten, updates] = await Promise.all([
       props.client.geraete(),
       props.client.gruppen(),
       props.client.eintraege(),
       anmeldearten(),
+      props.client.updates().catch(() => null),
     ]);
     zustand.value = fertig({
       geraete: [...geraete].sort((a, b) =>
@@ -94,6 +98,7 @@ async function laden(): Promise<void> {
       gruppen,
       titel: titel_map(eintraege),
       entra: arten.entra,
+      updates,
     });
   } catch (fehlerWert) {
     zustand.value = fehler(fehlertext(fehlerWert));
@@ -120,6 +125,21 @@ function gruppen_anzeige(stand: GeraetStand): string {
 function titel(id: string): string {
   if (zustand.value.art !== "fertig") return id;
   return zustand.value.daten.titel.get(id) ?? id;
+}
+
+/** Ist der Client dieses Geräts älter als die neueste bekannte Version? */
+function client_veraltet(stand: GeraetStand): boolean {
+  if (zustand.value.art !== "fertig") return false;
+  return veraltet(
+    stand.meldung?.client_version,
+    zustand.value.daten.updates,
+  );
+}
+
+/** Die neueste bekannte Version, für den Tooltip. */
+function neueste(): string {
+  if (zustand.value.art !== "fertig") return "";
+  return neueste_version(zustand.value.daten.updates);
 }
 
 function revisionen(stand: GeraetStand): string {
@@ -312,9 +332,23 @@ onMounted(laden);
                 </td>
                 <td>{{ zeitpunkt(stand.zuletzt_gesehen) }}</td>
                 <td>
-                  <span :title="revisionen(stand)">
-                    <Status :ton="stand_ton(stand)" :text="stand_text(stand)" />
-                  </span>
+                  <div class="stand">
+                    <span :title="revisionen(stand)">
+                      <Status :ton="stand_ton(stand)" :text="stand_text(stand)" />
+                    </span>
+                    <span
+                      v-if="stand.meldung"
+                      class="stand__client mono"
+                      :title="client_veraltet(stand) ? `neueste Version ${neueste()}` : 'Client-Version'"
+                    >
+                      Client {{ stand.meldung.client_version }}
+                    </span>
+                    <Status
+                      v-if="client_veraltet(stand)"
+                      ton="warnung"
+                      :text="`veraltet (${neueste()})`"
+                    />
+                  </div>
                 </td>
               </tr>
 

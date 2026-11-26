@@ -258,6 +258,8 @@ Mit leerer Angabe (`QUIVER_TOOLS_VERSION=`) baut es ohne Programme und sagt es.
 | `QUIVER_PROXIES` | CIDR-Liste, denen `X-Forwarded-For` geglaubt wird |
 | `QUIVER_PROGRAMME` | Ordner mit den zu verteilenden Programmen (Vorgabe `<Daten>/tools` und `/opt/quiver/tools`) |
 | `QUIVER_ALTGERAETE` | `gesperrt` (Vorgabe, sobald Entra eingerichtet ist, sonst `erlaubt`) für Geräte ohne Benutzer |
+| `QUIVER_UPDATES` | `an` (Vorgabe) oder `aus`: darf der Server die GitHub-Veröffentlichungen nach einer neuen Version fragen — und deren Pakete an die Geräte ausliefern? Höchstens alle sechs Stunden, ohne Kennung, ohne Nutzdaten. Siehe [updates.de.md](updates.de.md) |
+| `QUIVER_UPDATE_QUELLE` | nur Loopback (Tests): Basis der Abfrage der Veröffentlichung; im Betrieb fest das Repository des Projekts |
 
 `.env.example` ist die Vorlage.
 

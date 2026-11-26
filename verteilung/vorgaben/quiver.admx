@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Vorgaben der Firma für Windows (Aufgabe 34, §3) – ADMX-Vorlage für Intune
+  (Geräte → Konfiguration → „Benutzerdefiniert“ mit ADMX/ADML) oder die
+  Gruppenrichtlinien-Verwaltung.
+
+  Die Werte landen unter `HKLM\Software\Policies\mcp-quiver`:
+    ServerUrl      REG_SZ    feste Server-Adresse
+    Autostart      REG_DWORD 1 = an, 0 = aus
+    UpdateHinweis  REG_SZ    Text des Hinweises; {version} wird ersetzt
+    UpdateAngebot  REG_DWORD 1 = Client darf selbst einspielen, 0 = nur Hinweis
+
+  Platzhalter `https://quiver.example.test` vor dem Ausrollen ersetzen.
+-->
+<policyDefinitions xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions"
+                   revision="1.0" schemaVersion="1.0">
+  <policyNamespaces>
+    <target prefix="quiver" namespace="Weppelmann.McpQuiver" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <categories>
+    <category name="Quiver" displayName="$(string.Quiver)" />
+  </categories>
+  <policies>
+    <policy name="ServerUrl" class="Machine"
+            displayName="$(string.ServerUrl)"
+            explainText="$(string.ServerUrlHelp)"
+            presentation="$(presentation.ServerUrl)"
+            key="Software\Policies\mcp-quiver" valueName="ServerUrl">
+      <parentCategory ref="Quiver" />
+      <elements>
+        <text id="ServerUrl" valueName="ServerUrl" required="true" />
+      </elements>
+    </policy>
+    <policy name="Autostart" class="Machine"
+            displayName="$(string.Autostart)"
+            explainText="$(string.AutostartHelp)"
+            key="Software\Policies\mcp-quiver" valueName="Autostart">
+      <parentCategory ref="Quiver" />
+      <elements>
+        <boolean id="Autostart" valueName="Autostart" />
+      </elements>
+    </policy>
+    <policy name="UpdateAngebot" class="Machine"
+            displayName="$(string.UpdateAngebot)"
+            explainText="$(string.UpdateAngebotHelp)"
+            key="Software\Policies\mcp-quiver" valueName="UpdateAngebot">
+      <parentCategory ref="Quiver" />
+      <elements>
+        <boolean id="UpdateAngebot" valueName="UpdateAngebot" />
+      </elements>
+    </policy>
+    <policy name="UpdateHinweis" class="Machine"
+            displayName="$(string.UpdateHinweis)"
+            explainText="$(string.UpdateHinweisHelp)"
+            presentation="$(presentation.UpdateHinweis)"
+            key="Software\Policies\mcp-quiver" valueName="UpdateHinweis">
+      <parentCategory ref="Quiver" />
+      <elements>
+        <text id="UpdateHinweis" valueName="UpdateHinweis" required="false" />
+      </elements>
+    </policy>
+  </policies>
+</policyDefinitions>

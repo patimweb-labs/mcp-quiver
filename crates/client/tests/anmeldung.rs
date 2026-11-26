@@ -88,6 +88,8 @@ impl Pruefung {
             mcp_adresse: SocketAddr::from(([127, 0, 0, 1], 0)),
             tresor: std::sync::Arc::new(SpeicherTresor::neu()),
             browser: std::sync::Arc::new(quiver_client::SystemBrowser),
+            vorgaben: quiver_client::Vorgaben::default(),
+            aufstellung: quiver_client::update::Aufstellung::nicht_tauschen(),
         })
         .await
         .expect("Kern startet");

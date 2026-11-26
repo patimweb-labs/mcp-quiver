@@ -513,6 +513,8 @@ fn modell(verbindung: Verbindung, eintraege: Vec<EintragSicht>) -> Modell {
         protokoll_fuer_agenten: false,
         tresor_fehler: None,
         profil_hinweis: None,
+        update: quiver_client::UpdateLage::Unbekannt,
+        vorgaben: quiver_client::Vorgaben::default(),
         fortschritt: quiver_client::Fortschritt::Ruhe,
     }
 }
@@ -4818,6 +4820,202 @@ fn bildschirmfoto_der_vorgaben() {
             );
             nichts_ragt_heraus(&h, groesse.masse.0, "vorgaben");
             foto(&mut h, &ziel, "vorgaben", thema, groesse.px);
+        }
+    }
+}
+
+// ------------------------------------ Update anbieten und einspielen (Aufgabe 39)
+
+fn update_paket() -> quiver_protocol::UpdatePaket {
+    quiver_protocol::UpdatePaket {
+        name: String::from("quiver-0.5.0-linux-x86_64.zip"),
+        groesse: 6,
+        // Nur eine Form: die Ansicht prüft keine Prüfsumme.
+        sha256: String::from("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+        art: String::from("zip"),
+    }
+}
+
+fn update_verfuegbar(angebot: quiver_client::update::Angebot) -> quiver_client::UpdateLage {
+    quiver_client::UpdateLage::Verfuegbar {
+        version: String::from("0.5.0"),
+        hinweis: String::from("Version 0.5.0 ist verfügbar"),
+        aenderungen: Some(String::from("https://example.test/releases/tag/v0.5.0")),
+        angebot,
+    }
+}
+
+/// Der Hinweis mit einem passenden Paket: „Jetzt aktualisieren“ und „Später“
+/// stehen da und schicken ihre Aktion (Aufgabe 39).
+#[test]
+fn der_update_hinweis_bietet_jetzt_und_spaeter_an() {
+    let mut m = modell(verbunden(), eintraege());
+    m.update = update_verfuegbar(quiver_client::update::Angebot::Bereit {
+        paket: update_paket(),
+    });
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    zur_ruhe(&mut h);
+    assert!(
+        h.query_all(By::new().label_contains("Version 0.5.0 ist verfügbar"))
+            .count()
+            > 0,
+        "der Hinweis fehlt"
+    );
+    assert!(
+        h.query_all(By::new().label_contains("Änderungen ansehen"))
+            .count()
+            > 0,
+        "der Link auf die Änderungen fehlt"
+    );
+    h.get_by_role_and_label(Role::Button, "Jetzt aktualisieren")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .1
+            .aktionen
+            .borrow()
+            .iter()
+            .any(|aktion| matches!(aktion, Aktion::UpdateInstallieren)),
+        "der Knopf schickt nicht die Aktion"
+    );
+    h.get_by_role_and_label(Role::Button, "Später").click();
+    h.run();
+    assert!(h
+        .state()
+        .1
+        .aktionen
+        .borrow()
+        .iter()
+        .any(|aktion| matches!(aktion, Aktion::UpdateSpaeter)));
+}
+
+/// Ohne Angebot bleibt es beim Hinweis – mit dem Grund, aber ohne Knopf
+/// (Vorgabe der Firma, fehlendes Recht, root nötig).
+#[test]
+fn ohne_angebot_gibt_es_keinen_knopf_sondern_einen_grund() {
+    let faelle = [
+        (
+            quiver_client::update::AngebotGrund::Vorgabe,
+            "Updates sind von deiner Firma abgeschaltet.",
+        ),
+        (
+            quiver_client::update::AngebotGrund::KeinSchreibrecht,
+            "Der Programmordner gehört dem System",
+        ),
+        (
+            quiver_client::update::AngebotGrund::BrauchtRechte,
+            "Diese Installation braucht Administratorrechte",
+        ),
+    ];
+    for (grund, text) in faelle {
+        let mut m = modell(verbunden(), eintraege());
+        m.update = update_verfuegbar(quiver_client::update::Angebot::Keins { grund });
+        let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+        h.run();
+        assert!(
+            h.query_all(By::new().label_contains(text)).count() > 0,
+            "der Grund fehlt: {text}"
+        );
+        assert!(
+            h.query_by_label_contains("Jetzt aktualisieren").is_none(),
+            "der Knopf darf hier nicht stehen"
+        );
+        assert_eq!(
+            h.query_all(By::new().label_contains("Version 0.5.0 ist verfügbar"))
+                .count(),
+            1,
+            "der Hinweis bleibt"
+        );
+    }
+}
+
+/// Während des Tauschs steht derselbe Fortschritt wie beim Laden der
+/// Programme: Text und – wenn die Größe bekannt ist – der Anteil.
+#[test]
+fn der_update_fortschritt_steht_im_hinweis() {
+    use quiver_client::update::{UpdateLage, UpdateSchritt};
+    let faelle = [
+        (
+            UpdateLage::Arbeit {
+                schritt: UpdateSchritt::Laedt,
+                anteil: Some(42),
+            },
+            "Update wird geladen … 42 %",
+        ),
+        (
+            UpdateLage::Arbeit {
+                schritt: UpdateSchritt::Prueft,
+                anteil: None,
+            },
+            "Update wird geprüft …",
+        ),
+        (
+            UpdateLage::Arbeit {
+                schritt: UpdateSchritt::Tauscht,
+                anteil: None,
+            },
+            "Update wird eingespielt …",
+        ),
+        (
+            UpdateLage::Getauscht {
+                version: String::from("0.5.0"),
+            },
+            "Neue Version 0.5.0 ist eingespielt",
+        ),
+    ];
+    for (lage, text) in faelle {
+        let mut m = modell(verbunden(), eintraege());
+        m.update = lage;
+        let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+        h.run_ok();
+        assert!(
+            h.query_all(By::new().label_contains(text)).count() > 0,
+            "{text} fehlt"
+        );
+        assert!(
+            h.query_by_label_contains("Jetzt aktualisieren").is_none(),
+            "während des Tauschs gibt es keinen zweiten Knopf"
+        );
+    }
+}
+
+/// Ein gescheiterter Tausch steht als Fehler da und ändert nichts.
+#[test]
+fn ein_gescheitertes_update_steht_als_fehler_da() {
+    let mut m = modell(verbunden(), eintraege());
+    m.update = quiver_client::UpdateLage::Fehler {
+        text: String::from("die Prüfsumme des Pakets stimmt nicht"),
+    };
+    let mut h = fenster(m, Some(Seite::Tools), Thema::Dunkel, gross());
+    h.run();
+    assert!(
+        h.query_all(By::new().label_contains("Prüfsumme des Pakets"))
+            .count()
+            > 0,
+        "der Fehler fehlt"
+    );
+    // Fragen darf man immer wieder.
+    assert!(h.query_by_label_contains("Erneut prüfen").is_some());
+}
+
+/// Die Bilder zum Angebot, in beiden Themen (Aufgabe 39).
+#[test]
+fn bildschirmfoto_des_updates() {
+    let Some(ziel) = bilder_ordner() else {
+        return;
+    };
+    std::fs::create_dir_all(&ziel).expect("Bilderordner");
+    for thema in BILDER_THEMEN {
+        for groesse in GROESSEN {
+            let mut m = modell(verbunden(), eintraege());
+            m.update = update_verfuegbar(quiver_client::update::Angebot::Bereit {
+                paket: update_paket(),
+            });
+            let mut h = fenster(m, Some(Seite::Tools), thema, groesse.masse);
+            h.run_steps(3);
+            nichts_ragt_heraus(&h, groesse.masse.0, "update");
+            foto(&mut h, &ziel, "update", thema, groesse.px);
         }
     }
 }

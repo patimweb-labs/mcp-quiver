@@ -154,7 +154,7 @@ writes only those pages and leaves the rest alone.
 The scripts are the same ones the CI calls; output goes to `dist/` (git-ignored):
 
 ```bash
-verteilung/macos/paket.sh                     # macOS: dist/quiver.app, dist/*.dmg
+verteilung/macos/paket.sh                     # macOS: dist/quiver.app, dist/*.dmg, dist/*.pkg
 verteilung/linux/paket.sh                     # Linux: tar.gz, deb, rpm, AppImage
 pwsh -File verteilung/windows/paket.ps1       # Windows: msi + zip
 verteilung/version.sh                         # prints the version

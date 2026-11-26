@@ -233,8 +233,15 @@ Release-Text und in [docs/client.de.md](docs/client.de.md#woher-die-programme-ko
 Die Pakete sind **unsigniert**, solange der Betreiber sie nicht signiert:
 Gatekeeper und SmartScreen fragen beim ersten Start einmal nach. Was das heißt
 und wie man daran vorbeikommt:
-[docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet). Jedes Release
-trägt außerdem `SHA256SUMS` und einen Herkunftsnachweis, den man prüfen kann:
+[docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet). Updates bietet
+der Client selbst an: er erfährt die neue Version von seinem eigenen Server und
+bietet, wenn es ein Paket für seine Installation gibt, **Jetzt aktualisieren** an
+— laden vom Server, prüfen gegen `SHA256SUMS`, Selbsttest, tauschen, neu starten;
+das Profil bleibt unberührt ([docs/updates.de.md](docs/updates.de.md)). Dieselbe
+Arbeit erledigt die Geräteverwaltung (Intune) oder eine Installation von Hand aus
+dem Release; der Betreiber kann das Angebot abschalten —
+[docs/intune.de.md](docs/intune.de.md). Jedes Release trägt außerdem
+`SHA256SUMS` und einen Herkunftsnachweis, den man prüfen kann:
 
 ```bash
 sha256sum -c SHA256SUMS
@@ -313,8 +320,18 @@ Protokoll: [docs/client.de.md](docs/client.de.md).
   Prozesse. Der `Host`-Kopf muss zur Basis-URL passen, CSP ohne Inline, HSTS
   bei https, Grenzen für Rumpf und Zeit, gedrosselte Anmeldung, eine Prüfspur
   über 180 Tage. Jeder Wert steht in [docs/haertung.md](docs/haertung.md).
-- **Keine Telemetrie.** Keine Update-Abfrage, keine Analyse, kein Ruf nach
-  Hause. Der Server spricht nur mit Microsoft, wenn Entra eingerichtet ist.
+- **Der Client fragt nur seinen eigenen Server.** Er spricht nie mit dem
+  Internet: der Server fragt die GitHub-Veröffentlichungen höchstens alle sechs
+  Stunden, mit Streuung, ohne Kennung und ohne Nutzdaten, und
+  `QUIVER_UPDATES=aus` schaltet das ab. Der Client zeigt einen ruhigen Hinweis
+  mit dem Text des Betreibers und einem Link auf die Änderungen — und, wenn es
+  ein Paket für seine Installation gibt, bietet er an, es einzuspielen: vom
+  Server, geprüft gegen `SHA256SUMS`, mit Selbsttest, getauscht, Profil
+  unberührt. Die Geräteverwaltung (Intune) kann das übernehmen, und
+  `UpdateAngebot=false` lässt nur den Hinweis —
+  [docs/intune.de.md](docs/intune.de.md). Keine Analyse, kein Ruf nach Hause.
+- **Der Server spricht weiterhin nur mit Microsoft, wenn Entra eingerichtet
+  ist.**
 
 ## Betrieb
 

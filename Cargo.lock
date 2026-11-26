@@ -4805,6 +4805,7 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "dirs 6.0.0",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "hex",
@@ -4825,6 +4826,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "winreg",
 ]
 
 [[package]]

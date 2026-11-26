@@ -28,9 +28,23 @@ use quiver_fenster::tray::{self, Tray, TrayZustand};
 use quiver_fenster::{autostart, ende, instanz, logik};
 
 fn main() -> anyhow::Result<()> {
-    einrichten_log();
     let argumente = logik::argumente(std::env::args().skip(1));
+    // Der Selbsttest vor allem anderen: kein Protokoll, kein Profil, kein
+    // Fenster. Er ist die Frage „startet diese Fassung überhaupt?“ (39).
+    if argumente.selbsttest {
+        println!(
+            "quiver {} – Selbsttest in Ordnung",
+            quiver_client::CLIENT_VERSION
+        );
+        return Ok(());
+    }
+    einrichten_log();
     let konfig = kernkonfig(KernKonfig::standard(), |name| std::env::var(name).ok());
+    // Die neue Fassung hat ihren Start nicht bewiesen: zurück auf die alte.
+    if let Some(programm) = quiver_client::update::tausch::rueckfall(&konfig.profil) {
+        neustart_starten(&programm);
+        return Ok(());
+    }
     if argumente.kopflos {
         return kopflos(konfig);
     }
@@ -41,7 +55,32 @@ fn main() -> anyhow::Result<()> {
         EndeGrund::ZweiteInstanz.protokollieren();
         return Ok(());
     }
-    fenster(konfig, argumente.hintergrund)
+    // Das Fenster läuft, bis es beendet wird. Danach – und **erst** danach, mit
+    // freigegebenem Profil – startet eine neue Fassung (Aufgabe 39).
+    let konfig = {
+        let profil = konfig.profil.clone();
+        fenster(konfig, argumente.hintergrund)?;
+        profil
+    };
+    if let Some(programm) = quiver_client::update::tausch::neustart_uebernehmen(&konfig) {
+        neustart_starten(&programm);
+    }
+    Ok(())
+}
+
+/// Eine neue Fassung starten, ohne auf sie zu warten.
+///
+/// Sie läuft ohne Argumente: der Benutzer sieht nach dem Update dasselbe
+/// Fenster wie vorher, der Tray ist wieder da, und das Profil ist dasselbe
+/// (der Kern liest es beim Start).
+fn neustart_starten(programm: &std::path::Path) {
+    match std::process::Command::new(programm).spawn() {
+        Ok(kind) => tracing::info!("neue Fassung gestartet (PID {})", kind.id()),
+        Err(fehler) => tracing::warn!(
+            "die neue Fassung {} lässt sich nicht starten: {fehler}",
+            programm.display()
+        ),
+    }
 }
 
 /// Protokoll nach stderr, Stufe über `RUST_LOG`.
@@ -83,11 +122,15 @@ fn kopflos(konfig: KernKonfig) -> anyhow::Result<()> {
     let laufzeit = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let kern = laufzeit.block_on(Kern::starten(konfig))?;
+    let kern = laufzeit.block_on(Kern::starten(konfig.clone()))?;
+    quiver_client::update::tausch::bestaetigen(&konfig.profil);
     tracing::info!("quiver läuft ohne Fenster — Strg+C oder SIGTERM beendet.");
     let grund = laufzeit.block_on(ende::warte_auf_signal());
     grund.protokollieren();
     laufzeit.block_on(kern.beenden());
+    if let Some(programm) = quiver_client::update::tausch::neustart_uebernehmen(&konfig.profil) {
+        neustart_starten(&programm);
+    }
     Ok(())
 }
 
@@ -118,9 +161,21 @@ fn fenster(konfig: KernKonfig, hintergrund: bool) -> anyhow::Result<()> {
         tracing::debug!("zweite Instanz meldet sich auf {}", waechter.adresse());
     }
 
-    let kern = EchterKern::starten(konfig)?;
+    let kern = EchterKern::starten(konfig.clone())?;
+    // Die Fassung läuft: der Tausch ist bewiesen, Marke und Sicherung weg.
+    quiver_client::update::tausch::bestaetigen(&konfig.profil);
     let mut sicht = Sicht::neu(kern.modell(), &einstellungen);
-    sicht.autostart = autostart::aktiv();
+    // Vorgaben der Firma (Aufgabe 34 §3) haben Vorrang vor dem Profil: der
+    // Autostart wird gesetzt (nicht nur angezeigt), die Server-Adresse ist fest.
+    sicht.autostart = match sicht.modell.vorgaben.autostart {
+        Some(an) => {
+            if let Err(fehler) = autostart::setzen(an) {
+                tracing::warn!("Autostart laut Vorgabe nicht setzbar: {fehler:#}");
+            }
+            an
+        }
+        None => autostart::aktiv(),
+    };
     let ende_fahne = EndeFahne::neu();
 
     let mut viewport = egui::ViewportBuilder::default()

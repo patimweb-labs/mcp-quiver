@@ -352,6 +352,40 @@ nur, was im Soll des Geräts steht, und nur für dessen System.
 (die bereits geladenen laufen weiter). Wer den Server übernimmt, bestimmt die
 Programme – deshalb TLS überall und die Prüfsumme im Soll, nicht im Programm.
 
+### Updates (Aufgabe 34, 39)
+
+Der **Server** fragt höchstens alle sechs Stunden die Veröffentlichung ab
+(`QUIVER_UPDATES=an|aus`, ohne Kennung, ohne Nutzdaten) und zeigt in der
+Verwaltung: neuere Server-Version, neueste Client-Version, Geräte mit älterem
+Client. Der **Client** fragt nur seinen Server – nie das Internet – und zeigt
+bei einer neueren Fassung einen Hinweis mit dem Text der Firma und einem Link
+auf die Änderungen. Nur neuere Versionen, keine Vorabfassungen, nie zurück.
+
+Gibt es ein Paket für **seine** Installation, bietet der Client **Jetzt
+aktualisieren** und **Später** an (ADR 0005). Der Server holt das Paket des
+Releases über `https`, prüft es gegen `SHA256SUMS`, legt es unter
+`<daten>/updates/<version>/` ab und liefert es mit dem Geräte-Token aus
+(gestreamt, Größe, `ETag`, Drossel). Der Client prüft Größe und SHA-256 aus der
+Antwort vor jedem Schritt, beendet die laufenden Werkzeuge, startet die neue
+Fassung als `quiver --selbsttest` (Exit 0, ohne Fenster, ohne Profil) und
+tauscht erst dann – je Art der Installation, die er selbst erkennt: ZIP und MSI
+(je Benutzer) unter Windows, `.app` aus dem `.dmg` unter macOS, AppImage und
+`tar.gz` unter Linux; `.deb`/`.rpm` und Ordner ohne Schreibrecht bekommen nur
+einen Hinweis. Die alte Fassung bleibt als `<name>.alt` liegen, eine Marke im
+Profil holt sie beim zweiten Start ohne Beweis zurück.
+
+Das **Profil wird nicht angefasst**: Einstellungen, Tresor, Geräte-Token,
+Angaben, Zugänge, Anmeldungen der Werkzeuge, Autostart und die geladenen
+Programme bleiben. Die Firma schaltet das Angebot per Vorgabe `UpdateAngebot`
+ab (Standard: an); dann bleibt es beim Hinweis, und die Geräteverwaltung spielt
+ein.
+
+*Preis:* Der Server legt Pakete auf die Platte (bis 512 MiB, alte Fassungen
+bleiben liegen). Der Tausch eines laufenden Programms ist der heikelste Teil
+und je Art einzeln geprüft; für das MSI macht es Windows selbst. Kein
+Signaturschlüssel, kein fremdes Werkzeug, kein root – dafür bekommen
+`deb`/`rpm`-Installationen das Update weiter von Hand.
+
 ### Grenzen im Client (Paket 3)
 
 Ein Eintrag ist fremder Code und ein Agent ist ein fremder Aufrufer. Beides

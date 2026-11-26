@@ -134,6 +134,42 @@ pub fn fortschritt_dreht(fortschritt: &quiver_client::Fortschritt) -> bool {
     )
 }
 
+// ------------------------------------------------- Update (Aufgabe 39)
+
+/// Was gerade beim Aktualisieren geschieht – mit Anteil, wenn es einen gibt.
+pub fn update_schritt_text(
+    sprache: Sprache,
+    schritt: quiver_client::update::UpdateSchritt,
+    anteil: Option<u8>,
+) -> String {
+    use quiver_client::update::UpdateSchritt;
+    match schritt {
+        UpdateSchritt::Laedt => match anteil {
+            Some(anteil) => tf(sprache, "update.laedt_anteil", &[&anteil]),
+            None => t(sprache, "update.laedt"),
+        },
+        UpdateSchritt::Prueft => t(sprache, "update.prueft"),
+        UpdateSchritt::Tauscht => t(sprache, "update.tauscht"),
+    }
+}
+
+/// „Neue Version X ist eingespielt – quiver startet neu.“
+pub fn update_getauscht_text(sprache: Sprache, version: &str) -> String {
+    tf(sprache, "update.getauscht", &[&version])
+}
+
+/// Warum es keinen Knopf gibt – als Satz.
+pub fn angebot_grund_text(sprache: Sprache, grund: quiver_client::update::AngebotGrund) -> String {
+    use quiver_client::update::AngebotGrund;
+    match grund {
+        AngebotGrund::Vorgabe => t(sprache, "update.grund.vorgabe"),
+        AngebotGrund::KeinSchreibrecht => t(sprache, "update.grund.kein_schreibrecht"),
+        AngebotGrund::BrauchtRechte => t(sprache, "update.grund.braucht_rechte"),
+        AngebotGrund::KeinPaket => t(sprache, "update.grund.kein_paket"),
+        AngebotGrund::Unbekannt => t(sprache, "update.grund.unbekannt"),
+    }
+}
+
 /// So kurz darf etwas dauern, ohne gezeigt zu werden (kein Flackern).
 pub const FLACKER: Duration = Duration::from_millis(300);
 /// So lange steht „Alles aktuell“ da.
@@ -350,7 +386,15 @@ pub enum TrayEintrag {
 /// Die Zustandszeile des Trays: „Verbunden · 4 Tools · 1 Agent" bzw.
 /// „Nicht verbunden". Gezählt wird, was gerade läuft und wer gerade da ist.
 pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
-    match &modell.verbindung {
+    // Ein anstehendes Update steht **vor** dem Zustand (Aufgabe 34). Der Satz
+    // kommt aus der Vorgabe der Firma (oder aus dem Standardtext) und nennt
+    // schon die Version; hier wird nichts nachgebaut.
+    let update = modell
+        .update
+        .anstehend()
+        .map(|(_, hinweis)| format!("{hinweis} · "))
+        .unwrap_or_default();
+    let zustand = match &modell.verbindung {
         Verbindung::NichtEingebunden => t(sprache, "tray.nicht_verbunden"),
         Verbindung::Verbindet { .. } => t(sprache, "tray.verbindet"),
         Verbindung::WartetAufBrowser { .. } => t(sprache, "tray.im_browser"),
@@ -384,7 +428,8 @@ pub fn tray_zeile(modell: &Modell, sprache: Sprache) -> String {
                 None => bisher,
             }
         }
-    }
+    };
+    format!("{update}{zustand}")
 }
 
 /// Der kurze Text im Tray, solange etwas läuft (Nachtrag zu Aufgabe 37):
@@ -402,14 +447,18 @@ pub fn tray_fortschritt(modell: &Modell, sprache: Sprache) -> Option<String> {
 
 /// Das Tray-Menü als Daten — reine Funktion über dem Modell. Die Reihenfolge
 /// ist die des Menüs: Zustand, Fenster zeigen, Autostart, Trenner, Beenden.
+///
+/// Ist der Autostart von der Firma vorgegeben (Aufgabe 34), steht das Häkchen
+/// danach und der Eintrag lässt sich nicht umschalten (siehe `app.rs`).
 pub fn tray_menu(modell: &Modell, autostart: bool, sprache: Sprache) -> Vec<TrayEintrag> {
+    let autostart_an = modell.vorgaben.autostart.unwrap_or(autostart);
     vec![
         TrayEintrag::Zustand(tray_zeile(modell, sprache)),
         TrayEintrag::Zeigen(t(sprache, "tray.fenster")),
         TrayEintrag::Aktualisieren(t(sprache, "tools.aktualisieren")),
         TrayEintrag::Autostart {
             text: t(sprache, "tray.autostart"),
-            an: autostart,
+            an: autostart_an,
         },
         TrayEintrag::Trenner,
         TrayEintrag::Beenden(t(sprache, "tray.beenden")),
@@ -423,6 +472,9 @@ pub struct Argumente {
     pub hintergrund: bool,
     /// `--headless`: nur der Kern, ohne Fenster und ohne Tray.
     pub kopflos: bool,
+    /// `--selbsttest` (Aufgabe 39): nur prüfen, dass diese Fassung startet –
+    /// ohne Fenster, ohne Profil. Exit 0 heißt: in Ordnung.
+    pub selbsttest: bool,
 }
 
 /// Die Argumente lesen. Unbekanntes wird nicht bemängelt — eine Anwendung mit
@@ -433,6 +485,7 @@ pub fn argumente<S: AsRef<str>>(argumente: impl IntoIterator<Item = S>) -> Argum
         match argument.as_ref() {
             "--hintergrund" => werte.hintergrund = true,
             "--headless" => werte.kopflos = true,
+            "--selbsttest" => werte.selbsttest = true,
             _ => {}
         }
     }
@@ -1486,6 +1539,8 @@ mod tests {
             protokoll_fuer_agenten: false,
             tresor_fehler: None,
             profil_hinweis: None,
+            update: quiver_client::UpdateLage::Unbekannt,
+            vorgaben: quiver_client::Vorgaben::default(),
             fortschritt: quiver_client::Fortschritt::Ruhe,
         }
     }
@@ -2914,6 +2969,90 @@ mod tests {
         );
     }
 
+    /// Ein anstehendes Update steht vorn in der Tray-Zeile (Aufgabe 34) – der
+    /// Satz kommt aus der Vorgabe der Firma und nennt die Version schon.
+    #[test]
+    fn ein_update_steht_vorn_in_der_tray_zeile() {
+        let mut m = modell(verbunden());
+        assert_eq!(tray_zeile(&m, Sprache::De), "Verbunden · 0 Tools · 1 Agent");
+        m.update = quiver_client::UpdateLage::Verfuegbar {
+            version: String::from("0.3.0"),
+            hinweis: String::from("Version 0.3.0 ist verfügbar."),
+            aenderungen: None,
+            angebot: quiver_client::update::Angebot::Keins {
+                grund: quiver_client::update::AngebotGrund::KeinPaket,
+            },
+        };
+        assert_eq!(
+            tray_zeile(&m, Sprache::De),
+            "Version 0.3.0 ist verfügbar. · Verbunden · 0 Tools · 1 Agent"
+        );
+        // Ohne Angebot bleibt die Zeile, wie sie war.
+        m.update = quiver_client::UpdateLage::Keins;
+        assert_eq!(tray_zeile(&m, Sprache::De), "Verbunden · 0 Tools · 1 Agent");
+    }
+
+    /// Der Fortschritt und die Gründe des Angebots stehen in beiden Sprachen
+    /// bereit (Aufgabe 39).
+    #[test]
+    fn update_texte_stehen_in_beiden_sprachen() {
+        use quiver_client::update::{AngebotGrund, UpdateSchritt};
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Laedt, Some(42)),
+            "Update wird geladen … 42 %"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::En, UpdateSchritt::Laedt, Some(42)),
+            "Downloading the update … 42 %"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Laedt, None),
+            "Update wird geladen …"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Prueft, None),
+            "Update wird geprüft …"
+        );
+        assert_eq!(
+            update_schritt_text(Sprache::De, UpdateSchritt::Tauscht, None),
+            "Update wird eingespielt …"
+        );
+        assert_eq!(
+            update_getauscht_text(Sprache::De, "0.5.0"),
+            "Neue Version 0.5.0 ist eingespielt – quiver startet neu."
+        );
+        for (grund, de) in [
+            (AngebotGrund::Vorgabe, "abgeschaltet"),
+            (AngebotGrund::KeinSchreibrecht, "Programmordner"),
+            (AngebotGrund::BrauchtRechte, "Administratorrechte"),
+            (AngebotGrund::KeinPaket, "kein Paket"),
+            (AngebotGrund::Unbekannt, "nicht selbst"),
+        ] {
+            assert!(
+                angebot_grund_text(Sprache::De, grund).contains(de),
+                "{grund:?}"
+            );
+            // Auch die englische Fassung ist ein Satz und kein Schlüssel.
+            let englisch = angebot_grund_text(Sprache::En, grund);
+            assert!(!englisch.starts_with("update."), "{englisch}");
+            assert_ne!(englisch, angebot_grund_text(Sprache::De, grund));
+        }
+    }
+
+    /// Ist der Autostart vorgegeben, zeigt das Tray die Vorgabe (Aufgabe 34).
+    #[test]
+    fn eine_autostart_vorgabe_steht_im_tray() {
+        let mut m = modell(verbunden());
+        let menu = tray_menu(&m, false, Sprache::De);
+        assert!(matches!(&menu[3], TrayEintrag::Autostart { an: false, .. }));
+        m.vorgaben.autostart = Some(true);
+        let menu = tray_menu(&m, false, Sprache::De);
+        assert!(
+            matches!(&menu[3], TrayEintrag::Autostart { an: true, .. }),
+            "die Vorgabe gewinnt"
+        );
+    }
+
     #[test]
     fn argumente_lesen_hintergrund_und_kopflos() {
         assert_eq!(argumente(Vec::<&str>::new()), Argumente::default());
@@ -2929,5 +3068,8 @@ mod tests {
         // Reihenfolge und Unbekanntes sind egal.
         let beide = argumente(["--unbekannt", "--hintergrund", "--headless"]);
         assert!(beide.hintergrund && beide.kopflos);
+        // Der Selbsttest (Aufgabe 39) ist ein eigener Schalter.
+        let pruefung = argumente(["--selbsttest"]);
+        assert!(pruefung.selbsttest && !pruefung.kopflos && !pruefung.hintergrund);
     }
 }

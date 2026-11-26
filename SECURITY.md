@@ -45,14 +45,20 @@ Alles, was eine der Zusagen aus der README bricht:
   Wurzeldateisystem, ein Aufstieg über Capabilities oder `setuid`.
 * **Verwaltung** — eine CSP-Umgehung, ein XSS, ein Pfad außerhalb der
   Basis-URL, der eine Sitzung übernimmt.
+* **Update-Hinweis** — eine angezeigte Version, die nicht veröffentlicht ist,
+  ein Link, der irgendwohin führt, oder ein Client, der sich selbst installiert
+  oder tauscht.
 
 Nichts davon ist eine Lücke: der Betreiber sieht Metadaten (Bibliothek,
 Zuweisung, Geräte), wer den Server umbaut, kann Einträge erfinden, und wer das
 Benutzerkonto hat, kann die Schlüsseldatei des Tresors lesen — das steht offen
 in [ADR 0001](docs/adr/0001-tresor-datei-statt-schluesselbund.md) und in der
-README unter „Sicherheit und Daten“. Eine fehlende Signatur der Pakete ist
-ebenfalls keine Lücke, sondern ein fehlendes Zertifikat
-([docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet)).
+README unter „Sicherheit und Daten“. Eine fehlende Code-Signatur der Pakete
+(Apple, Microsoft) ist ebenfalls keine Lücke, sondern ein fehlendes Zertifikat
+([docs/release.de.md](docs/release.de.md#was-unsigniert-bedeutet)). Dass quiver
+sich **nicht selbst aktualisiert**, ist Absicht: installiert und aktualisiert
+wird durch die Geräteverwaltung oder von Hand
+([docs/intune.de.md](docs/intune.de.md)).
 
 ## Was wir schon wissen
 

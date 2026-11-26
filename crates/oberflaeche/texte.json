@@ -1055,6 +1055,22 @@
     "de": "Die Befehle lesen das Token verdeckt ein (read -s): es steht nie als Argument in der Prozessliste oder in der Shell-Historie. Alternativ lässt es sich in einer Datei ablegen, die nur Sie lesen können (chmod 600), und mit $(cat …) einsetzen. Die Zwischenablage wird nach 60 Sekunden geleert, solange sie noch diesen Wert enthält.",
     "en": "The commands read the token silently (read -s): it never appears as an argument in the process list or shell history. Alternatively, store it in a file only you can read (chmod 600) and use $(cat …). The clipboard is cleared after 60 seconds as long as it still holds this value."
   },
+  "update.aenderungen": {
+    "de": "Änderungen ansehen",
+    "en": "View changes"
+  },
+  "update.pruefen": {
+    "de": "Erneut prüfen",
+    "en": "Check again"
+  },
+  "vorgabe.server_fest": {
+    "de": "von deiner Firma vorgegeben",
+    "en": "set by your organisation"
+  },
+  "vorgabe.autostart_fest": {
+    "de": "Der Autostart ist von deiner Firma vorgegeben.",
+    "en": "Autostart is set by your organisation."
+  },
   "anmeldung.pruefe": {
     "de": "Prüfe Anmeldung …",
     "en": "Checking sign-in …"
@@ -1126,6 +1142,54 @@
   "tools.ergaenzen": {
     "de": "Angaben ergänzen",
     "en": "Complete settings"
+  },
+  "update.jetzt": {
+    "de": "Jetzt aktualisieren",
+    "en": "Update now"
+  },
+  "update.spaeter": {
+    "de": "Später",
+    "en": "Later"
+  },
+  "update.laedt": {
+    "de": "Update wird geladen …",
+    "en": "Downloading the update …"
+  },
+  "update.laedt_anteil": {
+    "de": "Update wird geladen … {} %",
+    "en": "Downloading the update … {} %"
+  },
+  "update.prueft": {
+    "de": "Update wird geprüft …",
+    "en": "Checking the update …"
+  },
+  "update.tauscht": {
+    "de": "Update wird eingespielt …",
+    "en": "Installing the update …"
+  },
+  "update.getauscht": {
+    "de": "Neue Version {} ist eingespielt – quiver startet neu.",
+    "en": "Version {} is installed – quiver is restarting."
+  },
+  "update.grund.vorgabe": {
+    "de": "Updates sind von deiner Firma abgeschaltet.",
+    "en": "Updates are disabled by your organisation."
+  },
+  "update.grund.kein_schreibrecht": {
+    "de": "Der Programmordner gehört dem System – bitte die neue Fassung über die Geräteverwaltung einspielen.",
+    "en": "The program folder belongs to the system – please install the new version through device management."
+  },
+  "update.grund.braucht_rechte": {
+    "de": "Diese Installation braucht Administratorrechte. Bitte die neue Fassung mit dem Paket aus dem Release einspielen.",
+    "en": "This installation needs administrator rights. Please install the new version from the release package."
+  },
+  "update.grund.kein_paket": {
+    "de": "Für diese Installation gibt es kein Paket in der Veröffentlichung.",
+    "en": "There is no package for this installation in the release."
+  },
+  "update.grund.unbekannt": {
+    "de": "Für diese Installation kann quiver sich nicht selbst aktualisieren.",
+    "en": "quiver cannot update itself for this installation."
   },
   "tools.vorgegeben": {
     "de": "von deiner Firma vorgegeben",

@@ -289,6 +289,50 @@ Pfad“), nicht zusätzlich darunter. Jeder weitere Knopf einer Karte hat seine
 eigene, benannte Wirkung: **Anmelden**, **Abmelden**, **Erneut prüfen**,
 **Einrichten**, **Abbrechen**, **Exportieren**, **Importieren**.
 
+## quiver aktualisieren
+
+Der Client fragt nie das Internet. Alle sechs Stunden fragt er **seinen Server**,
+ob eine neuere Fassung veröffentlicht ist (`GET /api/v1/geraet/updates`, mit dem
+Geräte-Token). Ist es so, erscheint über der Seite und in der Tray-Zeile ein
+Hinweis: die Version, der Text des Betreibers und ein Link auf die Änderungen.
+Gibt es ein Paket für diese Installation, bietet der Hinweis **Jetzt
+aktualisieren** und **Später** an.
+
+**Jetzt aktualisieren** tut Folgendes, in dieser Reihenfolge:
+
+1. laufende Werkzeuge werden beendet (laufende Aufrufe bekommen bis zu 10 s),
+2. das Paket kommt vom eigenen Server nach `<profil>/updates/<version>/`; dabei
+   werden `Content-Length` und die SHA-256 aus der Antwort des Servers schon
+   beim Schreiben geprüft,
+3. die neue Fassung wird entpackt und als `quiver --selbsttest` gestartet —
+   Exit 0, ohne Fenster, ohne Profil; scheitert das, bleibt alles, wie es ist,
+4. die alte Datei wird zu `<name>.alt`, die neue daneben gelegt; das Fenster
+   sagt „Neue Version X ist eingespielt“ und schließt,
+5. die neue Fassung startet, sobald das Profil freigegeben ist. Kommt sie nicht,
+   stellt der zweite Start die alte wieder hin.
+
+**Später** nimmt den Hinweis für diese Version bis zum nächsten Start weg. Die
+Abfrage läuft weiter; nur das Angebot verschwindet.
+
+Welches Paket gilt, erkennt der Client an seinem eigenen Pfad: portables ZIP und
+MSI je Benutzer unter Windows, `.app` aus dem `.dmg` unter macOS, AppImage und
+`tar.gz` unter Linux. Eine Installation aus `.deb`/`.rpm` (Systemordner) oder ein
+Ordner ohne Schreibrecht bekommt nur den Hinweis — quiver fasst keinen
+Programmordner an, der dem System gehört, und fragt nie nach root.
+
+Das **Profil wird nicht angefasst**: Einstellungen, Tresor, Geräte-Token,
+Angaben, Zugänge, Anmeldungen der Werkzeuge, Autostart und die geladenen
+Programme bleiben, wie sie waren. Das prüft ein Test, der das Profil vor und nach
+dem Tausch vergleicht.
+
+`quiver --selbsttest` ist eine schlichte Prüfung: Es nennt die Version, endet mit
+0 und fasst weder Profil noch Fenster an. Genau das startet das Selbst-Update vor
+dem Tausch.
+
+Hat der Betreiber das Angebot abgeschaltet (Vorgabe `UpdateAngebot`), bleibt der
+Hinweis; eingespielt wird dann durch die Geräteverwaltung (Intune) oder von Hand
+aus dem Release. Einzelheiten: [updates.de.md](updates.de.md).
+
 ## Protokoll und Datenschutz
 
 Die Seite **Protokoll** im Fenster listet jeden Tool-Aufruf eines Agenten (Zeit,

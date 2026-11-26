@@ -226,8 +226,14 @@ are included, and from which commit, is named in the release notes and in
 
 The packages are **unsigned** unless the maintainer signs them: Gatekeeper and
 SmartScreen ask once on the first start. What that means and how to get past it:
-[docs/release.md](docs/release.md#what-unsigned-means). Every release also
-carries `SHA256SUMS` and a build provenance you can verify:
+[docs/release.md](docs/release.md#what-unsigned-means). Updates are offered by
+the client itself: it learns the new version from its own server and, if a
+package for its installation exists, offers **Update now** — download from the
+server, check against `SHA256SUMS`, self-test, swap, restart; the profile stays
+untouched ([docs/updates.md](docs/updates.md)). Device management (Intune) or a
+manual install from the release does the same job, and an operator can switch
+the offer off — [docs/intune.md](docs/intune.md). Every release also carries
+`SHA256SUMS` and a build provenance you can verify:
 
 ```bash
 sha256sum -c SHA256SUMS
@@ -300,8 +306,16 @@ protocol: [docs/client.md](docs/client.md).
   `Host` header must match the base URL, CSP without inline, HSTS on https,
   body and time limits, throttled sign-in, an audit trail that keeps 180 days.
   Every value is in [docs/haertung.md](docs/haertung.md) (German).
-- **No telemetry.** No update check, no analytics, no call home. The server
-  talks to Microsoft only when Entra is configured.
+- **The client asks only its own server.** It never talks to the internet: the
+  server asks the GitHub releases at most every six hours, with jitter, without
+  an identifier and without payload, and `QUIVER_UPDATES=aus` switches that off.
+  The client shows a quiet hint with the operator's text and a link to the
+  changes — and, when a package for its installation exists, offers to install
+  it: from the server, checked against `SHA256SUMS`, self-tested, swapped, with
+  the profile untouched. Device management (Intune) can take that over, and
+  `UpdateAngebot=false` leaves only the hint — [docs/intune.md](docs/intune.md).
+  No analytics, no call home.
+- **The server still talks to Microsoft only when Entra is configured.**
 
 ## Operation
 

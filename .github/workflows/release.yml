@@ -22,7 +22,7 @@
 # Hand löst der Tag selbst `abbild.yml` aus.
 #
 # Was hier gebaut wird, steht in `verteilung/` und läuft auch lokal:
-#   verteilung/macos/paket.sh      .app + .dmg (ad hoc oder signiert/notarisiert)
+#   verteilung/macos/paket.sh      .app + .dmg + .pkg (ad hoc oder signiert)
 #   verteilung/linux/paket.sh      .tar.gz, .deb, .rpm, AppImage
 #   verteilung/windows/paket.ps1   .msi (je Benutzer) + portables .zip
 #
@@ -232,6 +232,74 @@ jobs:
         shell: pwsh
         run: ./verteilung/windows/paket.ps1
 
+      # Probe der stillen Installation und des Updates (Aufgabe 34) – nur auf
+      # Pull Requests, damit ein Tag-Lauf nichts auf dem Läufer installiert.
+      # Was hier geprüft wird, steht auch in docs/intune.md.
+      - name: "Paketprobe (macOS: installer -pkg)"
+        if: runner.os == 'macOS' && github.event_name == 'pull_request'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          set -euo pipefail
+          paket=$(find dist -maxdepth 1 -name "*.pkg" | head -1)
+          # Erst ansehen, nicht installieren: das Paket muss das Bündel und die
+          # Skripte enthalten.
+          # `--expand-full` packt auch das Teilpaket aus (die Produktdatei
+          # enthält es als Ganzes).
+          pkgutil --expand-full "$paket" "$RUNNER_TEMP/expanded"
+          teil=$(find "$RUNNER_TEMP/expanded" -maxdepth 1 -name "*.pkg" | head -1)
+          test -x "$teil/Payload/Applications/quiver.app/Contents/MacOS/quiver"
+          test -x "$teil/Scripts/preinstall"
+          test -x "$teil/Scripts/postinstall"
+          # Installation nach /Applications und ein zweites Mal darüber
+          # (Ersetzen der alten Fassung).
+          sudo installer -pkg "$paket" -target /
+          test -x /Applications/quiver.app/Contents/MacOS/quiver
+          sudo installer -pkg "$paket" -target /
+          test -x /Applications/quiver.app/Contents/MacOS/quiver
+          sudo rm -rf /Applications/quiver.app
+
+      - name: "Paketprobe (Windows: msiexec /qn, Update, Deinstallation)"
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # `paket.ps1` hat WiX in diesem Lauf installiert; der Pfad gilt nur
+          # für den Schritt, in dem er gesetzt wurde.
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          if (-not (Get-Command wix -ErrorAction SilentlyContinue)) { throw 'WiX ist nicht verfügbar.' }
+          $msi = Get-ChildItem dist\*.msi | Select-Object -First 1
+          if (-not $msi) { throw 'Kein MSI gebaut.' }
+          # Ein Profil, das die Deinstallation stehen lassen muss.
+          $profil = Join-Path $env:APPDATA 'mcp-quiver'
+          New-Item -ItemType Directory -Force $profil | Out-Null
+          Set-Content -Path (Join-Path $profil 'zustand.json') -Value '{}'
+
+          Write-Host "==> installiere $($msi.Name) still"
+          $p = Start-Process msiexec -ArgumentList '/i', "`"$($msi.FullName)`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /i endet mit $($p.ExitCode)" }
+          $ziel = Join-Path $env:LOCALAPPDATA 'Programs\mcp-quiver\quiver.exe'
+          if (-not (Test-Path $ziel)) { throw "$ziel fehlt nach der Installation." }
+
+          # Zweite Fassung darüber: dieselbe UpgradeCode, höhere Version.
+          $zweite = Join-Path $env:RUNNER_TEMP 'quiver-neu.msi'
+          $version = (Get-Content Cargo.toml -Raw | Select-String -Pattern '(?m)^version\s*=\s*"([^"]+)"' -AllMatches).Matches[0].Groups[1].Value
+          $hoeher = ($version.Split('.')[0..1] -join '.') + '.' + ([int]$version.Split('.')[2] + 1)
+          wix build -arch x64 -d "Version=$hoeher" -d "Quelle=$(Resolve-Path target\release)" -d "Wurzel=$PWD" -d "Symbol=$PWD\dist\quiver.ico" -o $zweite verteilung\windows\quiver.wxs
+          if ($LASTEXITCODE -ne 0) { throw 'wix build (zweite Fassung) fehlgeschlagen.' }
+          Write-Host "==> Update auf $hoeher"
+          $p = Start-Process msiexec -ArgumentList '/i', "`"$zweite`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /i (Update) endet mit $($p.ExitCode)" }
+          if (-not (Test-Path $ziel)) { throw 'Nach dem Update fehlt quiver.exe.' }
+
+          Write-Host '==> deinstalliere still'
+          $p = Start-Process msiexec -ArgumentList '/x', "`"$zweite`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x endet mit $($p.ExitCode)" }
+          if (Test-Path $ziel) { throw 'quiver.exe ist nach der Deinstallation noch da.' }
+          if (-not (Test-Path (Join-Path $profil 'zustand.json'))) {
+              throw 'Die Deinstallation hat das Profil entfernt.'
+          }
+
       - uses: actions/upload-artifact@v7
         with:
           name: paket-${{ matrix.name }}
@@ -239,6 +307,7 @@ jobs:
           retention-days: 7
           path: |
             dist/*.dmg
+            dist/*.pkg
             dist/SIGNIERT.txt
             dist/*.msi
             dist/*.zip
@@ -271,7 +340,7 @@ jobs:
           set -euo pipefail
           mkdir -p release
           find aus -type f \
-            \( -name '*.dmg' -o -name '*.msi' -o -name '*.zip' -o -name '*.deb' \
+            \( -name '*.dmg' -o -name '*.pkg' -o -name '*.msi' -o -name '*.zip' -o -name '*.deb' \
                -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.tar.gz' \) \
             -exec cp {} release/ \;
           if [ -z "$(ls -A release)" ]; then
