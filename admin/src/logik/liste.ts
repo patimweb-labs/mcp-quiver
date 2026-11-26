@@ -3,8 +3,8 @@
 // Regeln prüfbar sind (AGENTS.md §2.4).
 //
 // Die Liste liegt **über** allem anderen (eigene Ebene am `body`), unter dem
-// Feld, wenn dort Platz ist, sonst darüber. Sie wird nie höher als der freie
-// Platz, damit der Dialog nicht wächst und nicht scrollt.
+// Feld, wenn sie dort ganz hinpasst, sonst auf der Seite mit mehr Platz. Sie
+// wird nie höher als der freie Platz und bleibt ganz im Fenster.
 
 import type { ListOption } from "@weppelmann/components";
 
@@ -14,8 +14,6 @@ export const RAND = 8;
 export const ABSTAND = 2;
 /** Höchsthöhe einer Liste; mehr Einträge scrollen. */
 export const HOEHE_MAX = 280;
-/** Unter dieser Höhe ist „unten“ kein Platz mehr, dann geht die Liste nach oben. */
-export const HOEHE_MIN = 96;
 
 /** Das Feld, an dem die Liste hängt (Viewport-Koordinaten). */
 export interface Anker {
@@ -52,9 +50,9 @@ export function listenplatz(
 ): Listenplatz {
   const platz_unten = fenster.hoehe - anker.unten - ABSTAND - RAND;
   const platz_oben = anker.oben - ABSTAND - RAND;
-  // Nach unten, solange dort wenigstens ein paar Einträge Platz haben; sonst
-  // nach oben, wenn dort mehr Platz ist (das Feld steht am unteren Rand).
-  const ueber = platz_unten < Math.min(wunsch, HOEHE_MIN) && platz_oben > platz_unten;
+  // Nach unten, wenn die ganze Liste dort hinpasst; sonst auf die Seite mit
+  // mehr Platz. `wunsch` ist die echte Höhe der Liste (höchstens HOEHE_MAX).
+  const ueber = platz_unten < wunsch && platz_oben > platz_unten;
   const verfuegbar = Math.max(0, ueber ? platz_oben : platz_unten);
   const hoehe = Math.max(0, Math.min(wunsch, verfuegbar));
   const breite = Math.max(0, Math.min(anker.breite, fenster.breite - 2 * RAND));
