@@ -382,7 +382,9 @@ mod windows {
 /// Preferences`. Sie können binär vorliegen; `plutil` (Bordmittel) macht daraus
 /// XML, das hier gelesen wird.
 mod macos {
-    use super::{aus_plist, Vorgaben, MACOS_PLIST};
+    use super::Vorgaben;
+    #[cfg(target_os = "macos")]
+    use super::{aus_plist, MACOS_PLIST};
 
     #[cfg(target_os = "macos")]
     pub fn lesen() -> Vorgaben {

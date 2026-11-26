@@ -167,7 +167,14 @@ wurzel_pkg="$zwischen/pkg"
 mkdir -p "$wurzel_pkg/Applications"
 cp -R "$app" "$wurzel_pkg/Applications/"
 teilpaket="$zwischen/quiver-teil.pkg"
+# Das Bündel ist **nicht verschiebbar**: sonst sucht der Installer eine
+# vorhandene Kopie mit derselben Kennung irgendwo auf der Platte (etwa in
+# „Downloads“) und ersetzt **die** statt /Applications.
+bauteile="$zwischen/bauteile.plist"
+pkgbuild --analyze --root "$wurzel_pkg" "$bauteile" >/dev/null
+plutil -replace 0.BundleIsRelocatable -bool NO "$bauteile"
 pkgbuild --root "$wurzel_pkg" \
+    --component-plist "$bauteile" \
     --identifier "de.weppelmann.mcp-quiver" \
     --version "$version" \
     --install-location "/" \
