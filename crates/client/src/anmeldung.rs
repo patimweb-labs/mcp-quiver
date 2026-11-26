@@ -569,6 +569,7 @@ mod tests {
                 einrichtung: None,
             },
             werte: Werte::from([("ABLAGE".to_string(), "/tmp/stand".to_string())]),
+            fest: Default::default(),
         }
     }
 
@@ -686,6 +687,7 @@ mod tests {
                 ..entfernt.eintrag
             },
             werte: Werte::new(),
+            fest: Default::default(),
         };
         assert!(befehl_bauen(&ohne, Anmeldebefehl::Status, &Werte::new(), &Werte::new()).is_err());
     }

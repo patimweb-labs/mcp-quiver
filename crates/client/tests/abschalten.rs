@@ -187,6 +187,7 @@ impl Pruefung {
                     .map(|id| SatzEintrag {
                         eintrag: id.clone(),
                         werte: Werte::new(),
+                        fest: Default::default(),
                     })
                     .collect(),
             },

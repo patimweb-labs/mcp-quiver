@@ -1126,5 +1126,13 @@
   "tools.ergaenzen": {
     "de": "Angaben ergänzen",
     "en": "Complete settings"
+  },
+  "tools.vorgegeben": {
+    "de": "von deiner Firma vorgegeben",
+    "en": "set by your company"
+  },
+  "tools.auf_vorschlag": {
+    "de": "Auf Vorschlag zurücksetzen",
+    "en": "Reset to the suggestion"
   }
 }

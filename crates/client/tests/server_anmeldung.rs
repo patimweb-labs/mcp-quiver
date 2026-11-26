@@ -526,6 +526,7 @@ impl Pruefung {
                 eintraege: vec![SatzEintrag {
                     eintrag: EintragId::neu("echo"),
                     werte: Werte::new(),
+                    fest: Default::default(),
                 }],
             })),
         )

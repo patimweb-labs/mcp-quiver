@@ -286,6 +286,7 @@ async fn anmelden_im_fenster_startet_den_eintrag_neu() {
                     ("ABLAGE".to_string(), p.ablage.to_string_lossy().to_string()),
                     ("KONTO".to_string(), "test@beispiel.de".to_string()),
                 ]),
+                fest: Default::default(),
             }],
         },
     )
@@ -411,6 +412,7 @@ async fn ohne_anmeldung_im_eintrag_gibt_es_keine_anmeldung() {
                     ("ABLAGE".to_string(), p.ablage.to_string_lossy().to_string()),
                     ("KONTO".to_string(), "test@beispiel.de".to_string()),
                 ]),
+                fest: Default::default(),
             }],
         },
     )
@@ -480,6 +482,7 @@ async fn erneut_pruefen_fragt_nur_den_status() {
                     ("ABLAGE".to_string(), p.ablage.to_string_lossy().to_string()),
                     ("KONTO".to_string(), "test@beispiel.de".to_string()),
                 ]),
+                fest: Default::default(),
             }],
         },
     )

@@ -675,6 +675,7 @@ mod tests {
                 .map(|id| SollEintrag {
                     eintrag: eintrag(id, &format!("Titel {id}")),
                     werte: Werte::new(),
+                    fest: Default::default(),
                 })
                 .collect(),
         )

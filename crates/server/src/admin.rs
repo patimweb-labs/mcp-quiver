@@ -223,7 +223,11 @@ pub(crate) async fn satz_setzen(
             satz.id
         )));
     }
-    crate::grenzen::satz_pruefen(&satz).map_err(FehlerAntwort::unverarbeitbar)?;
+    // Die Vorbelegung wird gegen die Einträge geprüft: Geheimes lässt sich
+    // nicht vorgeben, ein Schalter nur auf „aus“ festlegen (Aufgabe 36).
+    let eintraege: Vec<Eintrag> =
+        db(&zustand, |conn| speicher::liste(conn, speicher::EINTRAEGE)).await?;
+    crate::grenzen::satz_pruefen(&satz, &eintraege).map_err(FehlerAntwort::unverarbeitbar)?;
     let zu_speichern = satz.clone();
     let kennung = id.clone();
     let (unbekannt, konflikt) = db(&zustand, move |conn| {

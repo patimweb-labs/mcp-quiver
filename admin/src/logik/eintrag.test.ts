@@ -34,6 +34,7 @@ import {
   pfad_warnung,
   server_felder,
   server_werte,
+  vorbelegbare_felder,
   sortiert_nach_titel,
   umgebung_als_text,
   umgebung_aus_text,
@@ -137,6 +138,22 @@ describe("Server-Felder", () => {
   it("wählt nur, was der Admin füllt", () => {
     const eintrag = beispiel();
     expect(server_felder(eintrag).map((feld) => feld.name)).toEqual(["konto"]);
+  });
+
+  it("lässt Geheimes nicht vorbelegen (Aufgabe 36)", () => {
+    const eintrag = beispiel();
+    eintrag.felder.push({
+      name: "adresse",
+      beschreibung: "MCP-Adresse",
+      quelle: "client",
+      pflicht: true,
+      standard: null,
+      link: null,
+    });
+    expect(vorbelegbare_felder(eintrag).map((feld) => feld.name)).toEqual([
+      "konto",
+      "adresse",
+    ]);
   });
 
   it("übernimmt nur Server-Werte in einen Satz", () => {

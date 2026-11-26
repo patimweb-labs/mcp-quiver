@@ -182,6 +182,7 @@ fn soll(ids: &[&str]) -> Soll {
             .map(|id| SollEintrag {
                 eintrag: eintrag(id, &format!("Titel {id}"), (id == &"ssh").then(mehrfach)),
                 werte: Werte::new(),
+                fest: Default::default(),
             })
             .collect(),
     )

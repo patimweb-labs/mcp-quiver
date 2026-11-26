@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// Ein Satz: Titel, Priorität und die Einträge mit ihren Server-Werten.
-// Nur Server-Felder bekommen hier eine Eingabe – Client- und Geheimfelder
-// gehören ans Gerät (SPEC.md §6).
+// Ein Satz: Titel, Priorität und die Einträge mit ihren vorbelegten Werten.
+// Vorbelegbar ist jedes Feld außer Geheimnissen (Aufgabe 36); je Wert gilt
+// „Vorschlag“ (der User darf ändern) oder „Fest“ („von deiner Firma
+// vorgegeben“). Geheime Felder stehen hier gar nicht.
 import { computed, ref, watch } from "vue";
 import { Trash2 } from "lucide-vue-next";
 import {
@@ -13,13 +14,15 @@ import {
 import { tief_kopie } from "../logik/kopie";
 
 import { ApiFehler, fehlertext, type Client } from "../api/client";
-import type { Eintrag, Satz, SatzEintrag } from "../api/typen";
+import type { Eintrag, Satz, SatzEintrag, Vorgabe } from "../api/typen";
 import Auswahl from "../bausteine/Auswahl.vue";
 import Feld from "../bausteine/Feld.vue";
 import Feldwert from "../bausteine/Feldwert.vue";
+import Segmentauswahl from "../bausteine/Segmentauswahl.vue";
 import {
   server_felder,
   sortiert_nach_titel,
+  vorbelegbare_felder,
 } from "../logik/eintrag";
 import {
   feld_sperrgrund,
@@ -34,6 +37,8 @@ import {
   satz_pruefen,
   satz_saeubern,
   satz_wert_setzen,
+  vorgabe_setzen,
+  vorgabe_von,
 } from "../logik/satz";
 
 const props = defineProps<{
@@ -112,13 +117,41 @@ function entfernen(eintrag: string): void {
 }
 
 function wertSetzen(eintrag: string, feld: string, wert: string): void {
-  entwurf.value = satz_wert_setzen(entwurf.value, eintrag, feld, wert);
+  const art = nach_kennung.value.get(eintrag)?.felder.find((f) => f.name === feld);
+  entwurf.value = satz_wert_setzen(entwurf.value, eintrag, feld, wert, art);
+}
+
+function vorgabeSetzen(eintrag: string, feld: Eintrag["felder"][number], vorgabe: Vorgabe): void {
+  entwurf.value = vorgabe_setzen(entwurf.value, eintrag, feld, vorgabe);
+}
+
+/** Die Vorgabe-Modi im Satz-Dialog – dieselben Worte wie im Client. */
+const VORGABEN = [
+  { wert: "vorschlag", name: "Vorschlag" },
+  { wert: "fest", name: "Fest" },
+];
+
+/**
+ * Was die Segmentauswahl zeigt: „Fest“ nur, wenn es festgelegt ist – sonst
+ * „Vorschlag“. Ein Feld ohne Wert ist keine Vorgabe; dann steht dort ein
+ * Hinweis statt der Auswahl.
+ */
+function vorgabe_anzeige(zeile: SatzEintrag, feld: Eintrag["felder"][number]): string {
+  return vorgabe_von(zeile, feld.name) === "fest" ? "fest" : "vorschlag";
+}
+
+function vorgabe_hinweis(zeile: SatzEintrag, feld: Eintrag["felder"][number]): string {
+  if (vorgabe_von(zeile, feld.name) === "fest") {
+    return "von deiner Firma vorgegeben, nicht änderbar";
+  }
+  return "vorbelegt, der Benutzer darf ändern";
 }
 
 /**
  * Warum „Speichern“ gesperrt ist: leere Pflichtfelder und ungültige Werte.
  * Server-Felder kann nur der Admin füllen – fehlt ein Pflichtwert im Satz,
- * bliebe der Eintrag am Gerät stehen.
+ * bliebe der Eintrag am Gerät stehen. Felder mit Quelle „Gerät“ sind hier
+ * freiwillig: der Benutzer kann sie selbst eintragen (Aufgabe 36).
  */
 const sperrgrund = computed(() => {
   for (const zeile of zeilen.value) {
@@ -161,7 +194,7 @@ function neu_laden(): void {
   <WpDialog
     :open="offen"
     :title="neu ? 'Neuer Satz' : 'Satz bearbeiten'"
-    description="Eine Sammlung von Einträgen mit vorbelegten Server-Werten."
+    description="Eine Sammlung von Einträgen mit vorbelegten Werten: als Vorschlag oder fest."
     @update:open="(wert) => emit('update:offen', wert)"
   >
     <div class="form">
@@ -225,7 +258,8 @@ function neu_laden(): void {
           </legend>
           <div class="satzzeile__kopf">
             <span class="blass">
-              {{ server_felder(z.eintrag).length }} Server-Feld(er)
+              {{ server_felder(z.eintrag).length }} Server-Feld(er) ·
+              {{ vorbelegbare_felder(z.eintrag).length }} vorbelegbar
             </span>
             <WpIconButton
               :icon="Trash2"
@@ -236,11 +270,11 @@ function neu_laden(): void {
             />
           </div>
 
-          <p v-if="server_felder(z.eintrag).length === 0" class="blass">
-            Dieser Eintrag hat keine Server-Felder.
+          <p v-if="vorbelegbare_felder(z.eintrag).length === 0" class="blass">
+            Dieser Eintrag hat keine Felder, die sich vorbelegen lassen.
           </p>
 
-          <template v-for="feld in server_felder(z.eintrag)" :key="feld.name">
+          <template v-for="feld in vorbelegbare_felder(z.eintrag)" :key="feld.name">
             <Feldwert
               v-if="ist_schalter(feld)"
               :feld="feld"
@@ -267,6 +301,24 @@ function neu_laden(): void {
                 />
               </template>
             </Feld>
+
+            <!-- Je Feld die Wahl „Vorschlag“ oder „Fest“ (Aufgabe 36). -->
+            <div class="vorgabe">
+              <Segmentauswahl
+                v-if="ist_schalter(feld) || vorgabe_von(z.zeile, feld.name)"
+                :wert="vorgabe_anzeige(z.zeile, feld)"
+                :moeglichkeiten="VORGABEN"
+                :label="`Vorgabe für ${feld_titel(feld)}`"
+                @waehle="(wert) => vorgabeSetzen(z.zeile.eintrag, feld, wert as Vorgabe)"
+              />
+              <span v-else class="blass">Ohne Wert keine Vorgabe.</span>
+              <span v-if="vorgabe_von(z.zeile, feld.name)" class="blass">
+                {{ vorgabe_hinweis(z.zeile, feld) }}
+              </span>
+              <span v-else-if="ist_schalter(feld)" class="blass">
+                Nur „aus“ lässt sich festlegen.
+              </span>
+            </div>
           </template>
         </fieldset>
 
@@ -359,6 +411,14 @@ function neu_laden(): void {
   align-items: center;
   justify-content: space-between;
   gap: var(--wp-space-2);
+}
+
+.vorgabe {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-2);
+  flex-wrap: wrap;
+  padding: 0 var(--wp-space-1) var(--wp-space-1);
 }
 
 .fehler {
