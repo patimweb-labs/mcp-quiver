@@ -523,7 +523,7 @@ mod programme {
 fn die_fassung_steht_im_dockerfile_und_nicht_in_einer_variablen() {
     let dockerfile = lies("Dockerfile");
     assert!(
-        dockerfile.contains("ARG QUIVER_TOOLS_VERSION=0.1.0"),
+        dockerfile.contains("ARG QUIVER_TOOLS_VERSION=0.2.1"),
         "die Vorgabe fehlt im Dockerfile"
     );
     assert!(
